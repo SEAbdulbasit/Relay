@@ -24,7 +24,7 @@ Thanks to the teams behind these projects. Relay is an independent project; thes
 
 ## Build and run
 
-Requires Apple silicon or Intel macOS 15+, Xcode 26+ / Swift 6.2+. The current build is validated on the development Mac; no wider hardware qualification is claimed.
+Requires Apple silicon or Intel macOS 15+, Xcode 26+ / Swift 6.2+. Hardware support has not been broadly qualified. The publication-time `swift test` check currently fails on actor-isolation errors in the `LetterPaper` and `LetterPaperFold` Shape conformances in `Sources/Relay/SentientBriefingComponents.swift`; this source snapshot needs those compilation issues resolved before the test suite can run.
 
 ```bash
 git clone https://github.com/SEAbdulbasit/Relay.git
