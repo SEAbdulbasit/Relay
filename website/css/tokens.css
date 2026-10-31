@@ -1,0 +1,145 @@
+/**
+ * Relay Design System - CSS Design Tokens
+ * 1:1 parity with RelayTheme (SwiftUI) and Sentient OS / ChatGPT aesthetic
+ */
+
+:root {
+  /* ==========================================================================
+     Color Palette: Obsidian, Pure Black, and Atmospheric Depth
+     ========================================================================== */
+  --color-bg-canvas: #000000;
+  --color-bg-deep: #0b0c0e;
+  --color-bg-surface: #0a0a0d;
+  --color-bg-elevated: #121318;
+  --color-bg-elevated-hover: #1a1c24;
+  --color-bg-dock: rgba(10, 10, 14, 0.90);
+
+  /* Glassmorphism & Alpha Layers */
+  --color-glass-bg: rgba(20, 22, 28, 0.70);
+  --color-glass-card: rgba(17, 18, 24, 0.65);
+  --color-glass-border: rgba(255, 255, 255, 0.10);
+  --color-glass-border-hover: rgba(255, 255, 255, 0.20);
+  --color-glass-inner-light: rgba(255, 255, 255, 0.05);
+
+  /* Hairline Borders */
+  --color-border-subtle: rgba(255, 255, 255, 0.08);
+  --color-border-default: rgba(255, 255, 255, 0.14);
+  --color-border-focus: rgba(253, 226, 163, 0.45);
+
+  /* Text & Foreground Hierarchy */
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #c5c8d1;
+  --color-text-muted: #828795;
+  --color-text-dim: #4e535e;
+  --color-text-inverse: #0b0c0e;
+
+  /* Button Tokens */
+  --color-btn-face: #e6e6e6;
+  --color-btn-face-hover: #ffffff;
+  --color-btn-ink: #101114;
+  --color-btn-secondary-bg: rgba(255, 255, 255, 0.06);
+  --color-btn-secondary-hover: rgba(255, 255, 255, 0.12);
+
+  /* ==========================================================================
+     The Signature Relay Prism: 8-stop rainbow spectrum
+     #FDE2A3 -> #FF8E3C -> #FF4646 -> #E8388F -> #9B48D4 -> #6C5CE5 -> #4A90E2 -> #FDE2A3
+     ========================================================================== */
+  --gradient-relay-prism: linear-gradient(
+    96.18deg,
+    #fde2a3 1%,
+    #ff8e3c 15%,
+    #ff4646 28%,
+    #e8388f 42%,
+    #9b48d4 57%,
+    #6c5ce5 71%,
+    #4a90e2 84%,
+    #fde2a3 99%
+  );
+
+  --gradient-prism-glow: radial-gradient(
+    circle at center,
+    rgba(232, 56, 143, 0.25) 0%,
+    rgba(108, 92, 229, 0.20) 40%,
+    rgba(74, 144, 226, 0.10) 70%,
+    transparent 100%
+  );
+
+  --gradient-glass-border: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(255, 255, 255, 0.04) 50%,
+    rgba(253, 226, 163, 0.15) 100%
+  );
+
+  /* ==========================================================================
+     Multi-Agent Role Accents (1:1 with Swift AgentRole)
+     ========================================================================== */
+  --color-role-planner: #bb65ff;
+  --color-role-planner-bg: rgba(187, 101, 255, 0.12);
+  --color-role-planner-border: rgba(187, 101, 255, 0.35);
+
+  --color-role-navigator: #4a90e2;
+  --color-role-navigator-bg: rgba(74, 144, 226, 0.12);
+  --color-role-navigator-border: rgba(74, 144, 226, 0.35);
+
+  --color-role-executor: #ff8e3c;
+  --color-role-executor-bg: rgba(255, 142, 60, 0.12);
+  --color-role-executor-border: rgba(255, 142, 60, 0.35);
+
+  --color-role-critic: #34d399;
+  --color-role-critic-bg: rgba(52, 211, 153, 0.12);
+  --color-role-critic-border: rgba(52, 211, 153, 0.35);
+
+  /* System Accents */
+  --color-accent-emerald: #33ff66;
+  --color-accent-coral: #ff4646;
+  --color-accent-gold: #fde2a3;
+
+  /* ==========================================================================
+     Typography & Font Stacks (Sentient OS 3-Voice System)
+     ========================================================================== */
+  --font-display: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif;
+  --font-serif: "Newsreader", "Instrument Serif", "New York", Georgia, serif;
+  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+
+  /* Typography Scales */
+  --font-size-hero: clamp(2.5rem, 5.5vw, 4.5rem);
+  --font-size-h2: clamp(1.85rem, 3.5vw, 2.75rem);
+  --font-size-h3: clamp(1.35rem, 2.2vw, 1.75rem);
+  --font-size-h4: 1.25rem;
+  --font-size-body-lg: 1.125rem;
+  --font-size-body: 0.95rem;
+  --font-size-sm: 0.85rem;
+  --font-size-xs: 0.75rem;
+
+  /* Line Heights */
+  --line-height-tight: 1.15;
+  --line-height-snug: 1.3;
+  --line-height-base: 1.6;
+  --line-height-loose: 1.75;
+
+  /* ==========================================================================
+     Corner Radii
+     ========================================================================== */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --radius-full: 9999px;
+
+  /* ==========================================================================
+     Shadows & Elevation
+     ========================================================================== */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.7);
+  --shadow-glow-button: 0 0 24px rgba(253, 226, 163, 0.45), 0 0 48px rgba(232, 56, 143, 0.25);
+  --shadow-glow-halo: 0 0 35px rgba(108, 92, 229, 0.35);
+
+  /* Transitions */
+  --transition-fast: 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-base: 250ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-slow: 400ms cubic-bezier(0.16, 1, 0.3, 1);
+}

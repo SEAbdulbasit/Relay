@@ -1,0 +1,119 @@
+/**
+ * Relay Marketing Website - Animations & Transitions
+ * Subtle glows, prism shimmer, floating perspective, and motion accessibility
+ */
+
+/* ==========================================================================
+   Keyframe Definitions
+   ========================================================================== */
+
+@keyframes halo-pulse {
+  0%, 100% {
+    opacity: 0.65;
+    filter: blur(12px);
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.95;
+    filter: blur(18px);
+    transform: scale(1.03);
+  }
+}
+
+@keyframes prism-shimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes status-blink {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 10px var(--color-accent-emerald);
+  }
+  50% {
+    opacity: 0.45;
+    box-shadow: 0 0 2px var(--color-accent-emerald);
+  }
+}
+
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ==========================================================================
+   Applied Utility Classes
+   ========================================================================== */
+
+.animate-halo {
+  animation: halo-pulse 4s ease-in-out infinite;
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+.animate-shimmer {
+  background-size: 200% 200%;
+  animation: prism-shimmer 8s ease infinite;
+}
+
+.pulse-dot {
+  animation: status-blink 2.2s infinite ease-in-out;
+}
+
+.fade-in {
+  animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ==========================================================================
+   Reduced Motion Accessibility (MANDATORY)
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .animate-halo,
+  .animate-float,
+  .animate-shimmer,
+  .pulse-dot {
+    animation: none !important;
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "version": "0.1.0",
+  "build": "1",
+  "availableDeveloperIDIdentities": 0,
+  "publicPrerequisitesReady": false,
+  "blockers": [
+    "Set RELAY_RELEASE_IDENTITY to the exact40-character SHA1 of a Developer ID Application identity. No identity is selected automatically.",
+    "RELAY_NOTARY_PROFILE must name credentials already stored with notarytool; no credentials are read or created here."
+  ],
+  "note": "Local preflight only; profile validity, notarization and Gatekeeper remain separate gates."
+}

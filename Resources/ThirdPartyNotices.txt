@@ -1,0 +1,11 @@
+Relay uses LiteRT-LM 0.18.1 by Google LLC, licensed under the Apache License, Version 2.0.
+Upstream: https://github.com/google-ai-edge/LiteRT-LM
+Pinned commit: bda624851d74be34d4e1f7fac1fc4155939539c7
+The Swift wrapper source and its license are included in Vendor/LiteRTLM.
+The native binary is downloaded from the official release and verified by SHA-256.
+No Google model is included in the application bundle. The separately downloaded Gemma 4 E2B LiteRT package is from litert-community/gemma-4-E2B-it-litert-lm, pinned revision 1caa527c1e88b55f046fcd8d2b4265606680663d, labeled Apache-2.0 by its publisher. See model provenance alongside the package.
+
+Relay also integrates Vercel Labs agent-desktop 1.0.2, licensed under the Apache License, Version 2.0.
+Upstream: https://github.com/vercel-labs/agent-desktop
+The CLI, native macOS helper, C FFI library, and license are included in Vendor/agent-desktop.
+The update script downloads official release archives and verifies their published SHA-256 checksums.

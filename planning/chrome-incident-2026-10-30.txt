@@ -1,0 +1,9 @@
+Window: "127.0.0.1:64617/submit/f544338576bd1465aa10c9c6bdbd9045", App: Google Chrome.
+0 standard window 127.0.0.1:64617/submit/f544338576bd1465aa10c9c6bdbd9045 - Google Chrome – Abdul, URL: 127.0.0.1:64617/submit/f544338576bd1465aa10c9c6bdbd9045, Secondary Actions: Raise
+					10 text field (settable) Address and search bar, Value: 127.0.0.1:64617/submit/f544338576bd1465aa10c9c6bdbd9045, Placeholder: Ask Google or type a URL
+					21 HTML content 127.0.0.1:64617/submit/f544338576bd1465aa10c9c6bdbd9045
+						22 text Only the exact synthetic note is accepted; nothing changed.
+					71 tab (selected, settable, boolean) 127.0.0.1:64617/submit/f544338576bd1465aa10c9c6bdbd9045, Value: on
+The focused UI element is 21 HTML content 127.0.0.1:64617/submit/f544338576bd1465aa10c9c6bdbd9045
+
+HTTP status was not exposed by native AX. Prior fixture oracle recorded accepted submissions only; zero accepted is not zero attempted.

@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Architecture & Air-Gapped Sovereignty — Relay</title>
+  <meta name="description" content="In-depth architectural overview of Relay's offline privacy engineering. Zero telemetry, on-device LiteRT-LM inference, Apple Silicon sandboxing, and verifiable air-gap guarantees.">
+
+  <!-- Favicon / Brand Mark -->
+  <link rel="icon" type="image/svg+xml" href="assets/icons/relay-orb.svg">
+
+  <!-- Google Fonts: Sentient OS 3-Voice Typography System -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Modular Design System Styles -->
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/animations.css">
+</head>
+<body>
+  <!-- Accessibility Skip Navigation -->
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+
+  <!-- ==========================================================================
+       Site Header / Navigation Bar
+       ========================================================================== -->
+  <header class="site-header" role="banner">
+    <div class="container navbar">
+      <a href="index.html" class="brand-logo" aria-label="Relay Home">
+        <div class="brand-orb" aria-hidden="true"></div>
+        <span>Relay</span>
+      </a>
+
+      <nav role="navigation" aria-label="Main Navigation">
+        <ul class="nav-links">
+          <li><a href="index.html#multi-agent">Multi-Agent</a></li>
+          <li><a href="index.html#features">Features</a></li>
+          <li><a href="privacy.html" class="active">Privacy Core</a></li>
+          <li><a href="#flow">Data Flow</a></li>
+          <li><a href="#matrix">Comparison</a></li>
+          <li><a href="#verify">Audit Guide</a></li>
+        </ul>
+      </nav>
+
+      <div class="nav-cta-cluster">
+        <a href="https://github.com/relay-assistant/relay" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm" aria-label="View Relay on GitHub">
+          GitHub
+        </a>
+        <div class="btn-halo-container">
+          <div class="btn-halo-glow" aria-hidden="true"></div>
+          <a href="index.html#download" class="btn btn-primary btn-sm">
+            <img src="assets/icons/apple.svg" alt="" class="btn-icon">
+            <span>Download</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ==========================================================================
+       Main Content
+       ========================================================================== -->
+  <main id="main-content" role="main">
+
+    <!-- Privacy Hero Section -->
+    <section class="section" style="padding-top: 5rem; text-align: center;">
+      <div class="container container-narrow">
+        
+        <div class="eyebrow-badge">
+          <span class="pulse-dot" aria-hidden="true"></span>
+          <span>Zero Telemetry • Cryptographically Verified • Air-Gapped</span>
+        </div>
+
+        <h1>
+          Personal AI.<br>
+          <span class="text-prism animate-shimmer font-serif" style="font-weight: 400;">Privacy at its core.</span>
+        </h1>
+
+        <p style="font-size: var(--font-size-body-lg); color: var(--color-text-secondary); max-width: 680px; margin: 1.5rem auto 0 auto;">
+          Cloud AI assistants require transmitting your confidential files, sensitive emails, and keystrokes to remote data centers. Relay inverts this paradigm by executing 100% of intelligence, context, and memory within your Mac's unified hardware.
+        </p>
+
+      </div>
+    </section>
+
+    <!-- ==========================================================================
+         Interactive Data Flow Visualizer
+         ========================================================================== -->
+    <section id="flow" class="section" style="padding-top: 1rem;">
+      <div class="container">
+        
+        <div class="section-header">
+          <div class="eyebrow-badge">
+            <span>Architecture Breakdown</span>
+          </div>
+          <h2>The On-Device Execution Pipeline</h2>
+          <p>
+            Click any stage of the pipeline below to inspect its cryptographic isolation and sandboxing guarantees.
+          </p>
+        </div>
+
+        <div class="flow-visualizer-container">
+          
+          <div class="flow-boundary">
+            <div class="flow-boundary-label">
+              ✓ Hardware Boundary: On-Device Apple Silicon Unified Memory
+            </div>
+
+            <div class="flow-steps-grid">
+              
+              <!-- Node 1: Local Context -->
+              <div class="flow-node active" data-step="source" role="button" tabindex="0" aria-label="Inspect Local Context Ingestion">
+                <div class="flow-node-icon">
+                  <img src="assets/icons/terminal.svg" alt="" style="width: 20px; height: 20px;">
+                </div>
+                <h4>1. Scoped Ingestion</h4>
+                <p>Security-scoped file bookmarks & AXUIElement tree</p>
+              </div>
+
+              <!-- Node 2: In-Memory Blackboard -->
+              <div class="flow-node" data-step="blackboard" role="button" tabindex="0" aria-label="Inspect Sequential Blackboard">
+                <div class="flow-node-icon">
+                  <img src="assets/icons/sparkles.svg" alt="" style="width: 20px; height: 20px;">
+                </div>
+                <h4>2. Local Blackboard</h4>
+                <p>In-memory sequential multi-agent state coordination</p>
+              </div>
+
+              <!-- Node 3: LiteRT-LM Gemma -->
+              <div class="flow-node" data-step="litert" role="button" tabindex="0" aria-label="Inspect LiteRT-LM Engine">
+                <div class="flow-node-icon">
+                  <img src="assets/icons/cpu.svg" alt="" style="width: 20px; height: 20px;">
+                </div>
+                <h4>3. LiteRT-LM Gemma</h4>
+                <p>Pinned 2.59 GB weights on Metal GPU / Neural Engine</p>
+              </div>
+
+              <!-- Node 4: Safe Executor -->
+              <div class="flow-node" data-step="executor" role="button" tabindex="0" aria-label="Inspect Safe Executor">
+                <div class="flow-node-icon">
+                  <img src="assets/icons/shield.svg" alt="" style="width: 20px; height: 20px;">
+                </div>
+                <h4>4. Scoped Actions</h4>
+                <p>Verified mutations with Critic confirmation gates</p>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- Dynamic Inspection Card -->
+          <div class="glass-card" style="margin-top: 1.5rem; background: rgba(16, 17, 23, 0.9);">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+              <h3 id="flow-detail-title" style="font-size: var(--font-size-h4);">
+                Local Context Ingestion (Zero-Network)
+              </h3>
+              <span id="flow-detail-badge" class="badge-tag success">Air-Gapped Source</span>
+            </div>
+            <p id="flow-detail-body" style="color: var(--color-text-secondary); margin: 0; line-height: var(--line-height-loose);">
+              Relay accesses files, Notes, Mail, or window elements exclusively via macOS sandboxed security-scoped bookmarks and Accessibility APIs. Data never traverses network sockets or unmanaged disk locations.
+            </p>
+          </div>
+
+          <!-- Blocked Cloud Banner -->
+          <div class="cloud-blocked-banner" role="status">
+            <span style="font-size: 1.25rem;">🚫</span>
+            <span>AIR-GAP ENFORCEMENT: All outbound connections to external APIs, telemetry hosts, and cloud models are blocked by process-level sandboxing.</span>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ==========================================================================
+         Four Pillars of Sovereignty
+         ========================================================================== -->
+    <section id="pillars" class="section">
+      <div class="container">
+        
+        <div class="section-header">
+          <div class="eyebrow-badge">
+            <span>Core Principles</span>
+          </div>
+          <h2>The Four Pillars of Relay Sovereignty</h2>
+          <p>
+            Architectural rules hardcoded into the foundation of Relay's codebase.
+          </p>
+        </div>
+
+        <div class="bento-grid">
+          
+          <div class="glass-card bento-card bento-col-6">
+            <div class="bento-card-icon emerald">
+              <img src="assets/icons/shield.svg" alt="" style="width: 22px; height: 22px;">
+            </div>
+            <h3>1. Zero Network Sockets</h3>
+            <p>
+              Relay does not open HTTP, WebSocket, or gRPC connections during task execution. The model inference loop runs entirely through embedded C++ LiteRT-LM bindings mapped to your local Silicon hardware.
+            </p>
+          </div>
+
+          <div class="glass-card bento-card bento-col-6">
+            <div class="bento-card-icon blue">
+              <img src="assets/icons/terminal.svg" alt="" style="width: 22px; height: 22px;">
+            </div>
+            <h3>2. Scoped Permission Boundaries</h3>
+            <p>
+              Unlike legacy desktop agents that demand unrestricted disk access, Relay operates through macOS security-scoped bookmarks. Relay can only inspect or modify the explicit folders you grant.
+            </p>
+          </div>
+
+          <div class="glass-card bento-card bento-col-6">
+            <div class="bento-card-icon amber">
+              <img src="assets/icons/check.svg" alt="" style="width: 22px; height: 22px;">
+            </div>
+            <h3>3. Open Markdown Storage</h3>
+            <p>
+              Your agent memories, task outputs, and logs are stored in standard human-readable Markdown. There are no proprietary binary databases, no hidden sync servers, and no platform lock-in.
+            </p>
+          </div>
+
+          <div class="glass-card bento-card bento-col-6">
+            <div class="bento-card-icon amethyst">
+              <img src="assets/icons/cpu.svg" alt="" style="width: 22px; height: 22px;">
+            </div>
+            <h3>4. Cryptographically Verified Weights</h3>
+            <p>
+              The Gemma 4 E2B `.litertlm` package is verified against an immutable SHA-256 hash before loading into memory. Relay rejects any modified or unverified model binaries.
+            </p>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ==========================================================================
+         Relay vs. Cloud AI Comparison Matrix
+         ========================================================================== -->
+    <section id="matrix" class="section" style="background: rgba(11, 12, 16, 0.4);">
+      <div class="container">
+        
+        <div class="section-header">
+          <div class="eyebrow-badge">
+            <span>Direct Comparison</span>
+          </div>
+          <h2>How Relay compares to Cloud AI Copilots</h2>
+          <p>
+            Evaluate the real architectural differences between local-first sovereignty and centralized cloud assistants.
+          </p>
+        </div>
+
+        <div class="matrix-container">
+          <table class="matrix-table" aria-label="Relay versus Cloud AI Copilots feature comparison">
+            <thead>
+              <tr>
+                <th scope="col" style="width: 32%;">Security & Architecture Dimension</th>
+                <th scope="col" style="width: 34%;">Relay (On-Device Multi-Agent)</th>
+                <th scope="col" style="width: 34%;">Typical Cloud AI Copilot</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Inference Location</strong></td>
+                <td><span class="badge-tag success">✓ Local Apple Silicon RAM</span></td>
+                <td><span class="badge-tag danger">✗ Remote Cloud Data Centers</span></td>
+              </tr>
+              <tr>
+                <td><strong>Network Requirement</strong></td>
+                <td><span class="badge-tag success">✓ 0 bytes / 100% Offline</span></td>
+                <td><span class="badge-tag danger">✗ Continuous High-Bandwidth Internet</span></td>
+              </tr>
+              <tr>
+                <td><strong>User Data Retention</strong></td>
+                <td><span class="badge-tag success">✓ Stays exclusively on your Mac</span></td>
+                <td><span class="badge-tag danger">✗ Stored on remote corporate servers</span></td>
+              </tr>
+              <tr>
+                <td><strong>Model Training on Inputs</strong></td>
+                <td><span class="badge-tag success">✓ Mathematically impossible</span></td>
+                <td><span class="badge-tag danger">✗ Subject to terms / RLHF retraining</span></td>
+              </tr>
+              <tr>
+                <td><strong>Airplane Mode Functionality</strong></td>
+                <td><span class="badge-tag success">✓ 100% Functional, zero degradation</span></td>
+                <td><span class="badge-tag danger">✗ Completely disabled without Wi-Fi</span></td>
+              </tr>
+              <tr>
+                <td><strong>Agent Role Architecture</strong></td>
+                <td><span class="badge-tag success">✓ Local 4-Role Blackboard (Partitioned)</span></td>
+                <td><span class="badge-tag danger">✗ Single monolithic prompt / API call</span></td>
+              </tr>
+              <tr>
+                <td><strong>Emergency Stop & Safety</strong></td>
+                <td><span class="badge-tag success">✓ Instant Esc halt & local review gates</span></td>
+                <td><span class="badge-tag danger">✗ Server-side timeouts & delayed cancel</span></td>
+              </tr>
+              <tr>
+                <td><strong>Cost & Subscriptions</strong></td>
+                <td><span class="badge-tag success">✓ 100% Free & Open Source ($0/mo)</span></td>
+                <td><span class="badge-tag danger">✗ $20 to $200 / user / month</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ==========================================================================
+         Independent Security Audit & Verification Guide
+         ========================================================================== -->
+    <section id="verify" class="section">
+      <div class="container container-narrow">
+        
+        <div class="section-header">
+          <div class="eyebrow-badge">
+            <span>Don't Take Our Word For It</span>
+          </div>
+          <h2>Verify Air-Gapped Execution Yourself</h2>
+          <p>
+            True security is verifiable. Use standard macOS UNIX inspection tools to confirm that Relay maintains zero open network connections during multi-agent task execution.
+          </p>
+        </div>
+
+        <div class="glass-card" style="padding: 2.5rem; margin-bottom: 2rem;">
+          <h3 style="margin-bottom: 1rem; font-size: var(--font-size-h4);">
+            1. Verify Open Network Sockets with <code>lsof</code>
+          </h3>
+          <p style="font-size: var(--font-size-sm); color: var(--color-text-muted);">
+            While Relay is running a multi-agent task, query macOS network file descriptors for the Relay process ID:
+          </p>
+          <div class="bento-preview" style="margin: 1rem 0;">
+            <div style="color: var(--color-text-dim); margin-bottom: 0.35rem;"># Check all internet/network sockets attached to Relay</div>
+            <div style="color: var(--color-accent-gold);">$ lsof -p $(pgrep Relay) -i</div>
+            <div style="color: var(--color-accent-emerald); margin-top: 0.5rem;">[Expected Result: Exit code 0, 0 open sockets returned]</div>
+          </div>
+        </div>
+
+        <div class="glass-card" style="padding: 2.5rem; margin-bottom: 2rem;">
+          <h3 style="margin-bottom: 1rem; font-size: var(--font-size-h4);">
+            2. Audit Network State with <code>netstat</code>
+          </h3>
+          <p style="font-size: var(--font-size-sm); color: var(--color-text-muted);">
+            Confirm zero TCP or UDP connection states associated with the application:
+          </p>
+          <div class="bento-preview" style="margin: 1rem 0;">
+            <div style="color: var(--color-text-dim); margin-bottom: 0.35rem;"># Verify zero ESTABLISHED or SYN_SENT connection states</div>
+            <div style="color: var(--color-accent-gold);">$ netstat -anv | grep -i relay</div>
+            <div style="color: var(--color-accent-emerald); margin-top: 0.5rem;">[Expected Result: Empty output]</div>
+          </div>
+        </div>
+
+        <div class="glass-card" style="padding: 2.5rem;">
+          <h3 style="margin-bottom: 1rem; font-size: var(--font-size-h4);">
+            3. Compatible with Application Firewalls
+          </h3>
+          <p style="font-size: var(--font-size-sm); color: var(--color-text-secondary);">
+            Relay operates seamlessly under third-party macOS application firewalls such as <strong>Little Snitch</strong> or <strong>LuLu</strong>. You can configure a strict rule blocking all network traffic for Relay; the multi-agent system and Gemma inference will continue operating at full speed.
+          </p>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ==========================================================================
+         Download CTA Banner
+         ========================================================================== -->
+    <section class="section" style="padding-bottom: 7rem;">
+      <div class="container container-narrow">
+        <div class="glass-card" style="text-align: center; padding: 4rem 2rem; border-color: rgba(253, 226, 163, 0.25);">
+          
+          <div class="brand-orb" style="width: 56px; height: 56px; margin: 0 auto 1.5rem auto;" aria-hidden="true"></div>
+          
+          <h2 style="font-size: var(--font-size-h2); margin-bottom: 1rem;">
+            Your Data Stays Yours.<br>
+            <span class="text-prism">Always.</span>
+          </h2>
+
+          <p style="color: var(--color-text-secondary); max-width: 540px; margin: 0 auto 2.5rem auto;">
+            Download Relay for macOS Sequoia 15.0+ and run private multi-agent intelligence directly on your device.
+          </p>
+
+          <div style="display: flex; justify-content: center; gap: 1rem; flex-wrap: wrap;">
+            <div class="btn-halo-container">
+              <div class="btn-halo-glow" aria-hidden="true"></div>
+              <a href="https://github.com/relay-assistant/relay/releases" target="_blank" rel="noopener noreferrer" class="btn btn-primary" style="padding: 0.95rem 2rem; font-size: 1.05rem;">
+                <img src="assets/icons/apple.svg" alt="" class="btn-icon" style="width: 1.3rem; height: 1.3rem;">
+                <span>Download Relay for macOS</span>
+              </a>
+            </div>
+            <a href="index.html" class="btn btn-secondary" style="padding: 0.95rem 1.6rem; font-size: 1.05rem;">
+              <span>Back to Overview</span>
+            </a>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ==========================================================================
+       Site Footer
+       ========================================================================== -->
+  <footer class="site-footer" role="contentinfo">
+    <div class="container">
+      
+      <div class="footer-grid">
+        
+        <div class="footer-brand">
+          <a href="index.html" class="brand-logo" style="margin-bottom: 0.75rem;">
+            <div class="brand-orb" style="width: 28px; height: 28px;"></div>
+            <span>Relay</span>
+          </a>
+          <p>
+            Privacy-first on-device multi-agent assistant for macOS. Powered by LiteRT-LM and pinned Gemma 4 E2B inference.
+          </p>
+          <div style="margin-top: 1.25rem;">
+            <span class="model-status-pill">
+              <span class="pulse-dot" style="width: 6px; height: 6px;"></span>
+              Zero Remote Telemetry
+            </span>
+          </div>
+        </div>
+
+        <div class="footer-col">
+          <h5>Architecture</h5>
+          <ul>
+            <li><a href="index.html#multi-agent">Blackboard System</a></li>
+            <li><a href="index.html#multi-agent">Planner & Navigator</a></li>
+            <li><a href="index.html#multi-agent">Executor & Critic</a></li>
+            <li><a href="index.html#specs">LiteRT-LM Runtime</a></li>
+          </ul>
+        </div>
+
+        <div class="footer-col">
+          <h5>Privacy & Security</h5>
+          <ul>
+            <li><a href="privacy.html">Privacy Core Deep-Dive</a></li>
+            <li><a href="#flow">Data Flow Visualizer</a></li>
+            <li><a href="#matrix">Cloud vs. Local Matrix</a></li>
+            <li><a href="#verify">Independent Audit</a></li>
+          </ul>
+        </div>
+
+        <div class="footer-col">
+          <h5>Open Source</h5>
+          <ul>
+            <li><a href="https://github.com/relay-assistant/relay" target="_blank" rel="noopener noreferrer">GitHub Repository</a></li>
+            <li><a href="https://github.com/relay-assistant/relay/releases" target="_blank" rel="noopener noreferrer">Releases & Changelog</a></li>
+            <li><a href="https://github.com/relay-assistant/relay/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Apache-2.0 License</a></li>
+            <li><a href="index.html#download">Installation Guide</a></li>
+          </ul>
+        </div>
+
+      </div>
+
+      <div class="footer-bottom">
+        <div>
+          © 2026 Relay Assistant Project. Built with love for macOS sovereignty.
+        </div>
+        <div>
+          Inspired by Sentient OS & ChatGPT design aesthetics. 100% on-device AI.
+        </div>
+      </div>
+
+    </div>
+  </footer>
+
+  <!-- Interactive JavaScript Engine -->
+  <script src="js/agent-demo.js"></script>
+</body>
+</html>

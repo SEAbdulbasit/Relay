@@ -1,0 +1,681 @@
+text Here  is  the  prioritized,  read-only  critique  of  Sources/Relay ,  Tests/RelayTests ,  and 
+												320 button implementation-critique.md, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/planning/implementation-critique.md
+													321 Unlabelled image /markdown.svg
+													322 text implementation-critique.md
+												323 text ,  comparing  Relay’s  current  implementation  against  a  local  personal  desktop  assistant.
+											324 heading Priority 1: Local Knowledge & OCR Are Unwired, and Scope Revocation Leaks Prior Content, Value: 3
+												325 text Priority  1:  Local  Knowledge  &  OCR  Are  Unwired,  and  Scope  Revocation  Leaks  Prior  Content
+											326 container
+												327 text While 
+												328 button implementation-critique.md, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/planning/implementation-critique.md
+													329 Unlabelled image /markdown.svg
+													330 text implementation-critique.md
+												331 text notes  that  knowledge  indexing  and  revocation  must  be  built  separately  from  approved  user  memory,  two  new  modules—
+												332 button LocalKnowledge, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalKnowledge.swift
+													333 Unlabelled image /swift.svg
+													334 text LocalKnowledge
+												335 text and 
+												336 button LocalOCR, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalOCR.swift
+													337 Unlabelled image /swift.svg
+													338 text LocalOCR
+												339 text —now  exist  in  Sources/Relay but  are  completely disconnected from the assistant runtime and UI .
+											340 content list
+												341 container
+													342 AXListMarker • 
+													343 text Source Observations:
+													344 content list
+														345 container
+															346 AXListMarker • 
+															347 text Dead/unwired capabilities: Neither 
+															348 button LocalKnowledge, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalKnowledge.swift
+																349 Unlabelled image /swift.svg
+																350 text LocalKnowledge
+															351 text nor 
+															352 button LocalOCR, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalOCR.swift
+																353 Unlabelled image /swift.svg
+																354 text LocalOCR
+															355 text is  instantiated  or  referenced  in 
+															356 button AssistantStore, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+																357 Unlabelled image /swift.svg
+																358 text AssistantStore
+															359 text , 
+															360 button MacTools, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+																361 Unlabelled image /swift.svg
+																362 text MacTools
+															363 text , 
+															364 button MainView, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MainView.swift
+																365 Unlabelled image /swift.svg
+																366 text MainView
+															367 text ,  or 
+															368 button SettingsView, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/SettingsView.swift
+																369 Unlabelled image /swift.svg
+																370 text SettingsView
+															371 text .  Furthermore, 
+															372 button MacTools.readFile, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+																373 Unlabelled image /swift.svg
+																374 text MacTools.readFile
+															375 text still  throws  "No extractable text was found. This may be a scanned PDF; OCR is not available in this version" instead  of  calling 
+															376 button LocalOCR.recognizePDF(at:maxPages:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalOCR.swift
+																377 Unlabelled image /swift.svg
+																378 text LocalOCR.recognizePDF(at:maxPages:)
+															379 text .
+														380 container
+															381 AXListMarker • 
+															382 text Grant revocation does not purge active prompt context or persisted history:
+															383 button AssistantStore.removeGrant(_:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+																384 Unlabelled image /swift.svg
+																385 text AssistantStore.removeGrant(_:)
+															386 text stops  an  active  run,  invalidates  pending  tool  approvals,  and  removes  the  ScopeGrant from  grants .  However,  prior 
+															387 button read_file, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+																388 Unlabelled image /swift.svg
+																389 text read_file
+															390 text and 
+															391 button list_files, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+																392 Unlabelled image /swift.svg
+																393 text list_files
+															394 text outputs  from  that  revoked  path  remain  in  modelMessages ,  messages ,  activity ,  and  on-disk  state.json (
+															395 button AssistantStore.persist(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+																396 Unlabelled image /swift.svg
+																397 text AssistantStore.persist()
+															398 text ).  Worse, 
+															399 button AssistantStore.currentContext, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+																400 Unlabelled image /swift.svg
+																401 text AssistantStore.currentContext
+															402 text only  compacts  superseded  observe_app ,  list_apps ,  and  list_files messages—never  read_file —so  up  to  11.5  KB  per  previously  read  file  continues  to  be  sent  to  the  model  on  every  subsequent  turn  after  revocation  until  clearConversation() is  called.
+														403 container
+															404 AXListMarker • 
+															405 text Edge Cases in 
+															406 button LocalKnowledge, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalKnowledge.swift
+																407 Unlabelled image /swift.svg
+																408 text LocalKnowledge
+															409 text :
+															410 content list
+																411 container
+																	412 AXListMarker 1. 
+																	413 text In-flight indexing race on revocation:
+																	414 button removeSource(path:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalKnowledge.swift
+																		415 Unlabelled image /swift.svg
+																		416 text removeSource(path:)
+																	417 text and 
+																	418 button clear(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalKnowledge.swift
+																		419 Unlabelled image /swift.svg
+																		420 text clear()
+																	421 text call  cancelActiveScan() ,  but 
+																	422 button purgeStale(grants:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalKnowledge.swift
+																		423 Unlabelled image /swift.svg
+																		424 text purgeStale(grants:)
+																	425 text does  not .  If  purgeStale(grants:) runs  while 
+																	426 button index(grants:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalKnowledge.swift
+																		427 Unlabelled image /swift.svg
+																		428 text index(grants:)
+																	429 text is  suspended  at 
+																	430 button await Task.yield(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalKnowledge.swift
+																		431 Unlabelled image /swift.svg
+																		432 text await Task.yield()
+																	433 text ,  the  in-flight  scan  finishes  using  its  captured  pre-revocation  grants snapshot  and  republishes  the  revoked  records  at  line  123.
+																434 container
+																	435 AXListMarker 2. 
+																	436 text Broken symlink on removal:
+																	437 button removeSource(path:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalKnowledge.swift
+																		438 Unlabelled image /swift.svg
+																		439 text removeSource(path:)
+																	440 text relies  on  guard let url = try? ToolPolicy.canonicalURL(path) else { return } .  If  a  source  path  involved  a  symlink  loop  ( > 40 links)  or  changed  symlink  target  before  removal,  removeSource silently  exits  or  computes  a  different  canonical  path  without  removing  the  indexed  record.
+																441 container
+																	442 AXListMarker 3. 
+																	443 text Lexical bag-of-words ranking only:
+																	444 button LocalKnowledge.search(query:grants:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalKnowledge.swift
+																		445 Unlabelled image /swift.svg
+																		446 text LocalKnowledge.search(query:grants:)
+																	447 text scores  single-file  records  (5  points  per  title  token  match,  1  point  per  body  token  match)  and  returns  a  single  600-character  window  around  the  earliest  token  match  (
+																	448 button excerpt(_:tokens:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalKnowledge.swift
+																		449 Unlabelled image /swift.svg
+																		450 text excerpt(_:tokens:)
+																	451 text ).  Later  occurrences  in  a  64  KB  document  are  never  excerpted  or  ranked.
+												452 container
+													453 AXListMarker • 
+													454 text Tested Behavior:
+													455 content list
+														456 container
+															457 AXListMarker • 
+															458 button LocalKnowledgeTests, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/LocalKnowledgeTests.swift
+																459 Unlabelled image /swift.svg
+																460 text LocalKnowledgeTests
+															461 text tests  standalone  indexing,  symlink  escape  rejection,  digest-based  staleness  purge  on  search ,  corrupt  index  recovery,  byte  limits,  and  cancellation.
+														462 container
+															463 AXListMarker • 
+															464 text Untested: Zero  tests  exist  for 
+															465 button LocalOCR, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalOCR.swift
+																466 Unlabelled image /swift.svg
+																467 text LocalOCR
+															468 text ,  and  no  test  verifies  that 
+															469 button AssistantStore.removeGrant(_:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+																470 Unlabelled image /swift.svg
+																471 text AssistantStore.removeGrant(_:)
+															472 text revokes  indexed  knowledge  or  redacts  retained  modelMessages .
+											473 heading Priority 2: Task Completion Accounting Treats Legitimate Unverified Actions as Failures, Value: 3
+												474 text Priority  2:  Task  Completion  Accounting  Treats  Legitimate  Unverified  Actions  as  Failures
+											475 content list
+												476 container
+													477 AXListMarker • 
+													478 text Source Observations:
+													479 content list
+														480 container
+															481 AXListMarker • 
+															482 text Unreachable 
+															483 text .completed
+															484 text  state:
+															485 button RunPhase.completed, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/Contracts.swift
+																486 Unlabelled image /swift.svg
+																487 text RunPhase.completed
+															488 text and  its  completion  banner  in 
+															489 button MainView, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MainView.swift
+																490 Unlabelled image /swift.svg
+																491 text MainView
+															492 text are  dead  code—nowhere  in  Sources/Relay is  phase = .completed ever  set.  Normal  run  termination  always  sets  phase = failures > 0 ? .needsInput : .idle (
+															493 button AssistantStore.swift:150, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+																494 Unlabelled image /swift.svg
+																495 text AssistantStore.swift:150
+															496 text ).
+														497 container
+															498 AXListMarker • 
+															499 text Critical bug — 
+															500 text verified: false
+															501 text  tools poison 
+															502 text failures
+															503 text  even after follow-up verification: In 
+															504 button AssistantStore.run(revision:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+																505 Unlabelled image /swift.svg
+																506 text AssistantStore.run(revision:)
+															507 text ,  every  tool  execution  runs:
+															508 container
+																509 text swift
+																510 button At mention code block
+																	511 image
+																512 button Copy code
+																	513 image
+															514 container
+																515 text if  result . verified  {  verifiedResults . append ( result ) } else {  failures  += 1 }
+															516 text However, 
+															517 button open_file, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+																518 Unlabelled image /swift.svg
+																519 text open_file
+															520 text , 
+															521 button press_control, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+																522 Unlabelled image /swift.svg
+																523 text press_control
+															524 text (including  routine  VLC/QuickTime  media  controls), 
+															525 button scroll_control, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+																526 Unlabelled image /swift.svg
+																527 text scroll_control
+															528 text ,  and 
+															529 button open_url, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+																530 Unlabelled image /swift.svg
+																531 text open_url
+															532 text always return  verified: false because  post-action  verification  requires  a  subsequent  observe_app .
+															533 content list
+																534 container
+																	535 AXListMarker • 
+																	536 text Edge case A (False 
+																	537 text .needsInput
+																	538 text  on successful multi-step tasks): If  the  user  asks  to  "Open  song.mp3  in  VLC  and  press  Play",  and  the  model  calls  open_file ( verified: false ,  failures = 1 ),  observe_app ( verified: true ),  press_control ( verified: false ,  failures = 2 ),  and  observe_app ( verified: true ),  the  run  still  ends  with  failures == 2 ,  forcing  phase = .needsInput and  logging  "needs input" (
+																	539 button AssistantStore.swift:150-151, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+																		540 Unlabelled image /swift.svg
+																		541 text AssistantStore.swift:150-151
+																	542 text ).
+																543 container
+																	544 AXListMarker • 
+																	545 text Edge case B (Premature 3-failure abort): Because  failures accumulates  across  verified: false tool  dispatches,  after  just  two  legitimate  scroll_control or  press_control calls  ( failures == 2 ),  a  single  recoverable  tool  error  in 
+																	546 button catch, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+																		547 Unlabelled image /swift.svg
+																		548 text catch
+																	549 text increments  failures to  3 and  immediately  aborts  the  entire  task  ( if failures >= 3 { throw ... } ).
+														550 container
+															551 AXListMarker • 
+															552 text Context budget mismatch (110 KB vs. 32 KB):
+															553 button AssistantStore.run, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+																554 Unlabelled image /swift.svg
+																555 text AssistantStore.run
+															556 text checks  currentContext.reduce(...) < 110_000 ,  but 
+															557 button LocalModelClient.maximumContextBytes, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalModelClient.swift
+																558 Unlabelled image /swift.svg
+																559 text LocalModelClient.maximumContextBytes
+															560 text enforces  a  hard  32 KB (
+															561 text 32_768
+															562 text  byte) ceiling  including  system  prompt  and  tool  schemas  (
+															563 button LocalModelClient.prepareContext, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalModelClient.swift
+																564 Unlabelled image /swift.svg
+																565 text LocalModelClient.prepareContext
+															566 text ).  Reading  just  two  11.5  KB  files  via  read_file exceeds  32  KB  and  fails  the  run.
+														567 container
+															568 AXListMarker • 
+															569 text No semantic outcome verification: As  highlighted  in 
+															570 button implementation-critique.md, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/planning/implementation-critique.md
+																571 Unlabelled image /markdown.svg
+																572 text implementation-critique.md
+															573 text , 
+															574 button write_file, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+																575 Unlabelled image /swift.svg
+																576 text write_file
+															577 text verifies  only  that  on-disk  bytes  match  the  model’s  content argument,  not  that  task  constraints  (e.g.,  row  counts,  arithmetic  totals,  or  source  coverage)  were  met.
+												578 container
+													579 AXListMarker • 
+													580 text Tested Behavior:
+													581 content list
+														582 container
+															583 AXListMarker • 
+															584 button CompletionLoopTests, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/CompletionLoopTests.swift
+																585 Unlabelled image /swift.svg
+																586 text CompletionLoopTests
+															587 text and 
+															588 button ExecutorTests, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/ExecutorTests.swift
+																589 Unlabelled image /swift.svg
+																590 text ExecutorTests
+															591 text verify  discovery  completion  checkpoints  ( list_apps ->  open_app ),  single-step  verified: false ->  .needsInput ,  batch  cancellation  on  stop() ,  protocol  retry  bounds  ( <= 2 ),  and  non-replay  on  restore.
+														592 container
+															593 AXListMarker • 
+															594 text Untested: No  test  exercises  a  multi-step  sequence  where  an  unverified  action  ( press_control ,  scroll_control ,  open_file )  is  followed  by  a  verifying  observe_app call.
+											595 heading Value: 3, Priority 3: Browser Actions Have Fragile Keystroke Automation, Strict URL Matching, and No Content Reader
+												596 text Priority  3:  Browser  Actions  Have  Fragile  Keystroke  Automation,  Strict  URL  Matching,  and  No  Content  Reader
+											597 container
+												598 button implementation-critique.md, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/planning/implementation-critique.md
+													599 Unlabelled image /markdown.svg
+													600 text implementation-critique.md
+												601 text is  slightly  behind  the  codebase  here:  Sources/Relay now  includes 
+												602 button BrowserAutomation, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/BrowserAutomation.swift
+													603 Unlabelled image /swift.svg
+													604 text BrowserAutomation
+												605 text ( browser_navigate and  search_web in 
+												606 button MacTools.swift:43-44,152-155, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+													607 Unlabelled image /swift.svg
+													608 text MacTools.swift:43-44,152-155
+												609 text ),  not  just  open_url .  However,  the  implementation  is  brittle  for  real  personal-assistant  web  tasks:
+											610 content list
+												611 container
+													612 AXListMarker • 
+													613 text Source Observations:
+													614 content list
+														615 container
+															616 AXListMarker • 
+															617 text Exact URL equality breaks 
+															618 text search_web
+															619 text  and normal redirects:
+															620 button BrowserAutomation.matchesDestination(_:expected:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/BrowserAutomation.swift
+																621 Unlabelled image /swift.svg
+																622 text BrowserAutomation.matchesDestination(_:expected:)
+															623 text requires  exact  URLComponents equality  (scheme,  host,  path,  query  items,  and  fragment).
+															624 content list
+																625 container
+																	626 AXListMarker • 
+																	627 text Edge case 1:
+																	628 button searchURL(query:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/BrowserAutomation.swift
+																		629 Unlabelled image /swift.svg
+																		630 text searchURL(query:)
+																	631 text navigates  to  https://duckduckgo.com/?q=... .  If  DuckDuckGo  appends  parameters  (e.g.,  &ia=web or  &t=... )  or  normalizes  query  encoding,  matchesDestination returns  false for  all  60  polling  iterations  (6  seconds)  and  throws  an  uncertain-outcome  failure  (
+																	632 button BrowserAutomation.swift:147, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/BrowserAutomation.swift
+																		633 Unlabelled image /swift.svg
+																		634 text BrowserAutomation.swift:147
+																	635 text ).
+																636 container
+																	637 AXListMarker • 
+																	638 text Edge case 2: Canonical  redirects  ( https://example.com ->  https://www.example.com ,  trailing  slash  normalization  on  subpaths,  or  login  redirects)  always  fail  verification.
+														639 container
+															640 AXListMarker • 
+															641 text Address bar readback fails on browser autocomplete/formatting:
+															642 button BrowserAutomation.navigate, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/BrowserAutomation.swift
+																643 Unlabelled image /swift.svg
+																644 text BrowserAutomation.navigate
+															645 text synthesizes  Cmd+T ,  Cmd+L ,  Cmd+A ,  Delete ,  chunks  of  16  UTF-16  units  via  CGEvent ,  and  then  requires  stringAttribute(address, kAXValueAttribute) == destination (
+															646 button line 127, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/BrowserAutomation.swift
+																647 Unlabelled image /swift.svg
+																648 text line 127
+															649 text )  before  pressing  Return .  If  Chrome  or  Safari’s  omnibox  appends  an  inline  autocomplete  suffix  or  strips  https:// ,  readback  mismatches  and  aborts  leaving  a  half-typed  tab.
+														650 container
+															651 AXListMarker • 
+															652 text English-only heuristics & spoofable security check:
+															653 button isAddressField, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/BrowserAutomation.swift
+																654 Unlabelled image /swift.svg
+																655 text isAddressField
+															656 text and 
+															657 button isSecurityInterruption, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/BrowserAutomation.swift
+																658 Unlabelled image /swift.svg
+																659 text isSecurityInterruption
+															660 text match  English-only  substrings  ( "address and search" ,  "smart search" ,  "privacy error" ,  "certificate" ,  "sign in to" ).  Any  web  page  whose  <title> contains  "certificate" or  "not secure" triggers  a  false-positive  security  error  (
+															661 button line 140, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/BrowserAutomation.swift
+																662 Unlabelled image /swift.svg
+																663 text line 140
+															664 text ),  while  non-English  browser  UI  fails  to  locate  the  address  bar  at  all  (
+															665 button line 111, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/BrowserAutomation.swift
+																666 Unlabelled image /swift.svg
+																667 text line 111
+															668 text ).
+														669 container
+															670 AXListMarker • 
+															671 text BFS cap and priority starvation hide page content:
+															672 button BrowserAutomation.descendants, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/BrowserAutomation.swift
+																673 Unlabelled image /swift.svg
+																674 text BrowserAutomation.descendants
+															675 text stops  at  350  AX  elements  /  0.7s;  a  browser  window  with  many  open  tabs  can  exhaust  350  nodes  in  the  tab  bar  before  reaching  AXWebArea .  Furthermore,  navigate returns  only  the  URL  and  document  title,  and  subsequent 
+															676 button MacTools.observe, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+																677 Unlabelled image /swift.svg
+																678 text MacTools.observe
+															679 text prioritizes  AXTextField (1)  and  AXButton / AXLink (2)  ahead  of  AXStaticText (3)  within  a  250-candidate  /  11.5  KB  cap—dropping  article  text  and  search  snippets  on  link-heavy  pages.
+												680 container
+													681 AXListMarker • 
+													682 text Tested Behavior:
+													683 content list
+														684 container
+															685 AXListMarker • 
+															686 button BrowserAutomationTests, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/BrowserAutomationTests.swift
+																687 Unlabelled image /swift.svg
+																688 text BrowserAutomationTests
+															689 text tests  only  pure  validation  helpers  ( validatedBrowser ,  searchURL ,  validatedURL ,  matchesDestination ,  isSecurityInterruption ,  and  review  fingerprinting).
+														690 container
+															691 AXListMarker • 
+															692 text Untested:
+															693 button BrowserAutomation.navigate(url:browser:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/BrowserAutomation.swift
+																694 Unlabelled image /swift.svg
+																695 text BrowserAutomation.navigate(url:browser:)
+															696 text ,  isAddressField ,  and  rejectSensitiveWindow have  zero  automated  test  coverage.
+											697 heading Priority 4: Onboarding Friction, Redundant 2.59 GB Hashing, and Unresumable Downloads, Value: 3
+												698 text Priority  4:  Onboarding  Friction,  Redundant  2.59  GB  Hashing,  and  Unresumable  Downloads
+											699 content list
+												700 container
+													701 AXListMarker • 
+													702 text Source Observations:
+													703 content list
+														704 container
+															705 AXListMarker • 
+															706 text Double SHA-256 verification and manual two-step activation after download: When 
+															707 button ModelDownload.start(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+																708 Unlabelled image /swift.svg
+																709 text ModelDownload.start()
+															710 text completes  in  Step  1  (
+															711 button OnboardingView.swift:186-199, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/OnboardingView.swift
+																712 Unlabelled image /swift.svg
+																713 text OnboardingView.swift:186-199
+															714 text ),  it  hashes  the  2.59  GB  file  (
+															715 button ModelDownload.swift:116, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+																716 Unlabelled image /swift.svg
+																717 text ModelDownload.swift:116
+															718 text )  and  sets  phase = .ready ,  but does not configure or load 
+															719 text AssistantStore
+															720 text .  The  user  must  click  a  second  button  ( "Check and use existing model" at 
+															721 button OnboardingView.swift:189, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/OnboardingView.swift
+																722 Unlabelled image /swift.svg
+																723 text OnboardingView.swift:189
+															724 text ),  which  invokes 
+															725 button OnboardingCoordinator.useInstalledModel(store:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/OnboardingCoordinator.swift
+																726 Unlabelled image /swift.svg
+																727 text OnboardingCoordinator.useInstalledModel(store:)
+															728 text —re-reading  and  re-hashing  all  2.59  GB  a  second  time  via  await download.verifyExisting() before  loading  the  engine.
+														729 container
+															730 AXListMarker • 
+															731 text No resumable download:
+															732 button ModelDownload.begin, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+																733 Unlabelled image /swift.svg
+																734 text ModelDownload.begin
+															735 text uses  URLSessionConfiguration.ephemeral ,  deletes  temporaryURL on  exit,  and 
+															736 button validateResponse, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+																737 Unlabelled image /swift.svg
+																738 text validateResponse
+															739 text rejects  HTTP  206 .  Any  transient  network  drop  during  the  2.59  GB  transfer  requires  restarting  from  0%.
+														740 container
+															741 AXListMarker • 
+															742 text Silent CPU override:
+															743 button OnboardingCoordinator.useInstalledModel, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/OnboardingCoordinator.swift
+																744 Unlabelled image /swift.svg
+																745 text OnboardingCoordinator.useInstalledModel
+															746 text hardcodes  store.configuration.computeBackend = "cpu" ,  overwriting  a  user’s  "gpu" preference  if  they  re-run  setup.
+														747 container
+															748 AXListMarker • 
+															749 text "Set up later" bypasses hardware and model gates permanently: On  Step  0  or  Step  1,  clicking  "Set up later" (
+															750 button OnboardingView.swift:368-373, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/OnboardingView.swift
+																751 Unlabelled image /swift.svg
+																752 text OnboardingView.swift:368-373
+															753 text )  calls 
+															754 button coordinator.finish(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/OnboardingCoordinator.swift
+																755 Unlabelled image /swift.svg
+																756 text coordinator.finish()
+															757 text ,  persisting  relay.setup.completed.v1 = true even  on  unsupported  hardware  ( !coordinator.hardware.supported )  or  with  no  model  selected.
+														758 container
+															759 AXListMarker • 
+															760 text Welcome prompt mismatch when Accessibility is skipped: Skipping  Accessibility  on  Step  2  (
+															761 button OnboardingView.swift:375, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/OnboardingView.swift
+																762 Unlabelled image /swift.svg
+																763 text OnboardingView.swift:375
+															764 text )  still  shows  "Find sf.webm in Finder" as  the  first  suggestion  in 
+															765 button MainView.welcome, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MainView.swift
+																766 Unlabelled image /swift.svg
+																767 text MainView.welcome
+															768 text ,  which  immediately  fails  with  an  Accessibility  permission  error  when  clicked.
+												769 container
+													770 AXListMarker • 
+													771 text Tested Behavior:
+													772 content list
+														773 container
+															774 AXListMarker • 
+															775 button OnboardingTests, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/OnboardingTests.swift
+																776 Unlabelled image /swift.svg
+																777 text OnboardingTests
+															778 text covers  MacReadiness.evaluate and  UserDefaults step  persistence/clamping; 
+															779 button ModelDownloadTests, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/ModelDownloadTests.swift
+																780 Unlabelled image /swift.svg
+																781 text ModelDownloadTests
+															782 text covers  checksum/size  checks  and  stubbed  URLProtocol transfers.
+														783 container
+															784 AXListMarker • 
+															785 text Untested: useInstalledModel ,  loadModel ,  cancelPreparation ,  and  onboarding-to- MainView state  transitions.
+											786 heading Priority 5: Readable White Text, Visual Hierarchy, and Contrast, Value: 3
+												787 text Priority  5:  Readable  White  Text,  Visual  Hierarchy,  and  Contrast
+											788 container
+												789 text Compared  to  earlier  iterations  noted  in 
+												790 button implementation-critique.md, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/planning/implementation-critique.md
+													791 Unlabelled image /markdown.svg
+													792 text implementation-critique.md
+												793 text , 
+												794 button RelayTheme, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MainView.swift
+													795 Unlabelled image /swift.svg
+													796 text RelayTheme
+												797 text now  defines  high-contrast  base  tokens  ( ink (0.92, 0.94, 0.98) ≈  15.8:1  against  background (0.048, 0.058, 0.077) ;  muted (0.74, 0.78, 0.85) ≈  10.5:1  at  full  opacity).  However,  several  source  patterns  undermine  readability  and  hierarchy:
+											798 content list
+												799 container
+													800 AXListMarker • 
+													801 text Source Observations:
+													802 content list
+														803 container
+															804 AXListMarker • 
+															805 text Critical review, error, and status details use 
+															806 text RelayTheme.muted
+															807 text  instead of primary white 
+															808 text ink
+															809 text :
+															810 content list
+																811 container
+																	812 AXListMarker • 
+																	813 text In 
+																	814 button MainView.reviewCard(_:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MainView.swift
+																		815 Unlabelled image /swift.svg
+																		816 text MainView.reviewCard(_:)
+																	817 text ,  review.reason —which  displays  the  target  window,  editable  field  payloads,  or  destination  URL  the  user  is  approving—is  rendered  in  RelayTheme.muted on  a  tinted  RelayTheme.accent.opacity(0.06) card,  making  the  security-critical  payload  dimmer  than  the  card  title.
+																818 container
+																	819 AXListMarker • 
+																	820 text Actionable  blockers  and  diagnostics—including 
+																	821 button OnboardingView, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/OnboardingView.swift
+																		822 Unlabelled image /swift.svg
+																		823 text OnboardingView
+																	824 text Accessibility  instructions, 
+																	825 button OnboardingView.footer, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/OnboardingView.swift
+																		826 Unlabelled image /swift.svg
+																		827 text OnboardingView.footer
+																	828 text ( "Load and check a model to continue" ), 
+																	829 button SettingsView, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/SettingsView.swift
+																		830 Unlabelled image /swift.svg
+																		831 text SettingsView
+																	832 text ( accessibilityCheckStatus ),  and 
+																	833 button MainView.activityPanel, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MainView.swift
+																		834 Unlabelled image /swift.svg
+																		835 text MainView.activityPanel
+																	836 text ( entry.detail )—all  use  RelayTheme.muted ,  flattening  primary  operational  feedback  into  secondary  metadata  color.
+														837 container
+															838 AXListMarker • 
+															839 text Compounded opacity lowers contrast on interactive hints and prompts:
+															840 content list
+																841 container
+																	842 AXListMarker • 
+																	843 button MainView.composer, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MainView.swift
+																		844 Unlabelled image /swift.svg
+																		845 text MainView.composer
+																	846 text renders  "Load model first" /  "↵ send" at  13pt with  RelayTheme.muted.opacity(0.75) on  RelayTheme.surface (~6.0:1  contrast).
+																847 container
+																	848 AXListMarker • 
+																	849 button MainView.suggestion, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MainView.swift
+																		850 Unlabelled image /swift.svg
+																		851 text MainView.suggestion
+																	852 text dims  clickable  starter  prompts  with  RelayTheme.ink.opacity(0.82) .
+														853 container
+															854 AXListMarker • 
+															855 text Hardcoded font sizes (
+															856 text 11pt–16pt
+															857 text ) and fixed window geometry: Every  text  element  across 
+															858 button MainView, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MainView.swift
+																859 Unlabelled image /swift.svg
+																860 text MainView
+															861 text , 
+															862 button OnboardingView, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/OnboardingView.swift
+																863 Unlabelled image /swift.svg
+																864 text OnboardingView
+															865 text ,  and 
+															866 button SettingsView, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/SettingsView.swift
+																867 Unlabelled image /swift.svg
+																868 text SettingsView
+															869 text uses  fixed  .font(.system(size: ...)) (including  11pt at 
+															870 button MainView.swift:297, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MainView.swift
+																871 Unlabelled image /swift.svg
+																872 text MainView.swift:297
+															873 text and  12pt badges  at 
+															874 button OnboardingView.swift:157,216, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/OnboardingView.swift
+																875 Unlabelled image /swift.svg
+																876 text OnboardingView.swift:157,216
+															877 text ),  and 
+															878 button SettingsView, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/SettingsView.swift
+																879 Unlabelled image /swift.svg
+																880 text SettingsView
+															881 text is  locked  to  .frame(width: 650, height: 650) .
+												882 container
+													883 AXListMarker • 
+													884 text Tested Behavior:
+													885 content list
+														886 container
+															887 AXListMarker • 
+															888 text Untested: Zero  tests  verify  contrast  ratios,  text  scaling/clipping,  or  accessibility  traits.
+											889 heading Priority 6: Missing Release Gates, Value: 3
+												890 text Priority  6:  Missing  Release  Gates
+											891 content list
+												892 container
+													893 AXListMarker 1. 
+													894 text No Global Stop or Summon Shortcut When Another App Is Frontmost:
+													895 content list
+														896 container
+															897 AXListMarker • 
+															898 button RelayApp, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/RelayApp.swift
+																899 Unlabelled image /swift.svg
+																900 text RelayApp
+															901 text binds  Stop  ( ⌘. )  via  SwiftUI  CommandMenu ,  which  only  fires  when  Relay  is  the  focused  application.  Because 
+															902 button BrowserAutomation.navigate, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/BrowserAutomation.swift
+																903 Unlabelled image /swift.svg
+																904 text BrowserAutomation.navigate
+															905 text and 
+															906 button FinderAutomation.search, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/FinderAutomation.swift
+																907 Unlabelled image /swift.svg
+																908 text FinderAutomation.search
+															909 text bring  Chrome,  Safari,  or  Finder  to  the  foreground  before  posting  synthetic  CGEvent keystrokes,  the  user  cannot press 
+															910 text ⌘.
+															911 text  to stop Relay while it is actively typing into the foreground browser or Finder .
+												912 container
+													913 AXListMarker 2. 
+													914 text Environment-Gated and Skipped Integration Tests:
+													915 content list
+														916 container
+															917 AXListMarker • 
+															918 text Real  AX  fixture  testing  ( RELAY_RUN_AX_TESTS=1 ),  Finder  UI  search  ( RELAY_RUN_FINDER_TEST=1 )  in 
+															919 button AccessibilityIntegrationTests.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/AccessibilityIntegrationTests.swift
+																920 Unlabelled image /swift.svg
+																921 text AccessibilityIntegrationTests.swift
+															922 text ,  and  LiteRT-LM  /  Gemma  model  tests  ( RELAY_LITERT_TEST_MODEL ,  RELAY_GEMMA_MODEL_PATH )  in 
+															923 button LocalModelTests.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/LocalModelTests.swift
+																924 Unlabelled image /swift.svg
+																925 text LocalModelTests.swift
+															926 text are  all  skipped  by  default.  Moreover, 
+															927 button unavailableAccessibilityIsExplicitAndDoesNotReportPass, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/AccessibilityIntegrationTests.swift
+																928 Unlabelled image /swift.svg
+																929 text unavailableAccessibilityIsExplicitAndDoesNotReportPass
+															930 text silently  passes  ( guard !AXIsProcessTrusted() else { return } )  on  any  machine  where  Accessibility  is  enabled.
+												931 container
+													932 AXListMarker 3. 
+													933 text End-to-End Integration Gaps:
+													934 content list
+														935 container
+															936 AXListMarker • 
+															937 text No  test  runs  AssistantStore +  MacTools together  without  executeOverride ,  no  test  exercises 
+															938 button BrowserAutomation.navigate, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/BrowserAutomation.swift
+																939 Unlabelled image /swift.svg
+																940 text BrowserAutomation.navigate
+															941 text or 
+															942 button LocalOCR, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalOCR.swift
+																943 Unlabelled image /swift.svg
+																944 text LocalOCR
+															945 text ,  and  ad-hoc  code  signing  invalidates  macOS  TCC  Accessibility  grants  across  rebuilds  (
+															946 button OnboardingView.swift:290-296, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/OnboardingView.swift
+																947 Unlabelled image /swift.svg
+																948 text OnboardingView.swift:290-296
+															949 text ).
+										950 text 16m ago
+										951 button Copy
+											952 image
+										953 toggle button Description: Good response, Value: 0
+											954 image
+										955 toggle button Description: Bad response, Value: 0
+											956 image
+									957 container
+										958 container
+											959 text entry area (settable) Message input
+											960 text Ask anything, @ to mention, / for actions
+										961 pop-up button Add context
+											962 image
+										963 pop-up button Select model, current: Gemini 4 Argon High
+											964 text Gemini 4 Argon
+											965 text High
+											966 image
+										967 pop-up button Agent permissions preset selector, current: Turbo
+											968 image
+											969 image
+											970 text Turbo
+											971 image
+										972 button Record voice memo
+											973 image
+										974 button (disabled) Send message
+											975 image
+						976 button Toggle Sidebar
+							977 image
+						978 button Go Back
+							979 image
+						980 button (disabled) Go Forward
+							981 image
+						982 button Search Conversations
+							983 image
+						984 button Toggle Auxiliary Pane
+							985 image
+					986 container Notifications
+					987 list box Typeahead menu
+					988 list box Typeahead menu
+	989 close button
+	990 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	991 minimise button
+992 menu bar
+	993 Antigravity
+	994 File
+	995 Edit
+	996 View
+	997 Window
+
+The focused UI element is 959 text entry area (settable) Message input

@@ -1,0 +1,15 @@
+.build/
+build/
+dist/
+__pycache__/
+.DS_Store
+.swiftpm/
+*.xcuserstate
+
+# Local agent coordination and private machine configuration
+.agents/
+.env
+.env.*
+!.env.example
+*.pem
+*.key

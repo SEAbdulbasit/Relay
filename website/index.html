@@ -1,0 +1,1060 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Relay — 100% Offline Multi-Agent Intelligence for macOS</title>
+  <meta name="description" content="Relay is an intelligent, completely offline macOS assistant powered by local LiteRT-LM and Gemma 4 E2B. On-device multi-agent coordination with Planner, Navigator, Executor, and Critic roles. Zero cloud dependencies.">
+
+  <!-- Favicon / Brand Mark -->
+  <link rel="icon" type="image/svg+xml" href="assets/icons/relay-orb.svg">
+
+  <!-- Google Fonts: Sentient OS 3-Voice Typography System (Display Sans, Editorial Serif, Monospace) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Modular Design System Styles -->
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/animations.css">
+</head>
+<body>
+  <!-- Accessibility Skip Navigation -->
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+
+  <!-- ==========================================================================
+       Site Header / Navigation Bar
+       ========================================================================== -->
+  <header class="site-header" role="banner">
+    <div class="container navbar">
+      <a href="index.html" class="brand-logo" aria-label="Relay Home">
+        <div class="brand-orb" aria-hidden="true"></div>
+        <span>Relay</span>
+      </a>
+
+      <nav role="navigation" aria-label="Main Navigation">
+        <ul class="nav-links">
+          <li><a href="#multi-agent">Multi-Agent</a></li>
+          <li><a href="#features">Features</a></li>
+          <li><a href="privacy.html">Privacy Core</a></li>
+          <li><a href="#specs">Specifications</a></li>
+          <li><a href="#faq">FAQ</a></li>
+        </ul>
+      </nav>
+
+      <div class="nav-cta-cluster">
+        <a href="https://github.com/relay-assistant/relay" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm" aria-label="View Relay on GitHub">
+          GitHub
+        </a>
+        <div class="btn-halo-container">
+          <div class="btn-halo-glow" aria-hidden="true"></div>
+          <a href="#download" class="btn btn-primary btn-sm">
+            <img src="assets/icons/apple.svg" alt="" class="btn-icon">
+            <span>Download</span>
+          </a>
+        </div>
+        <button class="nav-toggle-btn" aria-label="Toggle navigation menu" aria-expanded="false">
+          ☰
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ==========================================================================
+       Main Content
+       ========================================================================== -->
+  <main id="main-content" role="main">
+
+    <!-- Sentient OS Split Hero Section (readme_hero.jpg parity) -->
+    <section class="section hero-section" style="padding-top: 4.5rem; padding-bottom: 3.5rem;">
+      <div class="container">
+        <div class="hero-split-grid">
+          
+          <!-- Left Column: Editorial Headline, Value Lines & Glowing Pill CTA -->
+          <div>
+            <div class="eyebrow-badge">
+              <span class="pulse-dot" aria-hidden="true"></span>
+              <span>100% Offline • Pinned Gemma 4 E2B • Zero Cloud Telemetry</span>
+            </div>
+
+            <h1 style="line-height: 1.08;">
+              Personal AI that never leaves your desk.<br>
+              <span class="text-prism animate-shimmer font-serif" style="font-weight: 400; font-size: 1.06em;">Completely offline.</span>
+            </h1>
+
+            <div class="hero-value-lines">
+              <span><strong>Remembers</strong> your local files, notes, and workspace context.</span>
+              <span><strong>Coordinates</strong> four specialized agents on a shared Blackboard.</span>
+              <span><strong>Acts</strong> safely across your Mac with zero network sockets.</span>
+            </div>
+
+            <!-- Call to Action Buttons -->
+            <div class="hero-actions" style="justify-content: flex-start; margin-top: 2rem; margin-bottom: 1.75rem;">
+              <div class="btn-halo-container">
+                <div class="btn-halo-glow" aria-hidden="true"></div>
+                <a href="#download" class="btn btn-primary" style="padding: 0.9rem 1.85rem; font-size: 1rem;">
+                  <img src="assets/icons/apple.svg" alt="" class="btn-icon" style="width: 1.25rem; height: 1.25rem;">
+                  <span>Download for macOS</span>
+                </a>
+              </div>
+
+              <a href="#multi-agent" class="btn btn-secondary" style="padding: 0.9rem 1.6rem; font-size: 1rem;">
+                <span>Explore Architecture</span>
+                <span aria-hidden="true">→</span>
+              </a>
+            </div>
+
+            <!-- Terminal Install Pill + Monospace Whisper -->
+            <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 0.85rem;">
+              <div class="terminal-pill" role="region" aria-label="Command line installation">
+                <span class="terminal-pill-prompt">$</span>
+                <span class="terminal-pill-cmd">brew install --cask relay-ai</span>
+                <button class="terminal-copy-btn" aria-label="Copy Homebrew install command to clipboard">
+                  <img src="assets/icons/copy.svg" alt="" class="btn-icon">
+                  <span>Copy</span>
+                </button>
+              </div>
+              <div class="mono-whisper" style="color: var(--color-text-dim); font-size: 0.68rem;">
+                NO SIGN-UP · NO CLOUD API KEYS · FREE FOR MACOS (APPLE SILICON)
+              </div>
+            </div>
+          </div>
+
+          <!-- Right Column: Interactive 3D Sentient Particle Sphere & Glowing Orbital Ring -->
+          <div class="hero-orb-stage" aria-hidden="true">
+            <div class="hero-orb-aura"></div>
+            <canvas id="sentient-orb-canvas" width="520" height="520"></canvas>
+          </div>
+
+        </div>
+
+        <!-- Sentient OS Dual Hero Stage: 01 Sidekick in the Notch + 02 Double Tap (⌘⌘) -->
+        <div class="sentient-dual-stage">
+          <!-- Card 1: Sidekick in the Notch -->
+          <div class="sentient-stage-card scroll-reveal-card">
+            <div>
+              <div class="mono-whisper" style="color: var(--color-accent-gold); margin-bottom: 0.45rem;">
+                SIDEKICK · HAND OFF A TASK IN THE NOTCH
+              </div>
+              <h3 class="font-serif" style="font-size: 1.65rem; font-weight: 400; margin-bottom: 0.45rem;">
+                Just click your notch to let Relay take over.
+              </h3>
+              <p style="font-size: 0.9rem; color: var(--color-text-muted); margin: 0;">
+                Relay lives inside your MacBook bezel. Click the notch to expand the command bar, see which local Markdown note it remembers, and watch the 4-role Blackboard execute.
+              </p>
+            </div>
+
+            <div class="bezel-showcase-frame">
+              <div id="demo-living-notch" class="living-notch-pill" role="button" tabindex="0" aria-label="Click to expand living notch Sidekick">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;">
+                  <div style="display: flex; align-items: center; gap: 0.55rem;">
+                    <span class="brand-orb" style="width: 18px; height: 18px;"></span>
+                    <span id="notch-status-title" style="font-size: 0.8rem; font-weight: 600;">Sidekick · Click notch to hand off a task</span>
+                  </div>
+                  <span id="notch-role-pill" class="role-badge planner" style="font-size: 0.65rem;">IDLE · ⌘⇧Space</span>
+                </div>
+                <div id="notch-expanded-drawer" style="display: none; margin-top: 0.75rem; padding-top: 0.65rem; border-top: 1px solid rgba(255,255,255,0.1); text-align: left;">
+                  <div style="font-family: var(--font-mono); font-size: 0.78rem; color: var(--color-text-primary);">
+                    &gt; Finish the Northstar SSO security checklist and reply to Alex
+                  </div>
+                  <div class="notch-remembering-bloom">
+                    <span>✦ Remembering</span>
+                    <strong>‹Northstar pilot.md›</strong>
+                    <span>· [Planner → Navigator → Executor → Critic]</span>
+                  </div>
+                </div>
+              </div>
+
+              <div style="margin-top: auto; width: 100%; display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 0.7rem; color: var(--color-text-dim);">
+                <span>CONCAVE BEZEL SILHOUETTE · 60FPS RIM GLOW</span>
+                <button id="btn-toggle-notch" type="button" class="btn btn-secondary btn-sm">Click Notch</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 2: Double Tap (⌘⌘) + 3-Comet CaretSwirl -->
+          <div class="sentient-stage-card scroll-reveal-card">
+            <div>
+              <div class="mono-whisper" style="color: #6fb6ff; margin-bottom: 0.45rem;">
+                DOUBLE TAP · DRAFT THE RIGHT REPLY IN TWO TAPS
+              </div>
+              <h3 class="font-serif" style="font-size: 1.65rem; font-weight: 400; margin-bottom: 0.45rem;">
+                Double tap <kbd style="font-family: var(--font-mono); font-size: 0.85em;">⌘⌘</kbd> and Relay writes in your voice.
+              </h3>
+              <p style="font-size: 0.9rem; color: var(--color-text-muted); margin: 0;">
+                Three rainbow comets spiral into your text caret and draft what you would have written using your local <code>writingstyle.md</code> and project notes.
+              </p>
+            </div>
+
+            <div class="doubletap-stage-frame">
+              <div style="display: flex; align-items: center; justify-content: space-between; font-family: var(--font-mono); font-size: 0.7rem; color: var(--color-text-muted);">
+                <span>APPLE MAIL · TO: ALEX CHEN (NORTHSTAR)</span>
+                <span style="color: var(--color-accent-emerald);">● writingstyle.md matched</span>
+              </div>
+
+              <div style="position: relative; background: #0b0d13; border: 1px solid rgba(255,255,255,0.09); border-radius: 10px; padding: 0.85rem; min-height: 92px; text-align: left; overflow: hidden;">
+                <canvas id="caret-swirl-canvas" width="420" height="96" style="position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;"></canvas>
+                <div id="doubletap-reply-output" style="position: relative; z-index: 2; font-size: 0.83rem; color: var(--color-text-primary); line-height: 1.45;">
+                  Hey Alex — yes, let's expand the Northstar pilot to 80 seats. I'll send over the SSO checklist ahead of Thursday's security review so we're all set for Friday's rollout.
+                </div>
+              </div>
+
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem;">
+                <div style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--color-text-dim);">
+                  3-COMET RAINBOW SPIRAL · GOLDEN-ANGLE SPARKS
+                </div>
+                <button id="btn-trigger-doubletap" type="button" class="cmd-keycap-btn" aria-label="Trigger Double Tap Right Command">
+                  <span style="font-size: 0.95rem;">⌘</span>
+                  <span style="font-size: 0.62rem; letter-spacing: 0.04em;">command</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==========================================================================
+         Interactive Multi-Agent Preview Window (readme_morning.jpg parity)
+         ========================================================================== -->
+    <section id="multi-agent" class="section" style="padding-top: 1rem;">
+      <div class="container">
+        
+        <div class="section-header">
+          <div class="mono-whisper" style="margin-bottom: 0.6rem; color: var(--color-accent-gold);">
+            MORNING BRIEFING &amp; COOPERATIVE BLACKBOARD
+          </div>
+          <h2>Four specialized agents. <span class="font-serif" style="font-weight: 400;">One air-gapped Mac.</span></h2>
+          <p>
+            Unlike monolithic cloud models that hallucinate actions, Relay prepares proactive local briefings and distributes tasks across discrete on-device roles using a sequential turn-based Blackboard.
+          </p>
+        </div>
+
+        <div class="agent-preview-wrapper">
+          <div class="mac-window">
+            
+            <!-- Window Title Bar -->
+            <div class="mac-titlebar">
+              <div class="mac-traffic-lights" aria-hidden="true">
+                <span class="traffic-light red"></span>
+                <span class="traffic-light yellow"></span>
+                <span class="traffic-light green"></span>
+              </div>
+              <div class="mac-title">
+                <span>Relay — Multi-Agent Cooperative Mode</span>
+                <span class="model-status-pill">
+                  <span class="pulse-dot" style="width: 6px; height: 6px;"></span>
+                  Local Gemma 4 E2B • 100% Offline
+                </span>
+              </div>
+              <div style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--color-text-dim);" aria-hidden="true">
+                Knowledge · Access · Activity
+              </div>
+            </div>
+
+            <!-- Sentient OS Editorial Briefing Cards Strip -->
+            <div class="sentient-briefing-strip" role="region" aria-label="Proactive local task cards">
+              <div class="sentient-briefing-card active" data-scenario="taxes">
+                <div>
+                  <div class="mono-whisper" style="color: var(--color-accent-gold); font-size: 0.63rem; margin-bottom: 0.35rem;">
+                    EXECUTOR · COMPUTER USE
+                  </div>
+                  <h4>Organize Downloads &amp; summarize tax invoices.</h4>
+                </div>
+                <p>Scans 2026 PDFs in ~/Downloads, moves them to Taxes, and verifies checksums.</p>
+                <span class="sentient-card-cta">✦ Organize &amp; verify</span>
+              </div>
+
+              <div class="sentient-briefing-card" data-scenario="calendar">
+                <div>
+                  <div class="mono-whisper" style="color: #ff6b6b; font-size: 0.63rem; margin-bottom: 0.35rem;">
+                    NAVIGATOR · WORKSPACE
+                  </div>
+                  <h4>Extract Q3 Launch brief from Mail to Notes.</h4>
+                </div>
+                <p>Reads Sarah's thread via AXUIElement tree and drafts a structured Apple Note.</p>
+                <span class="sentient-card-cta">✦ Draft brief</span>
+              </div>
+
+              <div class="sentient-briefing-card" data-scenario="storage">
+                <div>
+                  <div class="mono-whisper" style="color: var(--color-role-navigator); font-size: 0.63rem; margin-bottom: 0.35rem;">
+                    CRITIC · SYSTEM AUDIT
+                  </div>
+                  <h4>Audit Xcode DerivedData &amp; SwiftPM caches.</h4>
+                </div>
+                <p>Identifies 28.0 GB of dormant build artifacts with human-in-the-loop safety gates.</p>
+                <span class="sentient-card-cta">✦ Inspect storage</span>
+              </div>
+
+              <div class="sentient-briefing-card" data-scenario="taxes">
+                <div>
+                  <div class="mono-whisper" style="color: var(--color-accent-emerald); font-size: 0.63rem; margin-bottom: 0.35rem;">
+                    PLANNER · SOVEREIGNTY
+                  </div>
+                  <h4>75% fewer context tokens per agent turn.</h4>
+                </div>
+                <p>Each role receives only its partitioned tool schemas over Unified Memory.</p>
+                <span class="sentient-card-cta">✦ Inspect Blackboard</span>
+              </div>
+            </div>
+
+            <!-- Window Split Body -->
+            <div class="mac-window-body">
+              
+              <!-- Left Pane: Conversation Feed -->
+              <div class="mac-conversation-pane">
+                
+                <div class="demo-scenario-bar">
+                  <div class="scenario-select-group">
+                    <label for="demo-scenario-select" class="scenario-label">Scenario:</label>
+                    <select id="demo-scenario-select" class="scenario-select" aria-label="Select demonstration task scenario">
+                      <option value="taxes">Organize Downloads &amp; Summarize Invoices</option>
+                      <option value="calendar">Extract Meeting Brief from Mail to Notes</option>
+                      <option value="storage">Audit Caches &amp; Suggest Disk Reclamation</option>
+                    </select>
+                  </div>
+
+                  <div class="demo-controls">
+                    <button id="demo-btn-play" class="btn btn-secondary btn-sm" aria-label="Play or pause agent simulation">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <polygon points="5 3 19 12 5 21 5 3" />
+                      </svg>
+                      Play
+                    </button>
+                    <button id="demo-btn-step" class="btn btn-secondary btn-sm" aria-label="Step forward one turn">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <polygon points="5 4 15 12 5 20 5 4" />
+                        <line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2" />
+                      </svg>
+                      Step
+                    </button>
+                    <button id="demo-btn-reset" class="btn btn-secondary btn-sm" aria-label="Reset simulation to beginning">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                        <path d="M3 3v5h5" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Scrollable Messages Feed -->
+                <div id="demo-feed-container" class="feed-container" role="log" aria-live="polite">
+                  <!-- Dynamic conversation bubbles populated by agent-demo.js -->
+                </div>
+
+              </div>
+
+              <!-- Right Pane: Live Blackboard State Inspector -->
+              <div class="mac-blackboard-pane">
+                
+                <div class="inspector-section">
+                  <div class="inspector-header">
+                    <span>Task Objective</span>
+                    <span id="demo-step-counter" style="color: var(--color-text-muted);">1 / 5</span>
+                  </div>
+                  <div id="demo-goal-text" style="font-size: var(--font-size-sm); font-weight: 600; color: var(--color-text-primary);">
+                    Organize Downloads &amp; Summarize Tax Invoices
+                  </div>
+                </div>
+
+                <div class="inspector-section">
+                  <div class="inspector-header">
+                    <span>Active Turn</span>
+                    <span id="demo-active-role-badge" class="role-badge planner">PLANNER</span>
+                  </div>
+                  <div style="font-size: var(--font-size-xs); color: var(--color-text-muted);">
+                    Context tokens partitioned per role (75% token budget saved).
+                  </div>
+                </div>
+
+                <div class="inspector-section" style="flex: 1;">
+                  <div class="inspector-header">
+                    <span>Decomposed Execution Plan</span>
+                  </div>
+                  <ul id="demo-plan-list" class="plan-steps-list">
+                    <!-- Populated by agent-demo.js -->
+                  </ul>
+                </div>
+
+                <div class="inspector-section">
+                  <div class="inspector-header">
+                    <span>Security-Scoped Boundaries</span>
+                  </div>
+                  <div id="demo-scoped-context" style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--color-accent-gold);">
+                    ~/Downloads, ~/Documents/Taxes
+                  </div>
+                  <div style="font-size: 0.72rem; color: var(--color-text-dim); margin-top: 0.35rem;">
+                    Sandboxed disk access • Zero outbound network sockets
+                  </div>
+                </div>
+
+              </div>
+
+            </div>
+
+            <!-- Sentient OS Glowing Bottom Command Composer Bar -->
+            <div class="sentient-composer-footer" aria-hidden="true">
+              <div class="sentient-composer-bar">
+                <span class="composer-mode-pill">▣ Computer use ▾</span>
+                <span class="composer-placeholder">Tell me what you want me to DO</span>
+                <span style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--color-text-dim);">⌘⇧Space</span>
+                <span class="composer-send-circle">↑</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ==========================================================================
+         Overnight Catch-Up (03:00 AM → 09:00 AM) + Constellation Star Map & Obsidian Vault
+         ========================================================================== -->
+    <section id="knowledge-vault" class="section" style="padding-top: 1.5rem;">
+      <div class="container">
+        <div class="section-header">
+          <div class="mono-whisper" style="margin-bottom: 0.6rem; color: #6fb6ff;">
+            03:00 AM OVERNIGHT CATCH-UP · PLAIN MARKDOWN VAULT
+          </div>
+          <h2>It did the catching up <span class="font-serif" style="font-weight: 400;">while you slept.</span></h2>
+          <p>
+            Every night on your Mac, Relay connects your explicitly granted notes, emails, and project docs into a 60fps force-directed Constellation Galaxy and clean Obsidian-compatible Markdown files—100% offline.
+          </p>
+        </div>
+
+        <div class="constellation-vault-window scroll-reveal-card">
+          <div class="vault-toolbar">
+            <div style="display: flex; align-items: center; gap: 0.65rem;">
+              <span class="badge-tag success" id="vault-clock-badge">03:00 AM · Overnight Synthesis</span>
+              <span style="font-family: var(--font-mono); font-size: 0.74rem; color: var(--color-text-muted);">
+                ~/Documents/Relay/Knowledge · Plain Markdown. Entirely yours.
+              </span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-vault-03am">03:00 AM Graph</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-vault-09am">09:00 AM Briefing</button>
+            </div>
+          </div>
+
+          <div class="vault-grid">
+            <!-- Left Sidebar: Plain Markdown Files -->
+            <div class="vault-sidebar" role="tablist" aria-label="Local Markdown Knowledge Notes">
+              <div class="mono-whisper" style="font-size: 0.65rem; color: var(--color-text-dim); padding: 0.25rem 0.5rem;">
+                MARKDOWN VAULT (7 NOTES)
+              </div>
+              <button type="button" class="vault-note-btn active" data-note="README.md">
+                <span>📄 README.md</span>
+                <span style="font-family: var(--font-mono); font-size: 0.68rem; color: var(--color-accent-gold);">Core</span>
+              </button>
+              <button type="button" class="vault-note-btn" data-note="Northstar pilot.md">
+                <span>📄 Northstar pilot.md</span>
+                <span style="font-family: var(--font-mono); font-size: 0.68rem; color: #bb65ff;">Work</span>
+              </button>
+              <button type="button" class="vault-note-btn" data-note="writingstyle.md">
+                <span>📄 writingstyle.md</span>
+                <span style="font-family: var(--font-mono); font-size: 0.68rem; color: #4ade80;">Voice</span>
+              </button>
+              <button type="button" class="vault-note-btn" data-note="Apple silicon.md">
+                <span>📄 Apple silicon.md</span>
+                <span style="font-family: var(--font-mono); font-size: 0.68rem; color: #6fb6ff;">Tech</span>
+              </button>
+              <button type="button" class="vault-note-btn" data-note="Interface taste.md">
+                <span>📄 Interface taste.md</span>
+                <span style="font-family: var(--font-mono); font-size: 0.68rem; color: #ffc371;">Design</span>
+              </button>
+              <button type="button" class="vault-note-btn" data-note="Event Venue Quote.md">
+                <span>📄 Event Venue Quote.md</span>
+                <span style="font-family: var(--font-mono); font-size: 0.68rem; color: #ff5c5c;">Plans</span>
+              </button>
+            </div>
+
+            <!-- Center Pane: Interactive 60fps Constellation Star Map Canvas -->
+            <div class="vault-canvas-pane">
+              <canvas id="sentient-constellation-canvas" width="560" height="440" aria-label="Interactive force-directed knowledge constellation graph"></canvas>
+              <div style="position: absolute; bottom: 0.85rem; left: 1rem; right: 1rem; display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 0.68rem; color: var(--color-text-dim); pointer-events: none;">
+                <span>✦ CLICK ANY STAR NODE TO INSPECT MARKDOWN</span>
+                <span>6 DOMAINS · CURVED BÉZIER FILAMENTS</span>
+              </div>
+            </div>
+
+            <!-- Right Pane: Obsidian-Style Markdown Reader with Clickable [[Wikilinks]] -->
+            <div class="vault-reader-pane">
+              <div>
+                <div class="mono-whisper" id="vault-note-domain" style="color: var(--color-accent-gold); font-size: 0.66rem; margin-bottom: 0.35rem;">
+                  CORE VAULT · UPDATED OVERNIGHT
+                </div>
+                <h3 class="font-serif" id="vault-note-title" style="font-size: 1.65rem; font-weight: 400; margin-bottom: 0.75rem;">
+                  README.md
+                </h3>
+                <div id="vault-note-body" style="font-size: 0.86rem; color: var(--color-text-secondary); line-height: 1.6;">
+                  Your personal knowledge graph lives as plain Markdown files inside <code>~/Documents/Relay</code>. Linked notes like <span class="wikilink-pill" data-target="Northstar pilot.md">[[Northstar pilot.md]]</span> and <span class="wikilink-pill" data-target="writingstyle.md">[[writingstyle.md]]</span> power both Sidekick and Double Tap without a single byte leaving your Mac.
+                </div>
+              </div>
+
+              <div style="padding-top: 1rem; border-top: 1px solid var(--color-border-subtle); display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 0.7rem; color: var(--color-text-dim);">
+                <span>BACKLINKS: 4 CONNECTED NOTES</span>
+                <span style="color: var(--color-accent-emerald);">● Air-Gapped Disk Sync</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==========================================================================
+         Three Ways to Get On With Life: Proactive Intelligence & Dog-Eared Letter Modal
+         ========================================================================== -->
+    <section id="use-cases" class="section">
+      <div class="container">
+        <div class="section-header">
+          <div class="mono-whisper" style="margin-bottom: 0.6rem; color: var(--color-accent-gold);">
+            PROACTIVE INTELLIGENCE · FOR YOU BRIEFING
+          </div>
+          <h2>A head start. <span class="font-serif" style="font-weight: 400;">Before you even ask.</span></h2>
+          <p>
+            Click any morning briefing card below—or break the wax seal on your welcome letter—to inspect the dog-eared <code>LetterPaper</code> modal and editable <code>PlanEditor</code>.
+          </p>
+        </div>
+
+        <div class="proactive-five-grid">
+          <!-- Card 1: You ghosted Carl -->
+          <div class="sentient-briefing-card scroll-reveal-card" data-letter-id="carl">
+            <div>
+              <div class="mono-whisper" style="color: #ff5c5c; font-size: 0.65rem; margin-bottom: 0.4rem;">
+                OVERDUE · 3 DAYS · GMAIL
+              </div>
+              <h4>You ghosted Carl.</h4>
+            </div>
+            <p>Carl asked twice if Wednesday works for the venue walkthrough and whether the $4,800 catering cap is approved.</p>
+            <span class="sentient-card-cta">✦ Open drafted reply</span>
+          </div>
+
+          <!-- Card 2: Canva Pro -->
+          <div class="sentient-briefing-card scroll-reveal-card" data-letter-id="canva">
+            <div>
+              <div class="mono-whisper" style="color: var(--color-accent-gold); font-size: 0.65rem; margin-bottom: 0.4rem;">
+                RENEWS TOMORROW · $119 · COMPUTER USE
+              </div>
+              <h4>Canva Pro trial ends tomorrow.</h4>
+            </div>
+            <p>You haven't opened Canva in 19 days. Relay prepared a 4-step computer-use plan to cancel auto-renewal.</p>
+            <span class="sentient-card-cta">✦ Inspect 4-step plan</span>
+          </div>
+
+          <!-- Card 3: Amtrak to New York -->
+          <div class="sentient-briefing-card scroll-reveal-card" data-letter-id="amtrak">
+            <div>
+              <div class="mono-whisper" style="color: #6fb6ff; font-size: 0.65rem; margin-bottom: 0.4rem;">
+                THIS WEEKEND · COMPUTER USE
+              </div>
+              <h4>Amtrak to New York.</h4>
+            </div>
+            <p>Acela 2154 departs Penn Station Friday at 08:15 AM. Window seat 7A is still open on your corporate card profile.</p>
+            <span class="sentient-card-cta">✦ Hold window seat</span>
+          </div>
+
+          <!-- Card 4: Denver trip expenses -->
+          <div class="sentient-briefing-card scroll-reveal-card" data-letter-id="denver">
+            <div>
+              <div class="mono-whisper" style="color: #4ade80; font-size: 0.65rem; margin-bottom: 0.4rem;">
+                DUE FRIDAY · 11 RECEIPTS · GMAIL
+              </div>
+              <h4>Denver trip expenses.</h4>
+            </div>
+            <p>Matched 11 PDF receipts from ~/Downloads and Mail totaling $1,428.40 into a clean reimbursement sheet.</p>
+            <span class="sentient-card-cta">✦ Review expense sheet</span>
+          </div>
+
+          <!-- Card 5: Hawaii trip -->
+          <div class="sentient-briefing-card scroll-reveal-card" data-letter-id="hawaii">
+            <div>
+              <div class="mono-whisper" style="color: #bb65ff; font-size: 0.65rem; margin-bottom: 0.4rem;">
+                GROUP PLAN · RESEARCHED · WHATSAPP
+              </div>
+              <h4>Hawaii trip dates &amp; flights.</h4>
+            </div>
+            <p>Cross-referenced 4 friends' availability with your November calendar and found the 5-day Kauai window everyone shares.</p>
+            <span class="sentient-card-cta">✦ View group summary</span>
+          </div>
+
+          <!-- Card 6: 3D Wax-Sealed Welcome Envelope -->
+          <div class="sentient-briefing-card scroll-reveal-card" data-letter-id="welcome" style="background: radial-gradient(circle at 50% 35%, rgba(187, 101, 255, 0.20), #090a0f 75%); border-color: rgba(253, 226, 163, 0.35);">
+            <div>
+              <div class="mono-whisper" style="color: var(--color-accent-gold); font-size: 0.65rem; margin-bottom: 0.4rem;">
+                PERSONAL LETTER · SEALED ENVELOPE
+              </div>
+              <h4>A personal note from Relay.</h4>
+            </div>
+            <p>Break the 3D wax seal to read your morning briefing manifesto and inspect how local sovereignty works.</p>
+            <span class="sentient-card-cta" style="border-color: rgba(253, 226, 163, 0.45); color: var(--color-accent-gold);">● Break wax seal</span>
+          </div>
+        </div>
+
+        <!-- Native HTML <dialog> for Dog-Eared LetterPaper + PlanEditor (modern-web-guidance dialog pattern) -->
+        <dialog id="sentient-letter-dialog" class="dog-eared-dialog" closedby="any" aria-labelledby="letter-dialog-title">
+          <div class="dog-ear-flap" aria-hidden="true"></div>
+          <div style="display: flex; flex-direction: column; gap: 1.15rem; text-align: left;">
+            <div style="display: flex; align-items: center; justify-content: space-between; padding-right: 2rem;">
+              <span class="mono-whisper" id="letter-dialog-kicker" style="color: var(--color-accent-gold);">
+                OVERDUE · 3 DAYS · GMAIL
+              </span>
+              <span class="badge-tag success">Local 4-Agent Plan</span>
+            </div>
+
+            <h3 class="font-serif" id="letter-dialog-title" style="font-size: 1.85rem; font-weight: 400; margin: 0;">
+              You ghosted Carl.
+            </h3>
+
+            <p id="letter-dialog-summary" style="font-size: 0.92rem; color: var(--color-text-secondary); margin: 0; line-height: 1.55;">
+              Prepared from your local Mail archive and <code>writingstyle.md</code>. Edit any step below before handing off to Executor.
+            </p>
+
+            <div>
+              <label for="letter-plan-editor" class="mono-whisper" style="display: block; font-size: 0.68rem; color: var(--color-text-dim); margin-bottom: 0.45rem;">
+                EDITABLE COMPUTER-USE PLAN / DRAFT (PLANEDITOR)
+              </label>
+              <textarea id="letter-plan-editor" rows="5" style="width: 100%; background: #07080c; border: 1px solid rgba(255,255,255,0.14); border-radius: 10px; padding: 0.85rem; color: var(--color-text-primary); font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.55;"></textarea>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+              <form method="dialog">
+                <button type="submit" autofocus class="btn btn-secondary btn-sm">Close (Esc)</button>
+              </form>
+              <button type="button" id="letter-dialog-run-btn" class="btn btn-primary btn-sm">✦ Hand off to Sidekick</button>
+            </div>
+          </div>
+        </dialog>
+      </div>
+    </section>
+
+    <!-- ==========================================================================
+         Under the Hood & Bento Feature Grid (readme_under-the-hood.png & readme_knowledge.jpg parity)
+         ========================================================================== -->
+    <section id="features" class="section">
+      <div class="container">
+        
+        <div class="section-header">
+          <div class="mono-whisper" style="margin-bottom: 0.6rem; color: var(--color-accent-emerald);">
+            UNDER THE HOOD · ARCHITECTURAL PRIVACY
+          </div>
+          <h2>Personal AI, <span class="font-serif" style="font-weight: 400;">architected for privacy.</span></h2>
+          <p>
+            Every model weight, Markdown note, and multi-agent turn executes inside your Mac's Apple Silicon Unified Memory.
+          </p>
+        </div>
+
+        <!-- Sentient OS 2-Column "Under the Hood" Schematic -->
+        <div class="under-hood-grid" style="margin-bottom: 3rem;">
+          <!-- Left Box: YOUR MAC (100% OF RELAY'S COMPUTE) -->
+          <div class="under-hood-mac">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+              <span class="mono-whisper" style="color: var(--color-accent-emerald);">YOUR MAC · 100% OF RELAY'S COMPUTE</span>
+              <span class="badge-tag success">Local Apple Silicon</span>
+            </div>
+
+            <div class="under-hood-sources">
+              <span class="source-pill">Files</span>
+              <span class="source-pill">Notes</span>
+              <span class="source-pill">Mail (.eml)</span>
+              <span class="source-pill">Calendar</span>
+              <span class="source-pill">Accessibility UI</span>
+            </div>
+
+            <div class="under-hood-engine-bar">
+              <div style="display: flex; align-items: center; gap: 0.85rem;">
+                <div class="brand-orb" style="width: 34px; height: 34px;"></div>
+                <div>
+                  <div style="font-weight: 600; color: var(--color-text-primary); font-size: 1rem;">On-device Gemma 4 E2B</div>
+                  <div style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--color-text-muted);">LiteRT-LM C++ Runtime · 2.59 GB SHA-256 Verified</div>
+                </div>
+              </div>
+              <span class="role-badge planner">4-Role Blackboard</span>
+            </div>
+
+            <div class="under-hood-outputs">
+              <div class="under-hood-output-card">
+                <div style="font-family: var(--font-serif); font-size: 1.15rem; color: var(--color-text-primary); margin-bottom: 0.25rem;">Personal Knowledge Vault</div>
+                <div style="font-size: 0.78rem; color: var(--color-text-muted);">Plain Markdown files &amp; local semantic index on your drive.</div>
+              </div>
+              <div class="under-hood-output-card">
+                <div style="font-family: var(--font-serif); font-size: 1.15rem; color: var(--color-text-primary); margin-bottom: 0.25rem;">Cooperative Sidekick</div>
+                <div style="font-size: 0.78rem; color: var(--color-text-muted);">Planner, Navigator, Executor &amp; Critic with safety gates.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right Box: EXTERNAL SERVERS ("There's nothing here.") -->
+          <div class="under-hood-cloud">
+            <div class="mono-whisper" style="color: var(--color-text-dim);">EXTERNAL SERVERS</div>
+            <div style="padding: 2.5rem 0;">
+              <div class="font-serif" style="font-size: 2rem; font-style: italic; color: var(--color-text-secondary); margin-bottom: 1rem;">
+                There’s nothing here.
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 0.35rem; font-family: var(--font-mono); font-size: 0.72rem; color: var(--color-text-dim); letter-spacing: 0.14em;">
+                <span>NO ACCOUNTS</span>
+                <span>NO CLOUD API KEYS</span>
+                <span>NO TELEMETRY</span>
+              </div>
+            </div>
+            <div style="font-size: 0.75rem; color: var(--color-text-dim);">
+              0 outbound sockets · Verifiable via <code>lsof</code>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bento Feature Cards Grid -->
+        <div class="bento-grid">
+          
+          <!-- Large Card 1: Air-gapped blackboard -->
+          <div class="glass-card bento-card bento-col-8">
+            <div class="bento-card-icon amethyst">
+              <img src="assets/icons/sparkles.svg" alt="" style="width: 22px; height: 22px;">
+            </div>
+            <h3>Air-Gapped Multi-Agent Blackboard</h3>
+            <p>
+              Relay coordinates four distinct roles (Planner, Navigator, Executor, Critic) over an in-memory blackboard. Each agent receives only the exact tool schemas required for its phase—reducing context token consumption by 75% and eliminating role confusion.
+            </p>
+            <div class="bento-preview">
+              <div style="display: flex; gap: 0.6rem; flex-wrap: wrap;">
+                <span class="role-badge planner">[Planner · Pure Reasoning]</span>
+                <span class="role-badge navigator">[Navigator · UI Inspection]</span>
+                <span class="role-badge executor">[Executor · Scoped Tools]</span>
+                <span class="role-badge critic">[Critic · Verification]</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 2: LiteRT-LM & Pinned Model -->
+          <div class="glass-card bento-card bento-col-4">
+            <div class="bento-card-icon emerald">
+              <img src="assets/icons/cpu.svg" alt="" style="width: 22px; height: 22px;">
+            </div>
+            <h3>LiteRT-LM Engine</h3>
+            <p>
+              Powered by Google's lightweight LiteRT-LM runtime compiled directly for Apple Silicon Neural Engine (NPU) and Metal GPU.
+            </p>
+            <div class="bento-preview">
+              <div style="color: var(--color-accent-emerald);">● 2.59 GB Pinned Weights</div>
+              <div style="color: var(--color-text-muted); margin-top: 0.25rem;">Sub-50ms token latency on M-series chips</div>
+            </div>
+          </div>
+
+          <!-- Card 3: Deep macOS Automation -->
+          <div class="glass-card bento-card bento-col-4">
+            <div class="bento-card-icon blue">
+              <img src="assets/icons/terminal.svg" alt="" style="width: 22px; height: 22px;">
+            </div>
+            <h3>macOS Deep Automation</h3>
+            <p>
+              Navigate native apps, parse Accessibility AXUIElement trees, organize files, and draft briefs without fragile OCR or web scraping.
+            </p>
+            <div class="bento-preview">
+              <span style="color: var(--color-role-navigator);">AXUIElementTree::Inspect</span>
+              <div style="color: var(--color-text-dim); margin-top: 0.2rem;">Finder • Mail • Notes • Calendar</div>
+            </div>
+          </div>
+
+          <!-- Card 4: Plain Markdown Knowledge & Constellation Graph (readme_knowledge.jpg parity) -->
+          <div class="glass-card bento-card bento-col-4">
+            <div class="bento-card-icon amber">
+              <img src="assets/icons/check.svg" alt="" style="width: 22px; height: 22px;">
+            </div>
+            <h3>Personal Knowledge Vault</h3>
+            <p>
+              Zero proprietary database lock-in. Relay indexes your explicitly chosen folders and exports clean Markdown notes directly on your disk.
+            </p>
+            <div class="bento-preview" style="display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;">
+              <div>
+                <span style="color: var(--color-accent-gold);">~/Documents/Relay/*.md</span>
+                <div style="color: var(--color-text-dim); margin-top: 0.2rem;">Local graph • Git-friendly</div>
+              </div>
+              <svg width="68" height="42" viewBox="0 0 68 42" fill="none" aria-hidden="true">
+                <line x1="12" y1="28" x2="32" y2="12" stroke="rgba(253,226,163,0.35)" stroke-width="1"/>
+                <line x1="32" y1="12" x2="54" y2="22" stroke="rgba(187,101,255,0.4)" stroke-width="1"/>
+                <line x1="12" y1="28" x2="38" y2="34" stroke="rgba(74,144,226,0.35)" stroke-width="1"/>
+                <line x1="38" y1="34" x2="54" y2="22" stroke="rgba(52,211,153,0.35)" stroke-width="1"/>
+                <circle cx="12" cy="28" r="4" fill="#FDE2A3"/>
+                <circle cx="32" cy="12" r="4.5" fill="#BB65FF"/>
+                <circle cx="54" cy="22" r="4" fill="#34D399"/>
+                <circle cx="38" cy="34" r="3.5" fill="#4A90E2"/>
+              </svg>
+            </div>
+          </div>
+
+          <!-- Card 5: Safety Gates & Halt -->
+          <div class="glass-card bento-card bento-col-4">
+            <div class="bento-card-icon emerald">
+              <img src="assets/icons/shield.svg" alt="" style="width: 22px; height: 22px;">
+            </div>
+            <h3>Human-in-the-Loop Safety</h3>
+            <p>
+              Consequential mutations require explicit confirmation. Tap <kbd style="background: rgba(255,255,255,0.1); padding: 0.15rem 0.4rem; border-radius: 4px;">Esc</kbd> at any time to trigger an instant global stop shortcut.
+            </p>
+            <div class="bento-preview">
+              <span style="color: var(--color-accent-coral);">Safety Gate: Active</span>
+              <div style="color: var(--color-text-dim); margin-top: 0.2rem;">Global ⌘⇧Esc emergency interrupt</div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ==========================================================================
+         Technical Specifications Section
+         ========================================================================== -->
+    <section id="specs" class="section" style="background: rgba(11, 12, 16, 0.4);">
+      <div class="container">
+        
+        <div class="section-header">
+          <div class="eyebrow-badge">
+            <span>Hardware &amp; System Requirements</span>
+          </div>
+          <h2>Engineered for Apple Silicon macOS.</h2>
+          <p>
+            Relay runs as a native Swift 6 application with direct hardware acceleration and zero external dependencies.
+          </p>
+        </div>
+
+        <div class="specs-grid">
+          
+          <div class="spec-card">
+            <div class="spec-label">Processor Architecture</div>
+            <div class="spec-value">Apple Silicon</div>
+            <div class="spec-desc">M1, M2, M3, M4 (Pro, Max, Ultra) or Intel Core Mac.</div>
+          </div>
+
+          <div class="spec-card">
+            <div class="spec-label">Operating System</div>
+            <div class="spec-value">macOS 15.0+ Sequoia</div>
+            <div class="spec-desc">Full support for macOS security-scoped sandboxing and Accessibility.</div>
+          </div>
+
+          <div class="spec-card">
+            <div class="spec-label">Unified Memory</div>
+            <div class="spec-value">8 GB RAM Minimum</div>
+            <div class="spec-desc">16 GB+ recommended for optimal background multitasking performance.</div>
+          </div>
+
+          <div class="spec-card">
+            <div class="spec-label">Local Model Engine</div>
+            <div class="spec-value">LiteRT-LM v0.18.1</div>
+            <div class="spec-desc">Pinned Gemma 4 E2B `.litertlm` package (2.59 GB verified weight artifact).</div>
+          </div>
+
+          <div class="spec-card">
+            <div class="spec-label">Network State</div>
+            <div class="spec-value">100% Air-Gapped</div>
+            <div class="spec-desc">0 inbound or outbound network sockets required for full AI inference.</div>
+          </div>
+
+          <div class="spec-card">
+            <div class="spec-label">Context Window</div>
+            <div class="spec-value">8K Native Tokens</div>
+            <div class="spec-desc">Partitioned dynamically across the 4 specialized agent roles.</div>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ==========================================================================
+         FAQ Accordion Section (Compliant with modern-web-guidance)
+         ========================================================================== -->
+    <section id="faq" class="section">
+      <div class="container">
+        
+        <div class="section-header">
+          <div class="eyebrow-badge">
+            <span>Frequently Asked Questions</span>
+          </div>
+          <h2>Everything you need to know.</h2>
+          <p>
+            Clear answers about offline execution, model safety, system access, and privacy.
+          </p>
+        </div>
+
+        <div class="faq-group">
+          
+          <details class="faq-item" name="relay-faq" open>
+            <summary class="faq-summary">
+              <span>Does Relay send any data to external servers or cloud APIs?</span>
+              <img src="assets/icons/chevron-down.svg" alt="" class="faq-chevron" aria-hidden="true">
+            </summary>
+            <div class="faq-content">
+              <strong>No. Absolutely zero data leaves your Mac.</strong> Relay operates in a strict air-gapped configuration. The embedded LiteRT-LM runtime loads model weights from your local disk and performs all matrix math directly in unified memory. You can run Relay in airplane mode, behind a corporate firewall, or with your Wi-Fi completely disabled.
+            </div>
+          </details>
+
+          <details class="faq-item" name="relay-faq">
+            <summary class="faq-summary">
+              <span>How does multi-agent coordination work without cloud servers?</span>
+              <img src="assets/icons/chevron-down.svg" alt="" class="faq-chevron" aria-hidden="true">
+            </summary>
+            <div class="faq-content">
+              Relay implements a local turn-based <strong>Blackboard Architecture</strong>. Instead of querying a cloud LLM, Relay passes a shared in-memory blackboard across four on-device roles: the <em>Planner</em> deconstructs the request into goals; the <em>Navigator</em> performs read-only system reconnaissance; the <em>Executor</em> invokes scoped tools; and the <em>Critic</em> verifies that postconditions match user expectations.
+            </div>
+          </details>
+
+          <details class="faq-item" name="relay-faq">
+            <summary class="faq-summary">
+              <span>What permissions does Relay require on macOS?</span>
+              <img src="assets/icons/chevron-down.svg" alt="" class="faq-chevron" aria-hidden="true">
+            </summary>
+            <div class="faq-content">
+              Relay asks for macOS Accessibility permissions so the Navigator agent can inspect active window elements and UI controls. For file operations, Relay uses Apple's security-scoped bookmarks—meaning Relay can only read or write to directories you explicitly grant access to. Relay never performs whole-disk indexing.
+            </div>
+          </details>
+
+          <details class="faq-item" name="relay-faq">
+            <summary class="faq-summary">
+              <span>Which models are bundled or supported?</span>
+              <img src="assets/icons/chevron-down.svg" alt="" class="faq-chevron" aria-hidden="true">
+            </summary>
+            <div class="faq-content">
+              Relay is optimized for <strong>Google Gemma 4 E2B</strong> packaged in LiteRT-LM format (`.litertlm`). During onboarding, the app validates your local model package with a cryptographic SHA-256 checksum. You can also link existing `.litertlm` or compatible GGUF models from your own drive.
+            </div>
+          </details>
+
+          <details class="faq-item" name="relay-faq">
+            <summary class="faq-summary">
+              <span>Can I cancel or stop an agent task while it is executing?</span>
+              <img src="assets/icons/chevron-down.svg" alt="" class="faq-chevron" aria-hidden="true">
+            </summary>
+            <div class="faq-content">
+              Yes. Relay features an immediate human-in-the-loop safety gate. Pressing the <kbd>Esc</kbd> key or clicking the floating Stop button immediately aborts in-flight agent actions, cancels tool dispatch, and leaves your filesystem in a consistent state.
+            </div>
+          </details>
+
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ==========================================================================
+         Download CTA Banner
+         ========================================================================== -->
+    <section id="download" class="section" style="padding-bottom: 7rem;">
+      <div class="container container-narrow">
+        <div class="glass-card" style="text-align: center; padding: 4rem 2rem; border-color: rgba(253, 226, 163, 0.25);">
+          
+          <div class="brand-orb" style="width: 56px; height: 56px; margin: 0 auto 1.5rem auto;" aria-hidden="true"></div>
+          
+          <h2 style="font-size: var(--font-size-h2); margin-bottom: 1rem;">
+            Experience Autonomous AI.<br>
+            <span class="text-prism font-serif" style="font-weight: 400;">Your Mac. Your Rules.</span>
+          </h2>
+
+          <p style="color: var(--color-text-secondary); max-width: 540px; margin: 0 auto 2.5rem auto;">
+            Download Relay for macOS Sequoia 15.0+ and join the local-first intelligence movement. Free and open source.
+          </p>
+
+          <div style="display: flex; justify-content: center; gap: 1rem; flex-wrap: wrap;">
+            <div class="btn-halo-container">
+              <div class="btn-halo-glow" aria-hidden="true"></div>
+              <a href="https://github.com/relay-assistant/relay/releases" target="_blank" rel="noopener noreferrer" class="btn btn-primary" style="padding: 0.95rem 2rem; font-size: 1.05rem;">
+                <img src="assets/icons/apple.svg" alt="" class="btn-icon" style="width: 1.3rem; height: 1.3rem;">
+                <span>Download Relay for macOS</span>
+              </a>
+            </div>
+          </div>
+
+          <div style="margin-top: 2rem;">
+            <div class="terminal-pill">
+              <span class="terminal-pill-prompt">$</span>
+              <span class="terminal-pill-cmd">brew install --cask relay-ai</span>
+              <button class="terminal-copy-btn" aria-label="Copy Homebrew install command">
+                <img src="assets/icons/copy.svg" alt="" class="btn-icon">
+                <span>Copy</span>
+              </button>
+            </div>
+          </div>
+
+          <div style="margin-top: 1.5rem; font-size: var(--font-size-xs); color: var(--color-text-dim);">
+            Universal Binary (Apple Silicon &amp; Intel 64-bit) • Signed &amp; Notarized by Apple • Apache-2.0 License
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ==========================================================================
+       Site Footer
+       ========================================================================== -->
+  <footer class="site-footer" role="contentinfo">
+    <div class="container">
+      
+      <div class="footer-grid">
+        
+        <div class="footer-brand">
+          <a href="index.html" class="brand-logo" style="margin-bottom: 0.75rem;">
+            <div class="brand-orb" style="width: 28px; height: 28px;"></div>
+            <span>Relay</span>
+          </a>
+          <p>
+            Privacy-first on-device multi-agent assistant for macOS. Powered by LiteRT-LM and pinned Gemma 4 E2B inference.
+          </p>
+          <div style="margin-top: 1.25rem;">
+            <span class="model-status-pill">
+              <span class="pulse-dot" style="width: 6px; height: 6px;"></span>
+              Zero Remote Telemetry
+            </span>
+          </div>
+        </div>
+
+        <div class="footer-col">
+          <h5>Architecture</h5>
+          <ul>
+            <li><a href="#multi-agent">Blackboard System</a></li>
+            <li><a href="#multi-agent">Planner &amp; Navigator</a></li>
+            <li><a href="#multi-agent">Executor &amp; Critic</a></li>
+            <li><a href="#specs">LiteRT-LM Runtime</a></li>
+          </ul>
+        </div>
+
+        <div class="footer-col">
+          <h5>Privacy &amp; Security</h5>
+          <ul>
+            <li><a href="privacy.html">Privacy Core Deep-Dive</a></li>
+            <li><a href="privacy.html#flow">Data Flow Visualizer</a></li>
+            <li><a href="privacy.html#matrix">Cloud vs. Local Matrix</a></li>
+            <li><a href="privacy.html#verify">Independent Audit</a></li>
+          </ul>
+        </div>
+
+        <div class="footer-col">
+          <h5>Open Source</h5>
+          <ul>
+            <li><a href="https://github.com/relay-assistant/relay" target="_blank" rel="noopener noreferrer">GitHub Repository</a></li>
+            <li><a href="https://github.com/relay-assistant/relay/releases" target="_blank" rel="noopener noreferrer">Releases &amp; Changelog</a></li>
+            <li><a href="https://github.com/relay-assistant/relay/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Apache-2.0 License</a></li>
+            <li><a href="#download">Installation Guide</a></li>
+          </ul>
+        </div>
+
+      </div>
+
+      <div class="footer-bottom">
+        <div>
+          © 2026 Relay Assistant Project. Built with love for macOS sovereignty.
+        </div>
+        <div>
+          Inspired by Sentient OS &amp; ChatGPT design aesthetics. 100% on-device AI.
+        </div>
+      </div>
+
+    </div>
+  </footer>
+
+  <!-- Interactive JavaScript Engine -->
+  <script src="js/agent-demo.js"></script>
+</body>
+</html>

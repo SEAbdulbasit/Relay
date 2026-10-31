@@ -1,0 +1,622 @@
+container Agent response
+											966 button Worked for 22s
+												967 text Worked for 22s
+												968 image
+											969 container
+												970 text Here  is  the  prioritized,  read-only  follow-up  review  of 
+												971 button ModelDownload.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+													972 Unlabelled image /swift.svg
+													973 text ModelDownload.swift
+												974 text , 
+												975 button ModelDownloadCheckpoint.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownloadCheckpoint.swift
+													976 Unlabelled image /swift.svg
+													977 text ModelDownloadCheckpoint.swift
+												978 text , 
+												979 button ModelResumeProtocol.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelResumeProtocol.swift
+													980 Unlabelled image /swift.svg
+													981 text ModelResumeProtocol.swift
+												982 text , 
+												983 button LocalArtifacts.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalArtifacts.swift
+													984 Unlabelled image /swift.svg
+													985 text LocalArtifacts.swift
+												986 text , 
+												987 button LocalSpreadsheet.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalSpreadsheet.swift
+													988 Unlabelled image /swift.svg
+													989 text LocalSpreadsheet.swift
+												990 text , 
+												991 button MacTools.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+													992 Unlabelled image /swift.svg
+													993 text MacTools.swift
+												994 text , 
+												995 button Contracts.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/Contracts.swift
+													996 Unlabelled image /swift.svg
+													997 text Contracts.swift
+												998 text ,  and  their  focused  tests  (
+												999 button ModelDownloadTests.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/ModelDownloadTests.swift
+													1000 Unlabelled image /swift.svg
+													1001 text ModelDownloadTests.swift
+												1002 text , 
+												1003 button ModelDownloadCheckpointTests.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/ModelDownloadCheckpointTests.swift
+													1004 Unlabelled image /swift.svg
+													1005 text ModelDownloadCheckpointTests.swift
+												1006 text , 
+												1007 button ModelResumeProtocolTests.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/ModelResumeProtocolTests.swift
+													1008 Unlabelled image /swift.svg
+													1009 text ModelResumeProtocolTests.swift
+												1010 text , 
+												1011 button LocalArtifactsTests.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/LocalArtifactsTests.swift
+													1012 Unlabelled image /swift.svg
+													1013 text LocalArtifactsTests.swift
+												1014 text , 
+												1015 button LocalSpreadsheetTests.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/LocalSpreadsheetTests.swift
+													1016 Unlabelled image /swift.svg
+													1017 text LocalSpreadsheetTests.swift
+												1018 text ,  and 
+												1019 button ToolTests.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/ToolTests.swift
+													1020 Unlabelled image /swift.svg
+													1021 text ToolTests.swift
+												1022 text ).
+											1023 heading Priority 1: Non-Canonical Path Check in requiresReview & reviewReason Can Bypass Overwrite Review, Value: 3
+												1024 text Priority  1:  Non-Canonical  Path  Check  in 
+												1025 text requiresReview
+												1026 text & 
+												1027 text reviewReason
+												1028 text Can  Bypass  Overwrite  Review
+											1029 content list
+												1030 container
+													1031 AXListMarker • 
+													1032 text Affected Functions:
+													1033 button MacTools.reviewReason(for:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+														1034 Unlabelled image /swift.svg
+														1035 text MacTools.reviewReason(for:)
+													1036 text , 
+													1037 button MacTools.requiresReview(_:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+														1038 Unlabelled image /swift.svg
+														1039 text MacTools.requiresReview(_:)
+													1040 text , 
+													1041 button MacTools.writeFile(_:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+														1042 Unlabelled image /swift.svg
+														1043 text MacTools.writeFile(_:)
+													1044 text , 
+													1045 button MacTools.createDocument(_:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+														1046 Unlabelled image /swift.svg
+														1047 text MacTools.createDocument(_:)
+													1048 text , 
+													1049 button MacTools.createSpreadsheet(_:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+														1050 Unlabelled image /swift.svg
+														1051 text MacTools.createSpreadsheet(_:)
+													1052 text .
+												1053 container
+													1054 AXListMarker • 
+													1055 text Source Finding:
+													1056 content list
+														1057 container
+															1058 AXListMarker • 
+															1059 text Both 
+															1060 button reviewReason(for:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+																1061 Unlabelled image /swift.svg
+																1062 text reviewReason(for:)
+															1063 text and 
+															1064 button requiresReview(_:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+																1065 Unlabelled image /swift.svg
+																1066 text requiresReview(_:)
+															1067 text check  whether  a  target  file  already  exists  using  the  raw,  un-canonicalized  path  string:
+															1068 container
+																1069 text swift
+																1070 button At mention code block
+																	1071 image
+																1072 button Copy code
+																	1073 image
+															1074 container
+																1075 text FileManager . default . fileExists ( atPath : ( path  as NSString ) . expandingTildeInPath )
+														1076 container
+															1077 AXListMarker • 
+															1078 text By  contrast, 
+															1079 button effectFingerprint(_:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+																1080 Unlabelled image /swift.svg
+																1081 text effectFingerprint(_:)
+															1082 text , 
+															1083 button writeFile(_:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+																1084 Unlabelled image /swift.svg
+																1085 text writeFile(_:)
+															1086 text , 
+															1087 button createDocument(_:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+																1088 Unlabelled image /swift.svg
+																1089 text createDocument(_:)
+															1090 text ,  and 
+															1091 button createSpreadsheet(_:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+																1092 Unlabelled image /swift.svg
+																1093 text createSpreadsheet(_:)
+															1094 text resolve  the  destination  via  ToolPolicy.scopedURL(try text("path", call), grants: grants, writing: true) ,  which  lexically  collapses  .. segments  in  memory  before  touching  the  filesystem.
+														1095 container
+															1096 AXListMarker • 
+															1097 text Concrete Bypass Edge Case: If  a  call  passes  path = "/granted/nonexistent_dir/../report.docx" (or  .xlsx /  .txt )  where  /granted/report.docx already  exists  on  disk:
+															1098 content list
+																1099 container
+																	1100 AXListMarker 1. 
+																	1101 text FileManager.default.fileExists(atPath: "/granted/nonexistent_dir/../report.docx") returns 
+																	1102 text false
+																	1103 text ( ENOENT because  nonexistent_dir does  not  exist  on  disk).
+																1104 container
+																	1105 AXListMarker 2. 
+																	1106 text reviewReason(for:) returns  nil and  requiresReview(_:) returns  false ,  skipping  user  review  completely.
+																1107 container
+																	1108 AXListMarker 3. 
+																	1109 text createDocument(_:) /  createSpreadsheet(_:) /  writeFile(_:) resolves  url via  ToolPolicy.scopedURL to  /granted/report.docx ,  sees  let existed = FileManager.default.fileExists(atPath: url.path) == true (
+																	1110 button lines 452, 466, 501, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+																		1111 Unlabelled image /swift.svg
+																		1112 text lines 452, 466, 501
+																	1113 text ),  and  overwrites  /granted/report.docx with  .atomic without  approval.
+														1114 container
+															1115 AXListMarker • 
+															1116 text Fix Contract: reviewReason(for:) and  requiresReview(_:) should  resolve  ToolPolicy.canonicalURL(path) (or  ToolPolicy.scopedURL )  before  checking  fileExists(atPath:) ,  defaulting  to  true (requiring  review)  if  path  canonicalization  fails.
+												1117 container
+													1118 AXListMarker • 
+													1119 text Test Coverage Gap:
+													1120 button ToolTests.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/ToolTests.swift
+														1121 Unlabelled image /swift.svg
+														1122 text ToolTests.swift
+													1123 text tests  overwrite  review  only  for  write_file .  There  are  no  MacTools overwrite-review  or  concurrent-modification  tests  for  create_document or  create_spreadsheet .
+											1124 heading Priority 2: Checkpoint Quarantine Accumulation & Final Install Path Outside ModelDownloadCheckpoint, Value: 3
+												1125 text Priority  2:  Checkpoint  Quarantine  Accumulation  &  Final  Install  Path  Outside 
+												1126 text ModelDownloadCheckpoint
+											1127 content list
+												1128 container
+													1129 AXListMarker • 
+													1130 text Affected Functions:
+													1131 button ModelDownloadCheckpoint.open(manifest:directory:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownloadCheckpoint.swift
+														1132 Unlabelled image /swift.svg
+														1133 text ModelDownloadCheckpoint.open(manifest:directory:)
+													1134 text , 
+													1135 button ModelDownloadCheckpoint.quarantine(_:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownloadCheckpoint.swift
+														1136 Unlabelled image /swift.svg
+														1137 text ModelDownloadCheckpoint.quarantine(_:)
+													1138 text , 
+													1139 button ModelDownloadCheckpoint.persistCheckpoint(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownloadCheckpoint.swift
+														1140 Unlabelled image /swift.svg
+														1141 text ModelDownloadCheckpoint.persistCheckpoint()
+													1142 text , 
+													1143 button ModelDownload.begin(allowDownload:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+														1144 Unlabelled image /swift.svg
+														1145 text ModelDownload.begin(allowDownload:)
+													1146 text .
+												1147 container
+													1148 AXListMarker • 
+													1149 text Source Findings:
+													1150 content list
+														1151 container
+															1152 AXListMarker 1. 
+															1153 text Stale 
+															1154 text .relay-download-checkpoint-*.json
+															1155 text  and 
+															1156 text .partial
+															1157 text  retention can hit the 4-record hard stop:
+															1158 content list
+																1159 container
+																	1160 AXListMarker • 
+																	1161 text In 
+																	1162 button ModelDownloadCheckpoint.open(manifest:directory:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownloadCheckpoint.swift
+																		1163 Unlabelled image /swift.svg
+																		1164 text ModelDownloadCheckpoint.open(manifest:directory:)
+																	1165 text ,  when  multiple  valid  .relay-download-checkpoint-*.json files  exist  (e.g.,  if  a  previous  process  crashed  in 
+																	1166 button persistCheckpoint(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownloadCheckpoint.swift
+																		1167 Unlabelled image /swift.svg
+																		1168 text persistCheckpoint()
+																	1169 text between  renameatx_np of  the  new  metadata  file  and  unlinkat of  oldLeaf ),  open() selects  the  highest-offset  valid  candidate  and  returns  at 
+																	1170 button line 94, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownloadCheckpoint.swift
+																		1171 Unlabelled image /swift.svg
+																		1172 text line 94
+																	1173 text without unlinking or quarantining the superseded lower-offset checkpoint records .  Once  5  .relay-download-checkpoint-*.json files  accumulate, 
+																	1174 button guard leaves.count <= 4, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownloadCheckpoint.swift
+																		1175 Unlabelled image /swift.svg
+																		1176 text guard leaves.count <= 4
+																	1177 text permanently  refuses  all  future  downloads  until  manual  hidden-file  cleanup.
+																1178 container
+																	1179 AXListMarker • 
+																	1180 text Similarly,  when 
+																	1181 button quarantine(_:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownloadCheckpoint.swift
+																		1182 Unlabelled image /swift.svg
+																		1183 text quarantine(_:)
+																	1184 text renames  invalid  metadata  to  .relay-download-invalid-<UUID>.json (e.g.,  after  a  manifest  update),  the  associated  .relay-download-<UUID>.partial file  (up  to  2.59  GB)  is  left  on  disk  indefinitely.
+														1185 container
+															1186 AXListMarker 2. 
+															1187 text Directory creation mode mismatch (
+															1188 text 0o755
+															1189 text  vs 
+															1190 text 0o700
+															1191 text ):
+															1192 content list
+																1193 container
+																	1194 AXListMarker • 
+																	1195 button ModelDownload.begin(allowDownload:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+																		1196 Unlabelled image /swift.svg
+																		1197 text ModelDownload.begin(allowDownload:)
+																	1198 text calls  FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) without .posixPermissions: 0o700 before 
+																	1199 button ModelDownloadCheckpoint.open, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownloadCheckpoint.swift
+																		1200 Unlabelled image /swift.svg
+																		1201 text ModelDownloadCheckpoint.open
+																	1202 text runs.  On  first  run,  Relay/Models is  created  with  default  umask  permissions  ( 0o755 ),  which  passes  directoryInfo.st_mode & 0o022 == 0 (
+																	1203 button line 43, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownloadCheckpoint.swift
+																		1204 Unlabelled image /swift.svg
+																		1205 text line 43
+																	1206 text )  but  is  world-readable/searchable  rather  than  0o700 .
+														1207 container
+															1208 AXListMarker 3. 
+															1209 text Double full-file SHA-256 read & path-based 
+															1210 text moveItem
+															1211 text  on completion:
+															1212 content list
+																1213 container
+																	1214 AXListMarker • 
+																	1215 text After  chunk  assembly  completes  in 
+																	1216 button ModelDownload.begin, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+																		1217 Unlabelled image /swift.svg
+																		1218 text ModelDownload.begin
+																	1219 text ,  Relay  verifies  try await checkpoint.fullDigest() == manifest.sha256.lowercased() (computed  incrementally  over  pwrite bytes)  and then immediately calls 
+																	1220 text try await Self.verifyFile(at: partialURL, manifest: manifest)
+																	1221 text (
+																	1222 button line 226, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+																		1223 Unlabelled image /swift.svg
+																		1224 text line 226
+																	1225 text ),  re-reading  all  2.59  GB  from  disk  a  second  time.
+																1226 container
+																	1227 AXListMarker • 
+																	1228 text Line  228  then  installs  via  path-based  FileManager.default.moveItem(at: partialURL, to: destinationURL) outside  ModelDownloadCheckpoint ,  bypassing  rootFD /  renameatx_np(rootFD, ..., RENAME_EXCL) before  calling  checkpoint.discardOwned() .
+														1229 container
+															1230 AXListMarker 4. 
+															1231 text Manifest validation mismatch between 
+															1232 text ModelDownload.validateManifest
+															1233 text  and 
+															1234 text ModelDownloadCheckpoint.validate
+															1235 text :
+															1236 content list
+																1237 container
+																	1238 AXListMarker • 
+																	1239 button ModelDownload.validateManifest, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+																		1240 Unlabelled image /swift.svg
+																		1241 text ModelDownload.validateManifest
+																	1242 text permits  size <= 68_719_476_736 (64  GiB),  filename.utf8.count <= 255 ,  mixed-case  hex  sha256 ,  and  query  strings  on  sourceURL .
+																1243 container
+																	1244 AXListMarker • 
+																	1245 button ModelDownloadCheckpoint.validate, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownloadCheckpoint.swift
+																		1246 Unlabelled image /swift.svg
+																		1247 text ModelDownloadCheckpoint.validate
+																	1248 text enforces  size <= 8_589_934_592 (8  GiB),  filename.utf8.count <= 200 ,  lowercase-only  sha256 ( validHash ),  and  sourceURL.query == nil && sourceURL.fragment == nil .
+											1249 heading Priority 3: Range / ETag Integrity & Live CDN Redirect Edge Cases, Value: 3
+												1250 text Priority  3:  Range  /  ETag  Integrity  &  Live  CDN  Redirect  Edge  Cases
+											1251 content list
+												1252 container
+													1253 AXListMarker • 
+													1254 text Affected Functions:
+													1255 button ModelResumeProtocol.validate(response:expectedTotal:requestedOffset:requestedEnd:expectedETag:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelResumeProtocol.swift
+														1256 Unlabelled image /swift.svg
+														1257 text ModelResumeProtocol.validate(response:expectedTotal:requestedOffset:requestedEnd:expectedETag:)
+													1258 text , 
+													1259 button ModelDownload.begin(allowDownload:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+														1260 Unlabelled image /swift.svg
+														1261 text ModelDownload.begin(allowDownload:)
+													1262 text , 
+													1263 button Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift, ModelDownloadProgress.urlSession(_:downloadTask:didWriteData:totalBytesWritten:totalBytesExpectedToWrite:)
+														1264 Unlabelled image /swift.svg
+														1265 text ModelDownloadProgress.urlSession(_:downloadTask:didWriteData:totalBytesWritten:totalBytesExpectedToWrite:)
+													1266 text .
+												1267 container
+													1268 AXListMarker • 
+													1269 text Source Findings vs. Live CDN Qualification:
+													1270 content list
+														1271 container
+															1272 AXListMarker 1. 
+															1273 text Non-206 responses during a range request allow up to 
+															1274 text maximumBytes
+															1275 text  (2.59 GB) before status validation:
+															1276 content list
+																1277 container
+																	1278 AXListMarker • 
+																	1279 text In 
+																	1280 button ModelDownloadProgress.urlSession(_:downloadTask:didWriteData:...), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+																		1281 Unlabelled image /swift.svg
+																		1282 text ModelDownloadProgress.urlSession(_:downloadTask:didWriteData:...)
+																	1283 text :
+																	1284 container
+																		1285 text swift
+																		1286 button At mention code block
+																			1287 image
+																		1288 button Copy code
+																			1289 image
+																	1290 container
+																		1291 text let  isRange  = ( downloadTask . response  as ? HTTPURLResponse ) ? . statusCode  == 206
+																	1292 container
+																		1293 text guard  totalBytesWritten  <= ( isRange  ?  maximumChunkBytes  :  maximumBytes ) else {  downloadTask . cancel ( ) ; return }
+																	1294 text If  a  server  responds  to  a  32  MiB  range  request  with  HTTP  403 / 404 / 500 (or  an  unexpected  status)  and  streams  a  large  body,  isRange is  false ,  so  ModelDownloadProgress permits  up  to  2.59  GB  ( maximumBytes )  to  be  written  to  temporaryURL before  ModelResumeProtocol.validate rejects  the  status  code.
+														1295 container
+															1296 AXListMarker 2. 
+															1297 text Redirected CDN URL is not pinned across chunks:
+															1298 content list
+																1299 container
+																	1300 AXListMarker • 
+																	1301 button ModelManifest.recommended, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+																		1302 Unlabelled image /swift.svg
+																		1303 text ModelManifest.recommended
+																	1304 text points  to  https://huggingface.co/.../resolve/<rev>/gemma-4-E2B-it.litertlm ,  which  redirects  ( 302 / 307 )  to  a  CDN  URL  with  query-string  signatures.  Each  iteration  of  the  while saved.offset < manifest.size loop  (
+																	1305 button ModelDownload.swift:156-167, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+																		1306 Unlabelled image /swift.svg
+																		1307 text ModelDownload.swift:156-167
+																	1308 text )  re-requests  manifest.sourceURL and  relies  on  URLSession to  follow  the  redirect  and  preserve  Range /  If-Range headers  across  hosts.
+																1309 container
+																	1310 AXListMarker • 
+																	1311 text Live Qualification Note: In  unit  tests  (
+																	1312 button ModelDownloadTests.swift:191-263, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/ModelDownloadTests.swift
+																		1313 Unlabelled image /swift.svg
+																		1314 text ModelDownloadTests.swift:191-263
+																	1315 text ),  ModelDownloadStubProtocol serves  direct  206 responses  from  example.com without  cross-host  302 redirects.  On  live  Hugging  Face  /  CloudFront  /  Xet  CDNs,  cross-origin  302 redirects  may  strip  If-Range or  return  a  weak/missing  ETag ,  which  causes 
+																	1316 button ModelDownload.begin, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+																		1317 Unlabelled image /swift.svg
+																		1318 text ModelDownload.begin
+																	1319 text to  catch  the  validation  error,  discard  the  checkpoint,  set  allowRanges = false ,  and  fall  back  to  a  2.59  GB  whole-file  download.
+														1320 container
+															1321 AXListMarker 3. 
+															1322 text Unused legacy validator in 
+															1323 text ModelDownload
+															1324 text :
+															1325 content list
+																1326 container
+																	1327 AXListMarker • 
+																	1328 button ModelDownload.validateResponse(_:expectedSize:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+																		1329 Unlabelled image /swift.svg
+																		1330 text ModelDownload.validateResponse(_:expectedSize:)
+																	1331 text (which  rejects  HTTP  206 )  is  dead  code  in  production—superseded  by  ModelResumeProtocol.validate —though  still  called  directly  by 
+																	1332 button ModelDownloadTests.partialAndErrorHTTPResponsesCannotInstall, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/ModelDownloadTests.swift
+																		1333 Unlabelled image /swift.svg
+																		1334 text ModelDownloadTests.partialAndErrorHTTPResponsesCannotInstall
+																	1335 text .
+											1336 heading Priority 4: Pause / New-Run Serialization Quirks in ModelDownload, Value: 3
+												1337 text Priority  4:  Pause  /  New-Run  Serialization  Quirks  in 
+												1338 text ModelDownload
+											1339 content list
+												1340 container
+													1341 AXListMarker • 
+													1342 text Affected Functions:
+													1343 button ModelDownload.cancel(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+														1344 Unlabelled image /swift.svg
+														1345 text ModelDownload.cancel()
+													1346 text , 
+													1347 button ModelDownload.begin(allowDownload:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+														1348 Unlabelled image /swift.svg
+														1349 text ModelDownload.begin(allowDownload:)
+													1350 text , 
+													1351 button ModelDownload.verifyExisting(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+														1352 Unlabelled image /swift.svg
+														1353 text ModelDownload.verifyExisting()
+													1354 text .
+												1355 container
+													1356 AXListMarker • 
+													1357 text Source Findings:
+													1358 content list
+														1359 container
+															1360 AXListMarker • 
+															1361 text Proper serialization across Pause -> Resume: begin(allowDownload:) captures  let previous = operation and  awaits  await previous?.value (
+															1362 button ModelDownload.swift:112-114, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+																1363 Unlabelled image /swift.svg
+																1364 text ModelDownload.swift:112-114
+															1365 text )  before  opening  ModelDownloadCheckpoint() ,  preventing  a  new  run  from  colliding  with  the  previous  task's  flock(lockFD, LOCK_EX | LOCK_NB) while  the  cancelled  task  rolls  back  its  in-flight  chunk  ( ftruncate +  fsync in 
+															1366 button ModelDownloadCheckpoint.append, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownloadCheckpoint.swift
+																1367 Unlabelled image /swift.svg
+																1368 text ModelDownloadCheckpoint.append
+															1369 text )  and  closes  its  file  descriptors.
+														1370 container
+															1371 AXListMarker • 
+															1372 text revision
+															1373 text  increment in 
+															1374 text cancel()
+															1375 text  makes 
+															1376 text begin()
+															1377 text 's cancellation cleanup skip 
+															1378 text operation = nil
+															1379 text :
+															1380 content list
+																1381 container
+																	1382 AXListMarker • 
+																	1383 button cancel(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+																		1384 Unlabelled image /swift.svg
+																		1385 text cancel()
+																	1386 text increments  revision += 1 while  expected inside  the  running  operation task  holds  the  old  revision.
+																1387 container
+																	1388 AXListMarker • 
+																	1389 text Consequently,  when  the  task  catches  CancellationError (
+																	1390 button ModelDownload.swift:231-233, 244, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+																		1391 Unlabelled image /swift.svg
+																		1392 text ModelDownload.swift:231-233, 244
+																	1393 text ),  if revision == expected is  always  false :  line  233  ( status = "Paused. Completed chunks are kept; the current segment restarts." )  never  runs,  and  line  244  ( if revision == expected { operation = nil } )  never  clears  self.operation .
+														1394 container
+															1395 AXListMarker • 
+															1396 text verifyExisting()
+															1397 text  returns early without waiting when 
+															1398 text isBusy == true
+															1399 text :
+															1400 content list
+																1401 container
+																	1402 AXListMarker • 
+																	1403 text In 
+																	1404 button verifyExisting(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/ModelDownload.swift
+																		1405 Unlabelled image /swift.svg
+																		1406 text verifyExisting()
+																	1407 text ,  guard !isBusy else { return } returns  immediately  if  a  download  or  verification  is  already  running,  rather  than  awaiting  operation?.value .
+											1408 heading Priority 5: DOCX / XLSX Literal Content & Post-Write Verification, Value: 3
+												1409 text Priority  5:  DOCX  /  XLSX  Literal  Content  &  Post-Write  Verification
+											1410 content list
+												1411 container
+													1412 AXListMarker • 
+													1413 text Affected Functions:
+													1414 button LocalArtifacts.makePDF(title:body:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalArtifacts.swift
+														1415 Unlabelled image /swift.svg
+														1416 text LocalArtifacts.makePDF(title:body:)
+													1417 text , 
+													1418 button LocalArtifacts.makeRTF(title:body:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalArtifacts.swift
+														1419 Unlabelled image /swift.svg
+														1420 text LocalArtifacts.makeRTF(title:body:)
+													1421 text , 
+													1422 button LocalArtifacts.makeDOCX(title:body:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalArtifacts.swift
+														1423 Unlabelled image /swift.svg
+														1424 text LocalArtifacts.makeDOCX(title:body:)
+													1425 text , 
+													1426 button LocalSpreadsheet.data(rowsJSON:sheetName:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalSpreadsheet.swift
+														1427 Unlabelled image /swift.svg
+														1428 text LocalSpreadsheet.data(rowsJSON:sheetName:)
+													1429 text , 
+													1430 button LocalSpreadsheet.escapeXML(_:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalSpreadsheet.swift
+														1431 Unlabelled image /swift.svg
+														1432 text LocalSpreadsheet.escapeXML(_:)
+													1433 text , 
+													1434 button MacTools.createDocument(_:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+														1435 Unlabelled image /swift.svg
+														1436 text MacTools.createDocument(_:)
+													1437 text , 
+													1438 button MacTools.createSpreadsheet(_:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+														1439 Unlabelled image /swift.svg
+														1440 text MacTools.createSpreadsheet(_:)
+													1441 text , 
+													1442 button JSONValue.init(from:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/Contracts.swift
+														1443 Unlabelled image /swift.svg
+														1444 text JSONValue.init(from:)
+													1445 text .
+												1446 container
+													1447 AXListMarker • 
+													1448 text Source Findings vs. Live Office Qualification:
+													1449 content list
+														1450 container
+															1451 AXListMarker 1. 
+															1452 text PDF and RTF in 
+															1453 text MacTools.createDocument
+															1454 text  write to disk 
+															1455 text before
+															1456 text  verifying reopened text (
+															1457 text MacTools.swift:469-484
+															1458 text ):
+															1459 content list
+																1460 container
+																	1461 AXListMarker • 
+																	1462 button LocalArtifacts.makeDOCX, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalArtifacts.swift
+																		1463 Unlabelled image /swift.svg
+																		1464 text LocalArtifacts.makeDOCX
+																	1465 text reopens  the  generated  Office  Open  XML  archive  in  memory  and  enforces  docxTextMatches(reopened.string, expected: expected) before returning  Data ,  so  an  unverified  DOCX  is  never  written  to  disk.
+																1466 container
+																	1467 AXListMarker • 
+																	1468 text By  contrast, 
+																	1469 button makePDF, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalArtifacts.swift
+																		1470 Unlabelled image /swift.svg
+																		1471 text makePDF
+																	1472 text and 
+																	1473 button makeRTF, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalArtifacts.swift
+																		1474 Unlabelled image /swift.svg
+																		1475 text makeRTF
+																	1476 text do  not  reopen  their  output  before  returning  Data . 
+																	1477 button MacTools.createDocument, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+																		1478 Unlabelled image /swift.svg
+																		1479 text MacTools.createDocument
+																	1480 text writes/overwrites  url at  line  476  first,  and  only  then  checks  normalize(extracted).contains(normalize(title)) && normalize(extracted).contains(normalize(body)) .  If  PDFKit  text  extraction  fails  to  match  (e.g.,  due  to  CoreText  hyphenation/ligatures  across  page  breaks),  the  destination  file  has  already  been  overwritten  and  createDocument returns  verified: false with  "Saved <filename>."
+														1481 container
+															1482 AXListMarker 2. 
+															1483 text JSON integer values in 
+															1484 text create_spreadsheet
+															1485 text  serialize with trailing 
+															1486 text .0
+															1487 text  (
+															1488 text Contracts.swift:9
+															1489 text , 
+															1490 text LocalSpreadsheet.swift:87
+															1491 text ):
+															1492 content list
+																1493 container
+																	1494 AXListMarker • 
+																	1495 button JSONValue.init(from:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/Contracts.swift
+																		1496 Unlabelled image /swift.svg
+																		1497 text JSONValue.init(from:)
+																	1498 text decodes  all  JSON  numbers  as  Double ,  and 
+																	1499 button LocalSpreadsheet.data(rows:sheetName:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalSpreadsheet.swift
+																		1500 Unlabelled image /swift.svg
+																		1501 text LocalSpreadsheet.data(rows:sheetName:)
+																	1502 text formats  .number(let number) via  String(number) .  Integer  inputs  in  rows_json (e.g.,  42 )  are  emitted  as  <c r="A1" t="n"><v>42.0</v></c> ,  and  integers  exceeding 
+																	1503 container
+																		1504 text 2 53
+																	1505 text lose  precision  silently  during  Double decoding.
+														1506 container
+															1507 AXListMarker 3. 
+															1508 text XLSX literal text and 
+															1509 text _xHHHH_
+															1510 text  escaping are well-guarded in XML, but not reopened by 
+															1511 text MacTools.createSpreadsheet
+															1512 text :
+															1513 content list
+																1514 container
+																	1515 AXListMarker • 
+																	1516 button LocalSpreadsheet.data(rows:sheetName:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalSpreadsheet.swift
+																		1517 Unlabelled image /swift.svg
+																		1518 text LocalSpreadsheet.data(rows:sheetName:)
+																	1519 text emits  every  string  cell  as  t="inlineStr" with  <is><t xml:space="preserve"> ,  and 
+																	1520 button escapeXML(_:), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalSpreadsheet.swift
+																		1521 Unlabelled image /swift.svg
+																		1522 text escapeXML(_:)
+																	1523 text single-pass  escapes  literal  _xHHHH_ /  _XHHHH_ prefixes  to  _x005F_ along  with  & ,  < ,  > ,  " ,  ' ,  and  &#13; .
+																1524 container
+																	1525 AXListMarker • 
+																	1526 button LocalSpreadsheetTests, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/LocalSpreadsheetTests.swift
+																		1527 Unlabelled image /swift.svg
+																		1528 text LocalSpreadsheetTests
+																	1529 text verifies  the  stored  ZIP  structure,  independent  bitwise  CRC-32,  XML  well-formedness  via  XMLDocument ,  formula-like  string  preservation  ( =SUM(...) ,  +1+1 ,  -2+3 ,  @command ),  and  one-pass  ST_Xstring decoding.
+																1530 container
+																	1531 AXListMarker • 
+																	1532 text However, 
+																	1533 button MacTools.createSpreadsheet, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/MacTools.swift
+																		1534 Unlabelled image /swift.svg
+																		1535 text MacTools.createSpreadsheet
+																	1536 text checks  only  byte-for-byte  readback  ( readback == data ),  and  neither  DOCX  nor  XLSX  has  live  rendering  qualification  in  Microsoft  Word/Excel  or  Apple  Pages/Numbers.
+										1537 text 21m ago
+										1538 button Copy
+											1539 image
+										1540 toggle button Description: Good response, Value: 0
+											1541 image
+										1542 toggle button Description: Bad response, Value: 0
+											1543 image
+									1544 container
+										1545 container
+											1546 text entry area (settable) Message input
+											1547 text Ask anything, @ to mention, / for actions
+										1548 pop-up button Add context
+											1549 image
+										1550 pop-up button Select model, current: Gemini 4 Argon High
+											1551 text Gemini 4 Argon
+											1552 text High
+											1553 image
+										1554 pop-up button Agent permissions preset selector, current: Turbo
+											1555 image
+											1556 image
+											1557 text Turbo
+											1558 image
+										1559 button Record voice memo
+											1560 image
+										1561 button (disabled) Send message
+											1562 image
+						1563 button Toggle Sidebar
+							1564 image
+						1565 button Go Back
+							1566 image
+						1567 button (disabled) Go Forward
+							1568 image
+						1569 button Search Conversations
+							1570 image
+						1571 button Toggle Auxiliary Pane
+							1572 image
+					1573 container Notifications
+					1574 list box Typeahead menu
+					1575 list box Typeahead menu
+	1576 close button
+	1577 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	1578 minimise button
+1579 menu bar
+	1580 Antigravity
+	1581 File
+	1582 Edit
+	1583 View
+	1584 Window
+
+The focused UI element is 1546 text entry area (settable) Message input

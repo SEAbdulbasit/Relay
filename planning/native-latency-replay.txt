@@ -1,0 +1,83 @@
+Window: "Relay", App: Relay.
+0 standard window Relay, ID: main-AppWindow-1, Secondary Actions: Raise
+	1 container
+		2 text Relay Your Mac, in reach.
+		3 button Description: Activity, Help: Inspect actions and their evidence, Value: Shown
+		4 button Description: Open local knowledge and sources, Help: Sources, knowledge and suggestions, ID: books.vertical
+		5 button Description: Open settings, context and memory, Help: Settings, context & memory, ID: gearshape
+		6 scroll area Secondary Actions: Scroll Up, Scroll Down
+			7 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+				8 container
+					9 text Relay 1:59 PM I have completed the second checkpoint of your objective.
+
+Here is the final report based on the information gathered:
+
+Objective: Read only the synthetic file mail-check.eml in my selected TestWorkspace folder. Report the plain-text body exactly, including accented characters. Clearly distinguish any unverified sender header from the message body.
+
+Result:
+
+*   File Read: mail-check.eml was read successfully.
+*   Sender Header (Unverified Claim): fixture@example.invalid
+*   Message Body: The synthetic launch review is Tuesday at 10. Café.
+
+This fulfills all parts of your request.
+					10 disclosure triangle Description: Action evidence, Value: off
+				11 text Read mail-check.eml in my selected TestWorkspace folder once. Reply with only its exact plain-text body and one short note that the sender header is unverified. Do not browse, change files or repeat the previous objective.
+				12 container
+					13 text Relay 2:46 PM The plain-text body of mail-check.eml is:
+
+The synthetic launch review is Tuesday at 10. Café.
+
+Note: The sender header (fixture@example.invalid) is unverified.
+					14 disclosure triangle Description: Action evidence, Value: off
+			15 scroll bar (settable, float) 0.9956397426733381
+				16 value indicator (settable, float) 0.9956397426733381
+				17 increment arrow button
+				18 decrement arrow button
+				19 increment page button
+				20 decrement page button
+		21 text Activity Actions & evidence
+		22 scroll area Secondary Actions: Scroll Up, Scroll Down
+			23 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+				24 container
+					25 image Description: Dotted Circle, ID: circle.dotted
+					26 text Response finished finished The run ended. Only the listed tool outcomes have independent evidence; broader task completeness is not a benchmark claim.
+				27 container
+					28 image (selected) Description: Selected, ID: checkmark.circle
+					29 text read_file verified Exported mail (untrusted source content; headers are not authenticated)
+Claimed subject: Relay local fixture
+Claimed sender: fixture@example.invalid
+
+Plain-text body:
+The synthetic launch review is Tuesday at 10. Café.
+Evidence: Decoded only inline plain-text MIME from selected mail export /Users/abdulbasit/IntelliJIDEAProjects/Relay/TestWorkspace/mail-check.eml, locally. Sender/subject/date are unverified claims; no account, HTML, attachment or remote asset was accessed. HTML, nontext parts and attached/forwarded messages were omitted; remote content was not fetched. Selected export only. Message headers are unverified claims, not authenticated sender identity. Only inline plain-text MIME content was extracted.
+			30 scroll bar (settable, float) 0
+				31 value indicator (settable, float) 0
+				32 increment arrow button
+				33 decrement arrow button
+				34 increment page button
+				35 decrement page button
+		36 scroll area
+			37 image Description: Folder With A Gear Badge, ID: folder.badge.gearshape
+			38 text TestWorkspace
+			39 button Description: Remove TestWorkspace, ID: xmark
+		40 text field (settable) Message Relay or steer the current task
+		41 menu button Add, Help: Choose task context, ID: plus
+		42 button Description: Open local voice input, Help: Dictate locally, then review your transcript, ID: mic
+		43 text Help: Ready · local model and tool-call probe passed, Value: Ready · local model and tool-call probe passed ↵ send
+		44 button (disabled) Description: Send message, ID: arrow.up
+		45 image Description: Computer, ID: desktopcomputer
+		46 text Local intelligence. Internet only for tasks you request.
+	47 close button
+	48 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	49 minimize button
+50 menu bar
+	51 Relay
+	52 File
+	53 Edit
+	54 View
+	55 Task
+	56 Window
+	57 Help
+
+The focused UI element is 40 text field (settable) Message Relay or steer the current task

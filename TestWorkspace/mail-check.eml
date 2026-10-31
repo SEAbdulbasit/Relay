@@ -1,0 +1,15 @@
+From: fixture@example.invalid
+Subject: Relay local fixture
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="relay-fixture"
+
+--relay-fixture
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+The synthetic launch review is Tuesday at 10. Caf=C3=A9.
+--relay-fixture
+Content-Type: text/html; charset=UTF-8
+
+<img src="https://example.invalid/no-request"><p>HTML-ONLY-OMIT</p>
+--relay-fixture--

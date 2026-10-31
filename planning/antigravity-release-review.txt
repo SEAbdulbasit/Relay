@@ -1,0 +1,326 @@
+container Agent response
+											902 button Worked for 1m
+												903 text Worked for 1m
+												904 image
+											905 heading Prioritized Release Critique (Read-Only), Value: 3
+												906 text Prioritized  Release  Critique  (Read-Only)
+											907 heading 1. Release Gate & Hardened Runtime Blockers, Value: 3
+												908 text 1.  Release  Gate  &  Hardened  Runtime  Blockers
+											909 content list
+												910 container
+													911 AXListMarker • 
+													912 text Ad-hoc 
+													913 text --runtime-check
+													914 text  creates an unlaunchable candidate under Hardened Runtime Library Validation (
+													915 text dyld
+													916 text  Team ID mismatch) while reporting success (
+													917 text exit 0
+													918 text ):
+													919 content list
+														920 container
+															921 AXListMarker • 
+															922 text Source observation:
+															923 button sign(app, identity, public), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Scripts/release-app.py
+																924 Unlabelled image /python.svg
+																925 text sign(app, identity, public)
+															926 text signs  every  item  returned  by 
+															927 button code_items(app), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Scripts/release-app.py
+																928 Unlabelled image /python.svg
+																929 text code_items(app)
+															930 text with  --options runtime (
+															931 button Scripts/release-app.py, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Scripts/release-app.py
+																932 Unlabelled image /python.svg
+																933 text Scripts/release-app.py
+															934 text )  and  keeps  library  validation  intact  in 
+															935 button Resources/Release.entitlements, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Resources/Release.entitlements
+																936 Unlabelled image /document.svg
+																937 text Resources/Release.entitlements
+															938 text .  When  --runtime-check passes  identity = '-' (
+															939 button Scripts/release-app.py, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Scripts/release-app.py
+																940 Unlabelled image /python.svg
+																941 text Scripts/release-app.py
+															942 text ),  macOS  assigns  each  Mach-O  file  a  distinct  ad-hoc  CDHash  identity  with  no Team ID .  Under  Hardened  Runtime  without  com.apple.security.cs.disable-library-validation (which  must  not  be  added),  dyld rejects  non-platform  embedded  dylibs  ( libLiteRTLM*.dylib )  unless  the  main  executable  and  dylibs  share  a  cryptographic  Team  ID  from  a  real  certificate  ( Developer ID Application or  Apple Development ).
+														943 container
+															944 AXListMarker • 
+															945 text Overreach in gate verification:
+															946 button sign(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Scripts/release-app.py
+																947 Unlabelled image /python.svg
+																948 text sign()
+															949 text only  checks  static  codesign --verify --deep --strict and  codesign -d ,  then 
+															950 button main(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Scripts/release-app.py
+																951 Unlabelled image /python.svg
+																952 text main()
+															953 text prints  LOCAL HARDENED TEST ONLY and  returns  0 without  launching  the  signed  binary  or  testing  dynamic  linking. 
+															954 button test_runtime_check_requires_runtime_flags_and_entitlements, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Scripts/Tests/test_release_app.py
+																955 Unlabelled image /python.svg
+																956 text test_runtime_check_requires_runtime_flags_and_entitlements
+															957 text tests  with  a  single-binary  dummy  app  that  has  no  embedded  .dylib ,  masking  the  dyld failure.
+														958 container
+															959 AXListMarker • 
+															960 text Improper flags on leaf dylibs & helper bundles:
+															961 button sign(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Scripts/release-app.py
+																962 Unlabelled image /python.svg
+																963 text sign()
+															964 text passes  --options runtime to  bare  .dylib files  (where  hardened  runtime  flags  do  not  apply)  and  to  nested  RelayAccessibilityFixture.app without  entitlements  ( --entitlements is  only  attached  when  item == app or item == app / 'Contents/MacOS/Relay' ).
+												965 container
+													966 AXListMarker • 
+													967 text Narrow bundle artifact blocklist in 
+													968 button validate_bundle(app), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Scripts/release-app.py
+														969 Unlabelled image /python.svg
+														970 text validate_bundle(app)
+													971 text :
+													972 content list
+														973 container
+															974 AXListMarker • 
+															975 text Source observation: Line  59  only  blocks  {'TestWorkspace', 'Models', 'conversation.json', '.env'} .  It  does  not  reject  Relay's  actual  local  state  or  model  artifacts  if  accidentally  copied  into  Contents/ ( state.json ,  knowledge.json ,  writing-profile.json ,  suggestions.json ,  preparation-schedule.json ,  *.litertlm ,  or  .relay-download-* checkpoints).
+												976 container
+													977 AXListMarker • 
+													978 text Hardened Runtime + LiteRT-LM compatibility remains unverified on a real identity:
+													979 content list
+														980 container
+															981 AXListMarker • 
+															982 text Live qualification gap:
+															983 button Resources/Release.entitlements, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Resources/Release.entitlements
+																984 Unlabelled image /document.svg
+																985 text Resources/Release.entitlements
+															986 text properly  omits  disable-library-validation and  speculative  JIT  entitlements  ( allow-jit ,  allow-unsigned-executable-memory ).  Whether  LiteRT-LM  ( libLiteRTLM.Cpu.dylib /  Metal  delegates)  initializes  and  runs  inference  under  Hardened  Runtime  without  JIT  entitlements  is  not yet qualified because  no  Developer ID Application (or  Team-ID-bearing  hardened  build)  has  been  executed  end-to-end.
+											987 heading 2. Bounded Handoff Logic, Review/Stop Preservation, and Informational Calls, Value: 3
+												988 text 2.  Bounded  Handoff  Logic,  Review/Stop  Preservation,  and  Informational  Calls
+											989 content list
+												990 container
+													991 AXListMarker • 
+													992 text Repeated informational calls avoided (
+													993 text completionCheckpoints == 0
+													994 text  + 
+													995 text proposesFollowthrough
+													996 text ):
+													997 content list
+														998 container
+															999 AXListMarker • 
+															1000 text Source & test observation: In 
+															1001 button AssistantStore.performTask, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+																1002 Unlabelled image /swift.svg
+																1003 text AssistantStore.performTask
+															1004 text ,  the  completion  checkpoint  is  now  bounded  to  at  most  one extra  turn  ( completionCheckpoints == 0 ,  line  271)  and  only  fires  when  attemptedActions > 0 ,  discoveryOnly ,  failures == 0 ,  and 
+															1005 button Self.proposesFollowthrough(reply.content), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+																1006 Unlabelled image /swift.svg
+																1007 text Self.proposesFollowthrough(reply.content)
+															1008 text matches  a  conversational  handoff  prefix.  Direct  informational  answers  after  read_file ,  search_knowledge ,  inspect_spreadsheet ,  or  read_calendar complete  in  2  model  turns  (1  tool  turn  +  1  final  answer)  without  extra  checkpoints,  covered  by 
+															1009 button CompletionLoopTests.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/CompletionLoopTests.swift
+																1010 Unlabelled image /swift.svg
+																1011 text CompletionLoopTests.swift
+															1012 text and 
+															1013 button lines 125-170, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/CompletionLoopTests.swift
+																1014 Unlabelled image /swift.svg
+																1015 text lines 125-170
+															1016 text .
+												1017 container
+													1018 AXListMarker • 
+													1019 text Review and Stop preservation:
+													1020 content list
+														1021 container
+															1022 AXListMarker • 
+															1023 text Source observation: The  checkpoint  only  appends  a  recovery  prompt  to  modelMessages (
+															1024 button AssistantStore.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+																1025 Unlabelled image /swift.svg
+																1026 text AssistantStore.swift
+															1027 text )  and  continues  the  loop;  any  resulting  tool  call  still  passes  through 
+															1028 button gate(expected), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+																1029 Unlabelled image /swift.svg
+																1030 text gate(expected)
+															1031 text (honoring 
+															1032 button stop(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+																1033 Unlabelled image /swift.svg
+																1034 text stop()
+															1035 text /  revision )  and 
+															1036 button tools.reviewReason(for: call) / requestReview, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+																1037 Unlabelled image /swift.svg
+																1038 text tools.reviewReason(for: call)
+																1039 text /
+																1040 text requestReview
+															1041 text before  execution.
+												1042 container
+													1043 AXListMarker • 
+													1044 text Concrete edge cases in 
+													1045 button discoveryTools, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+														1046 Unlabelled image /swift.svg
+														1047 text discoveryTools
+													1048 text  and 
+													1049 button proposesFollowthrough, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+														1050 Unlabelled image /swift.svg
+														1051 text proposesFollowthrough
+													1052 text :
+													1053 content list
+														1054 container
+															1055 AXListMarker 1. 
+															1056 text preview_file_move
+															1057 text  in 
+															1058 text discoveryTools
+															1059 text  (
+															1060 button AssistantStore.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+																1061 Unlabelled image /swift.svg
+																1062 text AssistantStore.swift
+															1063 text ): If  a  user  explicitly  asks  only  to  preview a  move  and  then  ask  before  proceeding,  the  model  calls  preview_file_move ( discoveryOnly == true )  and  asks  "Would you like me to move the file?" .  proposesFollowthrough matches  and  pushes  the  model  to  call  move_file in  the  same  run  (though  move_file still  pauses  at  requestReview ,  so  no  unapproved  mutation  occurs).
+														1064 container
+															1065 AXListMarker 2. 
+															1066 text Unclosed code fence suppresses handoff detection (
+															1067 button AssistantStore.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+																1068 Unlabelled image /swift.svg
+																1069 text AssistantStore.swift
+															1070 text ): If  a  model  reply  contains  an  unclosed  ``` or  ~~~ fence  before  its  closing  question  ( "Would you like me to create the file?" ),  fence stays  non- nil for  the  remainder  of  the  message  and  proposesFollowthrough returns  false .
+														1071 container
+															1072 AXListMarker 3. 
+															1073 text Unquoted paraphrase of untrusted content after sentence punctuation (
+															1074 button AssistantStore.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/AssistantStore.swift
+																1075 Unlabelled image /swift.svg
+																1076 text AssistantStore.swift
+															1077 text ): Line  600  skips  lines  starting  with  > ,  " ,  or  “ ,  and  [.!?]\s+ does  not  match  when  an  inline  quote  character  immediately  precedes  Would .  However,  if  an  informational  summary  paraphrases  source  text  without  quotation  marks  after  a  period  (e.g.,  The email asks a question. Would you like me to send the report? ),  proposesFollowthrough triggers  one  extra  model  turn.
+											1078 heading 3. Voice Input & Speech Output Cleanup and Sleep Races, Value: 3
+												1079 text 3.  Voice  Input  &  Speech  Output  Cleanup  and  Sleep  Races
+											1080 content list
+												1081 container
+													1082 AXListMarker • 
+													1083 text LocalVoiceInput.start()
+													1084 text  caller remains suspended during permission prompts even after 
+													1085 text stop()
+													1086 text , 
+													1087 text cancel()
+													1088 text , or sleep:
+													1089 content list
+														1090 container
+															1091 AXListMarker • 
+															1092 text Source observation:
+															1093 button LocalVoiceInput.start(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalVoiceInput.swift
+																1094 Unlabelled image /swift.svg
+																1095 text LocalVoiceInput.start()
+															1096 text awaits  pending.value ,  where  pending runs 
+															1097 button prepareAndStart(expected), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalVoiceInput.swift
+																1098 Unlabelled image /swift.svg
+																1099 text prepareAndStart(expected)
+															1100 text -> 
+															1101 button backend.requestPermissions(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalVoiceInput.swift
+																1102 Unlabelled image /swift.svg
+																1103 text backend.requestPermissions()
+															1104 text .  In 
+															1105 button AppleOnDeviceVoiceBackend.requestPermissions(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalVoiceInput.swift
+																1106 Unlabelled image /swift.svg
+																1107 text AppleOnDeviceVoiceBackend.requestPermissions()
+															1108 text ,  neither  AVCaptureDevice.requestAccess(for: .audio) nor  withCheckedContinuation around  SFSpeechRecognizer.requestAuthorization is  cancellation-aware.  If 
+															1109 button stop(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalVoiceInput.swift
+																1110 Unlabelled image /swift.svg
+																1111 text stop()
+															1112 text (including  via 
+															1113 button willSleepNotification, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalVoiceInput.swift
+																1114 Unlabelled image /swift.svg
+																1115 text willSleepNotification
+															1116 text )  or 
+															1117 button cancel(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalVoiceInput.swift
+																1118 Unlabelled image /swift.svg
+																1119 text cancel()
+															1120 text runs  while  the  TCC  dialog  is  pending,  revision increments  and  state  transitions  to  .stopped / .idle (and 
+															1121 button gate(expected), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalVoiceInput.swift
+																1122 Unlabelled image /swift.svg
+																1123 text gate(expected)
+															1124 text prevents  capture  from  starting  once  the  dialog  closes),  but any caller awaiting 
+															1125 text await voice.start()
+															1126 text  hangs until TCC returns .
+												1127 container
+													1128 AXListMarker • 
+													1129 text AppleOnDeviceVoiceBackend.begin()
+													1130 text  zero-sample-rate failure destroys cached 
+													1131 text recognizer
+													1132 text :
+													1133 content list
+														1134 container
+															1135 AXListMarker • 
+															1136 text Source observation: When  format.sampleRate == 0 in 
+															1137 button AppleOnDeviceVoiceBackend.begin(), Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalVoiceInput.swift
+																1138 Unlabelled image /swift.svg
+																1139 text AppleOnDeviceVoiceBackend.begin()
+															1140 text ,  it  calls  stop() (
+															1141 button lines 318-326, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalVoiceInput.swift
+																1142 Unlabelled image /swift.svg
+																1143 text lines 318-326
+															1144 text ),  which  sets  recognizer = nil (line  325).  If  begin() is  ever  invoked  without  re-running  capability(localeIdentifier:) first,  guard let recognizer at  line  284  fails  with  "On-device speech recognizer was not prepared."
+												1145 container
+													1146 AXListMarker • 
+													1147 text LocalSpeechOutput
+													1148 text  sleep observer and live playback are untested by 
+													1149 text NativeSpeechRenderTests
+													1150 text :
+													1151 content list
+														1152 container
+															1153 AXListMarker • 
+															1154 text Source & test observation:
+															1155 button LocalSpeechOutput.init, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalSpeechOutput.swift
+																1156 Unlabelled image /swift.svg
+																1157 text LocalSpeechOutput.init
+															1158 text hardcodes  NSWorkspace.shared.notificationCenter (unlike 
+															1159 button LocalVoiceInput.init, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalVoiceInput.swift
+																1160 Unlabelled image /swift.svg
+																1161 text LocalVoiceInput.init
+															1162 text ,  which  accepts  an  injectable  sleepNotificationCenter ).  Furthermore, 
+															1163 button NativeSpeechRenderTests.swift, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Tests/RelayTests/NativeSpeechRenderTests.swift
+																1164 Unlabelled image /swift.svg
+																1165 text NativeSpeechRenderTests.swift
+															1166 text is  skipped  unless  RELAY_RUN_NATIVE_SPEECH_RENDER_TEST=1 and  directly  calls  AVSpeechSynthesizer().write(utterance) —it  never  instantiates 
+															1167 button LocalSpeechOutput, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalSpeechOutput.swift
+																1168 Unlabelled image /swift.svg
+																1169 text LocalSpeechOutput
+															1170 text or 
+															1171 button NativeSpeechOutputBackend, Help: /Users/abdulbasit/IntelliJIDEAProjects/Relay/Sources/Relay/LocalSpeechOutput.swift
+																1172 Unlabelled image /swift.svg
+																1173 text NativeSpeechOutputBackend
+															1174 text ,  leaving  readAloud(_:) ,  stop() ,  delegate  callbacks,  and  sleep  interruption  unqualified  in  tests.
+										1175 text 2m ago
+										1176 button Copy
+											1177 image
+										1178 toggle button Description: Good response, Value: 0
+											1179 image
+										1180 toggle button Description: Bad response, Value: 0
+											1181 image
+									1182 container
+										1183 container
+											1184 text entry area (settable) Message input
+											1185 text Ask anything, @ to mention, / for actions
+										1186 pop-up button Add context
+											1187 image
+										1188 pop-up button Select model, current: Gemini 4 Argon High
+											1189 text Gemini 4 Argon
+											1190 text High
+											1191 image
+										1192 pop-up button Agent permissions preset selector, current: Turbo
+											1193 image
+											1194 image
+											1195 text Turbo
+											1196 image
+										1197 button Record voice memo
+											1198 image
+										1199 button (disabled) Send message
+											1200 image
+						1201 button Toggle Sidebar
+							1202 image
+						1203 button Go Back
+							1204 image
+						1205 button (disabled) Go Forward
+							1206 image
+						1207 button Search Conversations
+							1208 image
+						1209 button Toggle Auxiliary Pane
+							1210 image
+					1211 container Notifications
+					1212 list box Typeahead menu
+					1213 list box Typeahead menu
+					1214 container Send Message ⏎
+						1215 text Send Message ⏎
+	1216 close button
+	1217 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	1218 minimise button
+1219 menu bar
+	1220 Antigravity
+	1221 File
+	1222 Edit
+	1223 View
+	1224 Window
+
+The focused UI element is 1184 text entry area (settable) Message input

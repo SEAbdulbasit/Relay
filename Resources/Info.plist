@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>Relay</string>
+<key>CFBundleIdentifier</key><string>dev.relay.assistant</string>
+<key>CFBundleName</key><string>Relay</string>
+<key>CFBundleDisplayName</key><string>Relay</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>0.1.0</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleIconFile</key><string>Relay</string>
+<key>LSMinimumSystemVersion</key><string>15.0</string>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSPrincipalClass</key><string>NSApplication</string>
+<key>NSHumanReadableCopyright</key><string>Relay contributors</string>
+<key>NSCalendarsFullAccessUsageDescription</key>
+<string>Relay can read events from calendars you explicitly select to help with your requests. macOS grants full calendar access; Relay does not create or change events.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Relay uses the microphone only when you start voice input. Audio is processed by on-device speech recognition; unsupported local recognition is refused.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Relay requests speech permission for optional on-device dictation into a reviewable transcript. It requires on-device recognition and never falls back to hosted speech recognition.</string>
+</dict></plist>
