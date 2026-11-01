@@ -10,6 +10,16 @@ A native SwiftUI personal assistant with embedded **LiteRT-LM + local Gemma**, a
 - Explicit file and folder grants, inspectable activity, and checked tool outcomes.
 - Early alpha: build from source; desktop workflows and hardware support are still being qualified.
 
+## Product videos
+
+Real recordings from the native development build: local arithmetic with checked results, and the five-stage onboarding flow. These are early-alpha demonstrations; the local build includes runtime changes not yet published in this repository.
+
+| Local arithmetic | Onboarding |
+| --- | --- |
+| [![Watch local arithmetic](docs/demos/arithmetic.jpg)](docs/demos/arithmetic.mp4) | [![Watch onboarding](docs/demos/onboarding.jpg)](docs/demos/onboarding.mp4) |
+
+[Capture details and limitations](docs/demos/README.md).
+
 ## Built with
 
 | Component | Role |
