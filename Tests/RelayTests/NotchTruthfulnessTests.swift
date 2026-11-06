@@ -52,4 +52,22 @@ struct NotchTruthfulnessTests {
         #expect(try String(contentsOf: note, encoding: .utf8) == "Keep my note")
         #expect(manager.saveGiftKeepsakeToDesktop(recipientName: "Synthetic") == nil)
     }
+
+    @Test func groundedReplyPromptUsesActualKnowledgeAndWritingProfileWhileBlockingPII() {
+        let store = AssistantStore(persistenceURL: nil, complete: { _, _, _ in
+            throw RelayError.message("Must not auto-send")
+        })
+        let controller = NotchOverlayController()
+        let prompt = controller.prepareGroundedReplyPrompt(store: store, incomingText: "Can you share the launch timeline?")
+        #expect(prompt != nil)
+        #expect(store.draft.contains("Can you share the launch timeline?"))
+        #expect(controller.rememberedNoteTitle == nil)
+        #expect(store.messages.isEmpty)
+
+        // PII input is rejected and never populates draft
+        let previousDraft = store.draft
+        let blocked = controller.prepareGroundedReplyPrompt(store: store, incomingText: "My SSN is 123-45-6789")
+        #expect(blocked == nil)
+        #expect(store.draft == previousDraft)
+    }
 }

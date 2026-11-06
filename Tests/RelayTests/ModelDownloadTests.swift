@@ -20,6 +20,28 @@ struct ModelDownloadTests {
         await #expect(throws: (any Error).self) { try await ModelDownload.verifyFile(at: url, manifest: manifest()) }
     }
 
+    @Test func catalogManifestsAreChecksumPinnedAndValid() throws {
+        #expect(ModelManifest.catalog.contains(.recommended))
+        #expect(ModelManifest.catalog.contains(.gemma4E4B))
+        for item in ModelManifest.catalog {
+            try ModelDownload.validateManifest(item)
+        }
+    }
+
+    @Test func catalogDiscoveryRejectsSymbolicLinks() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let item = manifest()
+        let existing = directory.appendingPathComponent("other.litertlm")
+        let candidate = directory.appendingPathComponent(item.filename)
+        try Data("abc".utf8).write(to: existing)
+        try FileManager.default.createSymbolicLink(at: candidate, withDestinationURL: existing)
+        #expect(ModelManifest.resolveInstalledURL(for: item, in: directory) == nil)
+        try FileManager.default.removeItem(at: candidate)
+        try FileManager.default.moveItem(at: existing, to: candidate)
+        #expect(ModelManifest.resolveInstalledURL(for: item, in: directory) == candidate)
+    }
+
     @Test func partialAndErrorHTTPResponsesCannotInstall() throws {
         let url = URL(string: "https://example.com/model")!
         for code in [206, 403, 404, 500] {

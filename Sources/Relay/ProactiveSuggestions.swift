@@ -13,6 +13,51 @@ nonisolated struct Suggestion: Identifiable, Sendable {
     var dismissed: Bool
 }
 
+/// Deterministic high-risk PII backstop (Sentient OS pattern) that blocks Social Security
+/// Numbers, Luhn-validated 13–19 digit payment card numbers, and passport identifiers from
+/// surfacing in proactive suggestions or unredacted summaries.
+nonisolated enum PIIScan {
+    private static let ssnRegex = try? NSRegularExpression(
+        pattern: #"\b(?!000|666|9\d\d)\d{3}[-\s](?!00)\d{2}[-\s](?!0000)\d{4}\b"#
+    )
+    private static let cardCandidateRegex = try? NSRegularExpression(
+        pattern: #"\b(?:\d[ -]*?){13,19}\b"#
+    )
+    private static let passportRegex = try? NSRegularExpression(
+        pattern: #"(?i)\bpassport(?:\s*(?:no\.?|number|#))?[:\s#]+[A-Z0-9]{6,9}\b"#
+    )
+
+    static func containsHighRiskPII(_ text: String) -> Bool {
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        if ssnRegex?.firstMatch(in: text, range: range) != nil { return true }
+        if passportRegex?.firstMatch(in: text, range: range) != nil { return true }
+        if let matches = cardCandidateRegex?.matches(in: text, range: range) {
+            for match in matches {
+                guard let swiftRange = Range(match.range, in: text) else { continue }
+                let digits = text[swiftRange].compactMap(\.wholeNumberValue)
+                if (13...19).contains(digits.count) && passesLuhn(digits) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    static func passesLuhn(_ digits: [Int]) -> Bool {
+        guard (13...19).contains(digits.count), digits.contains(where: { $0 != 0 }) else { return false }
+        var sum = 0
+        for (index, digit) in digits.reversed().enumerated() {
+            if index % 2 == 1 {
+                let doubled = digit * 2
+                sum += doubled > 9 ? doubled - 9 : doubled
+            } else {
+                sum += digit
+            }
+        }
+        return sum % 10 == 0
+    }
+}
+
 /// A manual, lexical TODO brief from explicitly supplied indexed records. It never reads
 /// files, watches apps, schedules a wakeup, calls a model, sends data or executes a tool.
 @Observable @MainActor
@@ -69,7 +114,10 @@ final class ProactiveSuggestions {
             if lines.count > 300 { limited = true }
             for raw in lines.prefix(300) {
                 let line = String(raw).trimmingCharacters(in: .whitespacesAndNewlines)
-                guard line.utf8.count <= 1_024, let action = Self.explicitAction(line), !action.isEmpty else { continue }
+                guard line.utf8.count <= 1_024,
+                      !PIIScan.containsHighRiskPII(line),
+                      let action = Self.explicitAction(line),
+                      !action.isEmpty else { continue }
                 let id = Self.identifier(path: record.sourcePath, hash: record.contentHash, line: line)
                 guard seen.insert(id).inserted, !dismissed.contains(id), !activeSnoozes.contains(id) else { continue }
                 next.append(Suggestion(id: id, title: Self.prefix(action, bytes: 120),

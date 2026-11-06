@@ -10,7 +10,7 @@ nonisolated struct ActivityPresentation {
 
     init(name: String, status rawStatus: String) {
         let labels = [
-            "search_files": "Find files", "search_finder": "Search Finder",
+            "calculate": "Calculate locally", "search_files": "Find files", "search_finder": "Search Finder",
             "observe_app": "Inspect app", "set_value": "Enter text",
             "press_control": "Use app control", "scroll_control": "Scroll app",
             "open_app": "Open app", "open_file": "Open file",

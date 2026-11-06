@@ -37,7 +37,10 @@ nonisolated struct KnowledgeSearchResult: Identifiable, Sendable {
 /// No watcher, implicit home-directory scan, model call, embedding service or network is used.
 @Observable @MainActor
 final class LocalKnowledge {
-    private(set) var records: [KnowledgeRecord] = []
+    private(set) var records: [KnowledgeRecord] = [] {
+        didSet { if records != oldValue { onRecordsChanged?(records) } }
+    }
+    @ObservationIgnored var onRecordsChanged: (([KnowledgeRecord]) -> Void)?
     private(set) var status = "No sources indexed. Choose files or folders, then index explicitly."
     private(set) var isIndexing = false
     @ObservationIgnored private let persistenceURL: URL?
@@ -168,19 +171,35 @@ final class LocalKnowledge {
     /// Call on grant changes as well as search; this only removes records, never adds sources.
     func purgeStale(grants: [ScopeGrant]) {
         let before = records.count
-        records.removeAll { record in
-            guard Self.allowedSource(URL(fileURLWithPath: record.sourcePath)),
-                  let url = try? ToolPolicy.scopedURL(record.sourcePath, grants: grants), url.path == record.sourcePath,
-                  let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]),
-                  values.isRegularFile == true, values.fileSize == record.byteCount,
-                  values.contentModificationDate == record.modifiedAt,
-                  let data = Self.boundedData(url, maximum: limits.maxFileBytes), Self.hash(data) == record.contentHash else { return true }
-            return false
-        }
+        records.removeAll { !isFresh($0, grants: grants) }
         if records.count != before {
             status = "Forgot \(before - records.count) changed, deleted or no-longer-authorized sources. Reindex explicitly to refresh."
             persist()
         }
+    }
+
+    /// Check only the in-flight source before and after model work. If the source changed,
+    /// remove its obsolete record without re-reading the whole index on every generation step.
+    func revalidate(_ record: KnowledgeRecord, grants: [ScopeGrant]) -> Bool {
+        guard let index = records.firstIndex(where: { $0.sourcePath == record.sourcePath }),
+              records[index] == record else { return false }
+        guard isFresh(record, grants: grants) else {
+            records.remove(at: index)
+            status = "Forgot a changed, deleted or no-longer-authorized source. Reindex explicitly to refresh."
+            persist()
+            return false
+        }
+        return true
+    }
+
+    private func isFresh(_ record: KnowledgeRecord, grants: [ScopeGrant]) -> Bool {
+        guard Self.allowedSource(URL(fileURLWithPath: record.sourcePath)),
+              let url = try? ToolPolicy.scopedURL(record.sourcePath, grants: grants), url.path == record.sourcePath,
+              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]),
+              values.isRegularFile == true, values.fileSize == record.byteCount,
+              values.contentModificationDate == record.modifiedAt,
+              let data = Self.boundedData(url, maximum: limits.maxFileBytes) else { return false }
+        return Self.hash(data) == record.contentHash
     }
 
     /// Returns Markdown for a user-chosen local destination; never writes or transmits it itself.

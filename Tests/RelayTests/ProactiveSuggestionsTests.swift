@@ -219,4 +219,22 @@ struct ProactiveSuggestionsTests {
         #expect(restored.suggestions.count == 1)
     }
 
+    @Test func deterministicPIIScanBlocksSSNLuhnCardsAndPassportsFromSuggestions() {
+        #expect(PIIScan.containsHighRiskPII("SSN 123-45-6789"))
+        #expect(PIIScan.containsHighRiskPII("Card: 4532 0151 1283 0366"))
+        #expect(PIIScan.containsHighRiskPII("Passport No: A12345678"))
+        #expect(!PIIScan.containsHighRiskPII("Invoice #2026-1042 due Friday"))
+
+        let suggestions = ProactiveSuggestions(persistenceURL: nil)
+        suggestions.setEnabled(true)
+        let mixed = record("""
+        TODO: File tax form for 123-45-6789
+        TODO: Pay vendor card 4532 0151 1283 0366
+        TODO: Renew Passport #A12345678
+        TODO: Send Q4 architecture summary to team
+        """)
+        suggestions.prepare(records: [mixed], now: now)
+        #expect(suggestions.suggestions.map(\.title) == ["Send Q4 architecture summary to team"])
+    }
+
 }

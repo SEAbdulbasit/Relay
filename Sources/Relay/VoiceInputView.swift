@@ -11,8 +11,16 @@ struct VoiceInputView: View {
             HStack {
                 Label("Voice input", systemImage: "mic").font(.system(size: 19, weight: .semibold))
                 Spacer()
-                Button { store.voice.cancel(); dismiss() } label: { Image(systemName: "xmark").frame(width: 28, height: 28) }
-                    .buttonStyle(.plain).accessibilityLabel("Close voice input and discard transcript").help("Stop microphone and discard this transcript").keyboardShortcut(.cancelAction)
+                RelayIconButton(
+                    icon: "xmark",
+                    label: "Close voice input and discard transcript",
+                    size: 32
+                ) {
+                    store.voice.cancel()
+                    dismiss()
+                }
+                .help("Stop microphone and discard this transcript")
+                .keyboardShortcut(.cancelAction)
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -61,6 +69,7 @@ struct VoiceInputView: View {
             }.font(.system(size: 15))
         }.padding(28).frame(width: 600, height: 640)
             .background(RelayTheme.background).foregroundStyle(.white).tint(RelayTheme.accent)
+            .disclosureGroupStyle(RelayDisclosureGroupStyle(accent: RelayColors.accentCoral))
             .onAppear {
                 store.speech.stop()
                 store.speechDiagnostic.stop()

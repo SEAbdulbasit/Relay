@@ -202,7 +202,7 @@ actor ModelDownloadCheckpoint {
     }
     deinit {
         if partialFD >= 0 { Darwin.close(partialFD) }
-        if lockFD >= 0 { Darwin.close(lockFD) }
+        if lockFD >= 0 { _ = flock(lockFD, LOCK_UN); Darwin.close(lockFD) }
         if rootFD >= 0 { Darwin.close(rootFD) }
     }
 
@@ -321,8 +321,11 @@ actor ModelDownloadCheckpoint {
             }
         }
     }
+    // Explicitly unlock before close: a concurrently forked subprocess can retain
+    // this open file description until exec, even with O_CLOEXEC. Closing our copy
+    // alone would leave a phantom active operation during an immediate reopen.
     private func closeDescriptors() {
-        if partialFD >= 0 { Darwin.close(partialFD) }; if lockFD >= 0 { Darwin.close(lockFD) }; if rootFD >= 0 { Darwin.close(rootFD) }
+        if partialFD >= 0 { Darwin.close(partialFD) }; if lockFD >= 0 { _ = flock(lockFD, LOCK_UN); Darwin.close(lockFD) }; if rootFD >= 0 { Darwin.close(rootFD) }
         rootFD = -1; lockFD = -1; partialFD = -1; rootURL = nil; rootStamp = nil; partialStamp = nil
         manifest = nil; partialLeaf = ""; metadataLeaf = nil; metadataStamp = nil; offset = 0; etag = nil; digest = SHA256(); sealed = false
     }

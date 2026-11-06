@@ -37,6 +37,7 @@ final class MacTools {
     private var approvals: [String: Approval] = [:]
     private var preparedReviews: [String: Approval] = [:]
     private var displayedContexts: [String: (callFingerprint: String, context: AXReviewContext)] = [:]
+    let desktopSession = AgentDesktopSession()
     private let workspace = NSWorkspace.shared
     var calendarSource: CalendarSource?
     var knowledge: LocalKnowledge?
@@ -45,6 +46,7 @@ final class MacTools {
 
     static var definitions: [ToolDefinition] {
         [
+            definition("calculate", "Evaluate numeric arithmetic locally and reliably. Use for arithmetic questions, including implicit multiplication written x or ×. Supports + - * / parentheses and decimals. No code, identifiers, units, percentages or exponent syntax. Return the supplied result exactly and disclose rounding when indicated.", ["expression": "Arithmetic expression only, such as 428 × 23445555 or (12.5 + 3) / 2"], ["expression"]),
             definition("search_files", "Search filenames recursively within explicitly selected local scope, with bounded depth, entries, time and output. Hidden entries and symlinks are excluded. Use search_finder when the user explicitly asks to search through Finder.", ["query": "Filename text to match within selected scope"], ["query"]),
             definition("preview_file_move", "Prepare a reviewed move or rename of one regular file up to 64 MB on the same filesystem. Both parent directories must be in selected writable folders. System, application and Library locations are excluded; no overwrite, directory move or copy/delete fallback. Returns a short-lived preview_id; nothing is moved.", ["source": "Existing selected file path", "destination": "New nonexisting path in a selected writable folder"], ["source", "destination"]),
             definition("move_file", "Execute one exact preview_file_move ticket after explicit user review. Rechecks source identity/content, parent identities, grants and expiry; exclusive rename never overwrites. Reports uncertain effects without automatic retry or undo.", ["preview_id": "Exact short-lived identifier returned by preview_file_move"], ["preview_id"]),
@@ -66,7 +68,7 @@ final class MacTools {
             definition("press_control", "Press or act on a named accessible control from a fresh observation (supports optional action: click, select, toggle, check, uncheck, expand, collapse). Exact Play/Pause/Stop/Resume buttons in VLC and QuickTime are routine. Other named AXButtons require explicit review bound to a complete current window and editable-field context. Send/Submit/Publish, destructive, financial and security controls remain manual/unsupported. Observe afterward to verify the outcome.", ["bundle_id": "Observed bundle identifier", "element_id": "Fresh observed control ID or @snapshot:eN ref", "action": "Optional semantic action: click, select, toggle, check, uncheck, expand, collapse"], ["bundle_id", "element_id"]),
             definition("browser_navigate", "Navigate to an HTTP/HTTPS URL in a new Chrome or Safari tab using its visible address bar. Exact destination and browser require review. Verifies fresh page URL/title only; redirects, authentication and unsupported controls remain uncertain.", ["url": "Exact HTTP/HTTPS destination", "browser": "Google Chrome or Safari name or bundle identifier"], ["url", "browser"]),
             definition("search_web", "Search the web in a new Chrome or Safari tab using DuckDuckGo. Requires review of the exact query, browser and HTTPS search destination before network access. Verifies page URL/title, not answer accuracy.", ["query": "Exact single-line search text", "browser": "Google Chrome or Safari name or bundle identifier"], ["query", "browser"]),
-            definition("open_url", "Open an explicit HTTP/HTTPS website in the default browser. Requires review of destination before network access. Browser launch is not evidence the page loaded.", ["url": "Exact website URL"], ["url"])
+            definition("open_url", "Open an explicit HTTP/HTTPS website in Google Chrome by default. Requires review of destination before network access. Browser launch is not evidence the page loaded.", ["url": "Exact website URL"], ["url"])
         ]
     }
 
@@ -79,7 +81,13 @@ final class MacTools {
         ]))
     }
 
+    func hideActionPointer() {
+        RelayActionPointer.shared.hide()
+        desktopSession.stop()
+    }
+
     func invalidateApprovals() {
+        hideActionPointer()
         effectGeneration &+= 1
         movePreviews.removeAll()
         approvals.removeAll()
@@ -109,7 +117,7 @@ final class MacTools {
             guard let destination = try? BrowserAutomation.destination(for: call) else { return "Review this browser request. Its browser and destination must pass validation before anything opens." }
             let query = call.name == "search_web" ? "Search query: \(call.arguments["query"]?.string ?? "")\n" : ""
             return "\(query)Open a new tab in \(destination.browser.name): \(destination.url.absoluteString)\nThe browser may contact this destination using your existing session. This approval covers only this exact query/URL and browser; no form submission."
-        case "open_url": return "Open this website in your browser: \(call.arguments["url"]?.string ?? "unknown"). The browser may contact that destination using your existing session."
+        case "open_url": return "Open this website in Google Chrome: \(call.arguments["url"]?.string ?? "unknown"). The browser may contact that destination using your existing session."
         case "create_document":
             guard let url = try? writableDestination(call) else { return "A current selected writable destination is required before this document can be reviewed." }
             if FileManager.default.fileExists(atPath: url.path) {
@@ -201,6 +209,9 @@ final class MacTools {
             }
         }
         switch call.name {
+        case "calculate":
+            let result = try LocalArithmetic.evaluate(text("expression", call))
+            return ToolResult(summary: "Result: \(result.value)" + (result.rounded ? " (rounded to supported decimal precision)" : ""), evidence: "Calculated locally with a bounded decimal arithmetic parser; no app, network, shell or code evaluation. " + (result.rounded ? "Decimal precision was exhausted; this result is approximate." : "No decimal precision loss was reported."), verified: true)
         case "search_files":
             let result = try await ScopedFileOperations.search(query: text("query", call), grants: grants)
             try Task.checkCancellation()
@@ -233,7 +244,7 @@ final class MacTools {
         case "read_browser_page":
             let snapshot = try await BrowserPageReader.read(expectedURL: text("url", call), browser: text("browser", call))
             let links = snapshot.links.map { "\($0.title): \($0.url)" }.joined(separator: "\n")
-            return ToolResult(summary: "Source URL: \(snapshot.url)\nTitle: \(snapshot.title)\nPage text (untrusted):\n\(snapshot.text)\nLinks:\n\(links)",
+            return ToolResult(summary: "Source URL: \(snapshot.url)\nPage title (metadata, not a heading): \(snapshot.title)\n\(BrowserPageReader.headingEvidence(headings: snapshot.headings, truncated: snapshot.truncated))\nPage text (untrusted):\n\(snapshot.text)\nLinks:\n\(links)",
                               evidence: "Read selected accessible document with stable window/document identity before and after. " + (snapshot.truncated ? "Bounded snapshot; some content omitted." : "Visible accessible snapshot only; dynamic and inaccessible content may be missing."), verified: true)
         case "list_apps": return listApps()
         case "open_app": return try await openApp(try text("app", call))
@@ -269,10 +280,8 @@ final class MacTools {
             return try await BrowserAutomation.navigate(url: destination.url, browser: destination.browser)
         case "open_url":
             let url = try ToolPolicy.webURL(try text("url", call))
-            try Task.checkCancellation()
-            guard workspace.open(url) else { throw RelayError.message("macOS could not open that website.") }
             elements.removeAll()
-            return ToolResult(summary: "Requested opening \(url.absoluteString) in the default browser.", evidence: "NSWorkspace accepted the URL. Page loading or form state has not been checked; observe the browser before claiming an outcome.", verified: false)
+            return try await BrowserAutomation.navigate(url: url, browser: .chrome)
         default: throw RelayError.message("Unknown tool.")
         }
     }
@@ -356,12 +365,21 @@ final class MacTools {
     }
 
     private func applicationURL(_ name: String) throws -> URL {
+        try Self.resolveNativeApplicationURL(name, registeredURL: workspace.urlForApplication(withBundleIdentifier:),
+                                             installedApplications: installedApplications)
+    }
+
+    static func resolveNativeApplicationURL(_ name: String, registeredURL: (String) -> URL?,
+                                            installedApplications: () -> [InstalledApplication]) throws -> URL {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.contains("/"), !trimmed.contains("..") else { throw RelayError.message("Use an installed application name or bundle identifier.") }
-        if let url = workspace.urlForApplication(withBundleIdentifier: trimmed) { return url }
-        if let application = try Self.matchingInstalledApplication(trimmed, in: installedApplications()) { return application.url }
+        if let url = registeredURL(trimmed) { return url }
+        if let application = try matchingInstalledApplication(trimmed, in: installedApplications()) { return application.url }
         if let bundleID = Self.applicationAliasBundleID(trimmed),
-           let url = workspace.urlForApplication(withBundleIdentifier: bundleID) { return url }
+           let url = registeredURL(bundleID) { return url }
+        if let webURL = webAppFallbackURL(trimmed) {
+            throw RelayError.message("No installed app matches \(name). To open \(webURL.absoluteString), use browser_navigate and review the exact destination.")
+        }
         throw RelayError.message("Application \(name) was not found. Use list_apps to inspect installed choices before asking the user to clarify.")
     }
 
@@ -370,7 +388,45 @@ final class MacTools {
         let normalized = name.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").lowercased()
         switch normalized {
         case "voice recorder", "voice memos", "audio recorder": return "com.apple.VoiceMemos"
+        case "calculator", "calc", "apple calculator": return "com.apple.calculator"
+        case "apple notes", "notes": return "com.apple.Notes"
+        case "apple reminders", "reminders": return "com.apple.reminders"
+        case "apple calendar", "ical", "calendar": return "com.apple.iCal"
+        case "apple mail", "mail": return "com.apple.mail"
+        case "text editor", "textedit": return "com.apple.TextEdit"
+        case "quicktime", "quicktime player": return "com.apple.QuickTimePlayerX"
+        case "system settings", "system preferences": return "com.apple.systempreferences"
+        case "activity monitor": return "com.apple.ActivityMonitor"
+        case "safari": return "com.apple.Safari"
+        case "chrome", "google chrome": return "com.google.Chrome"
+        case "finder": return "com.apple.finder"
+        case "preview": return "com.apple.Preview"
+        case "messages": return "com.apple.MobileSMS"
+        case "music", "apple music": return "com.apple.Music"
+        case "photos", "apple photos": return "com.apple.Photos"
         default: return nil
+        }
+    }
+
+    private func resolveRunningApplication(_ raw: String) -> NSRunningApplication? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let app = NSRunningApplication.runningApplications(withBundleIdentifier: trimmed).first {
+            return app
+        }
+        if let aliasID = Self.applicationAliasBundleID(trimmed),
+           let app = NSRunningApplication.runningApplications(withBundleIdentifier: aliasID).first {
+            return app
+        }
+        let normalized = Self.normalizedApplicationName(trimmed)
+        return workspace.runningApplications.first { app in
+            if let bid = app.bundleIdentifier, bid.caseInsensitiveCompare(trimmed) == .orderedSame {
+                return true
+            }
+            if let name = app.localizedName, Self.normalizedApplicationName(name) == normalized {
+                return true
+            }
+            return false
         }
     }
 
@@ -391,26 +447,14 @@ final class MacTools {
     }
 
     private func openApp(_ name: String) async throws -> ToolResult {
-        do {
-            let url = try applicationURL(name)
-            let config = NSWorkspace.OpenConfiguration()
-            config.activates = true
-            try Task.checkCancellation()
-            let app = try await workspace.openApplication(at: url, configuration: config)
-            let running = !app.isTerminated
-            elements.removeAll()
-            return ToolResult(summary: "Opened \(app.localizedName ?? name).", evidence: "NSWorkspace returned process \(app.processIdentifier), bundle \(app.bundleIdentifier ?? "unknown"); running=\(running). This verifies launch only.", verified: running)
-        } catch {
-            if let webURL = Self.webAppFallbackURL(name), workspace.open(webURL) {
-                elements.removeAll()
-                return ToolResult(
-                    summary: "Opened \(name) (\(webURL.absoluteString)) in your browser.",
-                    evidence: "No local .app bundle named \(name) was installed; opened \(webURL.absoluteString) via NSWorkspace.",
-                    verified: true
-                )
-            }
-            throw error
-        }
+        let url = try applicationURL(name)
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        try Task.checkCancellation()
+        let app = try await workspace.openApplication(at: url, configuration: config)
+        let running = !app.isTerminated
+        elements.removeAll()
+        return ToolResult(summary: "Opened \(app.localizedName ?? name).", evidence: "NSWorkspace returned process \(app.processIdentifier), bundle \(app.bundleIdentifier ?? "unknown"); running=\(running). This verifies launch only.", verified: running)
     }
 
     private func openFile(_ call: ToolCall) async throws -> ToolResult {
@@ -580,24 +624,37 @@ final class MacTools {
     }
 
     private func observe(_ call: ToolCall) async throws -> ToolResult {
-        let bundleID = try text("bundle_id", call)
+        let rawBundleID = try text("bundle_id", call)
         guard AXIsProcessTrusted() else { throw RelayError.message("Accessibility permission is required. Enable Relay in System Settings → Privacy & Security → Accessibility, then retry observation.") }
-        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else { throw RelayError.message("That application is not running.") }
+        guard let app = resolveRunningApplication(rawBundleID) else { throw RelayError.message("That application is not running.") }
+        let bundleID = app.bundleIdentifier ?? rawBundleID
 
         let mode = call.arguments["mode"]?.string?.lowercased() ?? "full"
         let rootRef = call.arguments["root_ref"]?.string
         let query = call.arguments["query"]?.string
         let appName = app.localizedName ?? bundleID
 
-        // If the agent explicitly requested agent-desktop skeleton or find mode, or a subtree root_ref:
-        if mode == "skeleton" || mode == "find" || (rootRef != nil && !rootRef!.isEmpty) || (query != nil && !query!.isEmpty) {
+        // Browsers use the library's Chromium-aware snapshots by default. Other native
+        // apps retain the existing direct AX path unless a scoped/ref mode was requested.
+        let browserSnapshot = ["com.google.Chrome", "com.apple.Safari"].contains(bundleID)
+        if browserSnapshot || mode == "skeleton" || mode == "find" || (rootRef != nil && !rootRef!.isEmpty) || (query != nil && !query!.isEmpty) {
             elements.removeAll()
             agentDesktopRefs.removeAll()
-            let envelope: AgentDesktopEnvelope
-            if mode == "find" || (query != nil && !query!.isEmpty) {
-                envelope = try await AgentDesktopBridge.find(app: appName, query: query)
-            } else {
-                envelope = try await AgentDesktopBridge.snapshot(app: appName, rootRef: rootRef, skeleton: mode == "skeleton")
+            _ = try await desktopSession.prepare()
+            try Task.checkCancellation()
+            func fetchEnvelope() async throws -> AgentDesktopEnvelope {
+                if mode == "find" || (query != nil && !query!.isEmpty) {
+                    return try await AgentDesktopBridge.find(app: appName, query: query, sessionID: desktopSession.id)
+                } else {
+                    return try await AgentDesktopBridge.snapshot(app: appName, rootRef: rootRef, skeleton: mode == "skeleton", interactiveOnly: mode != "full", sessionID: desktopSession.id)
+                }
+            }
+            var envelope = try await fetchEnvelope()
+            if !envelope.ok, envelope.retrySafe, ["APP_NOT_FOUND", "WINDOW_NOT_FOUND"].contains(envelope.errorCode ?? "") {
+                // Only a safely retryable read during app startup qualifies for this grace.
+                try Task.checkCancellation()
+                try? await Task.sleep(for: .milliseconds(200))
+                envelope = try await fetchEnvelope()
             }
             guard envelope.ok else {
                 throw RelayError.message("agent-desktop observation failed: \(envelope.formattedSummary)")
@@ -615,7 +672,16 @@ final class MacTools {
         AXUIElementSetMessagingTimeout(root, 0.4)
         elements.removeAll()
         agentDesktopRefs.removeAll()
-        let windows = attribute(root, kAXWindowsAttribute) as? [AXUIElement] ?? []
+        var windows = attribute(root, kAXWindowsAttribute) as? [AXUIElement] ?? []
+        if windows.isEmpty {
+            // App-window startup grace (Sentient OS pattern): newly launched apps may take 150-450ms to register their AXWindow.
+            for delayMs in [150, 300] {
+                try Task.checkCancellation()
+                try? await Task.sleep(for: .milliseconds(delayMs))
+                windows = attribute(root, kAXWindowsAttribute) as? [AXUIElement] ?? []
+                if !windows.isEmpty { break }
+            }
+        }
         var queue: [(AXUIElement, Int, AXUIElement?)] = windows.isEmpty ? [(root, 0, nil)] : windows.map { ($0, 0, $0) }
         var seen: [AXUIElement] = []
         var candidates: [(id: String, record: ElementRecord, row: String, priority: Int)] = []
@@ -702,10 +768,11 @@ final class MacTools {
 
     private func freshAgentDesktopRef(_ call: ToolCall) throws -> AgentDesktopRefRecord {
         let id = try text("element_id", call)
-        let bundleID = try text("bundle_id", call)
+        let rawBundleID = try text("bundle_id", call)
+        let bundleID = resolveRunningApplication(rawBundleID)?.bundleIdentifier ?? Self.applicationAliasBundleID(rawBundleID) ?? rawBundleID
         guard id.hasPrefix("@"),
               let record = agentDesktopRefs[id],
-              record.bundleID == bundleID,
+              (record.bundleID == bundleID || record.bundleID.caseInsensitiveCompare(rawBundleID) == .orderedSame),
               Date().timeIntervalSince(record.observed) < 60,
               record.enabled else {
             throw RelayError.message("The agent-desktop @ref is stale, disabled or belongs to another app. Observe again before acting.")
@@ -753,14 +820,28 @@ final class MacTools {
 
     private func freshRecord(_ call: ToolCall) throws -> ElementRecord {
         let id = try text("element_id", call)
-        let bundleID = try text("bundle_id", call)
-        guard let record = elements[id], record.bundleID == bundleID, Date().timeIntervalSince(record.observed) < 60,
-              NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).contains(where: { $0.processIdentifier == record.pid }),
+        let rawBundleID = try text("bundle_id", call)
+        let bundleID = resolveRunningApplication(rawBundleID)?.bundleIdentifier ?? Self.applicationAliasBundleID(rawBundleID) ?? rawBundleID
+        guard let record = elements[id], (record.bundleID == bundleID || record.bundleID.caseInsensitiveCompare(rawBundleID) == .orderedSame), Date().timeIntervalSince(record.observed) < 60,
+              NSRunningApplication.runningApplications(withBundleIdentifier: record.bundleID).contains(where: { $0.processIdentifier == record.pid }),
               !isSecure(record.element), stateFingerprint(record.element) == record.fingerprint,
               (attribute(record.element, kAXEnabledAttribute) as? Bool) != false else {
             throw RelayError.message("The control is stale, changed, disabled or secure. Observe the intended app again before acting.")
         }
         return record
+    }
+
+    private func showAgentPointer(_ record: AgentDesktopRefRecord, label: String) async throws {
+        RelayActionPointer.shared.hide()
+        if await desktopSession.show(label: label) {
+            try Task.checkCancellation()
+            return
+        }
+        let bounds = try? await AgentDesktopBridge.bounds(ref: record.ref, sessionID: desktopSession.id)
+        try Task.checkCancellation()
+        guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == record.bundleID,
+              let bounds else { return }
+        RelayActionPointer.shared.show(axRect: bounds, label: label)
     }
 
     private func setValue(_ call: ToolCall) async throws -> ToolResult {
@@ -776,13 +857,24 @@ final class MacTools {
             guard value.count <= 30_000, !value.contains("\n"), !value.contains("\r") else {
                 throw RelayError.message("Text entry is limited to 30,000 characters without Return/newline. Use a file tool for multiline output.")
             }
-            let envelope = try await AgentDesktopBridge.act(command: "set-value", ref: refRecord.ref, value: value)
+            try await showAgentPointer(refRecord, label: "Type")
+            defer { RelayActionPointer.shared.finishAction() }
+            let envelope = try await AgentDesktopBridge.act(command: "set-value", ref: refRecord.ref, value: value, sessionID: desktopSession.id)
             elements.removeAll()
             agentDesktopRefs.removeAll()
             guard envelope.ok else {
                 throw RelayError.message("agent-desktop set-value failed: \(envelope.formattedSummary)")
             }
-            return ToolResult(summary: "Entered text in \(refRecord.bundleID) via agent-desktop ref \(refRecord.ref).", evidence: "agent-desktop set-value succeeded for \(value.count) characters. No button or Return was pressed.", verified: true)
+            let valueVerified = envelope.verifiesTextValue(value)
+            return ToolResult(
+                summary: valueVerified
+                    ? "Entered text in \(refRecord.bundleID) via agent-desktop ref \(refRecord.ref)."
+                    : "Requested text entry in \(refRecord.bundleID); value readback is unverified.",
+                evidence: valueVerified
+                    ? "agent-desktop reported delivered_verified and its post-action value exactly matched \(value.count) characters. No button or Return was pressed. This verifies the control value, not application-level persistence."
+                    : "agent-desktop accepted set-value but did not supply a verified exact value readback. Observe the intended control before claiming success or retrying; the action may already have taken effect.",
+                verified: valueVerified
+            )
         }
         let record = try freshRecord(call)
         let role = attribute(record.element, kAXRoleAttribute) as? String ?? ""
@@ -797,6 +889,8 @@ final class MacTools {
         guard value.count <= 30_000, !value.contains("\n"), !value.contains("\r") else { throw RelayError.message("Text entry is limited to 30,000 characters without Return/newline. Use a file tool for multiline output.") }
         try Task.checkCancellation()
         AXUIElementSetMessagingTimeout(record.element, 0.5)
+        RelayActionPointer.shared.show(element: record.element, label: "Type")
+        defer { RelayActionPointer.shared.finishAction() }
         let result = AXUIElementSetAttributeValue(record.element, kAXValueAttribute as CFString, value as CFString)
         elements.removeAll()
         agentDesktopRefs.removeAll()
@@ -924,7 +1018,9 @@ final class MacTools {
             guard ["up", "down", "left", "right"].contains(direction) else {
                 throw RelayError.message("Scroll direction must be up, down, left or right.")
             }
-            let envelope = try await AgentDesktopBridge.act(command: "scroll", ref: refRecord.ref, direction: direction)
+            try await showAgentPointer(refRecord, label: "Scroll")
+            defer { RelayActionPointer.shared.finishAction() }
+            let envelope = try await AgentDesktopBridge.act(command: "scroll", ref: refRecord.ref, direction: direction, sessionID: desktopSession.id)
             elements.removeAll()
             agentDesktopRefs.removeAll()
             guard envelope.ok else {
@@ -941,6 +1037,8 @@ final class MacTools {
             throw RelayError.message("This control does not advertise a \(direction) scroll action. Observe another scroll area or ask the user to scroll directly.")
         }
         try Task.checkCancellation()
+        RelayActionPointer.shared.show(element: record.element, label: "Scroll")
+        defer { RelayActionPointer.shared.finishAction() }
         let result = AXUIElementPerformAction(record.element, action as CFString)
         elements.removeAll()
         agentDesktopRefs.removeAll()
@@ -955,7 +1053,9 @@ final class MacTools {
             guard allowed.contains(requestedAction) else {
                 throw RelayError.message("Unsupported action '\(requestedAction)' for press_control.")
             }
-            let envelope = try await AgentDesktopBridge.act(command: requestedAction, ref: refRecord.ref)
+            try await showAgentPointer(refRecord, label: "Click")
+            defer { RelayActionPointer.shared.finishAction() }
+            let envelope = try await AgentDesktopBridge.act(command: requestedAction, ref: refRecord.ref, sessionID: desktopSession.id)
             elements.removeAll()
             agentDesktopRefs.removeAll()
             guard envelope.ok else {
@@ -974,6 +1074,8 @@ final class MacTools {
         // Inspection uses short messaging deadlines; an actual AppKit button press may
         // wait for its animation/action handler. Do not reuse the 15 ms review deadline.
         AXUIElementSetMessagingTimeout(record.element, 0.5)
+        RelayActionPointer.shared.show(element: record.element, label: "Click")
+        defer { RelayActionPointer.shared.finishAction() }
         let result = AXUIElementPerformAction(record.element, kAXPressAction as CFString)
         elements.removeAll()
         agentDesktopRefs.removeAll()

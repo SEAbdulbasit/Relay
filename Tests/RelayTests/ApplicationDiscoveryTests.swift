@@ -27,4 +27,18 @@ struct ApplicationDiscoveryTests {
         let app = app("TextEdit", id: "com.apple.TextEdit", path: "/System/Applications/TextEdit.app")
         #expect(try MacTools.matchingInstalledApplication("TextEdit", in: [app, app])?.url == app.url)
     }
+
+    @Test func nativeLookupKeepsInstalledWebNamedAppAndRefusesWebFallback() async throws {
+        let gmail = app("Gmail", id: "example.native.gmail", path: "/Applications/Gmail.app")
+        #expect(try MacTools.resolveNativeApplicationURL("Gmail", registeredURL: { _ in nil }, installedApplications: { [gmail] }) == gmail.url)
+        let error = #expect(throws: RelayError.self) {
+            try MacTools.resolveNativeApplicationURL("Gmail", registeredURL: { _ in nil }, installedApplications: { [] })
+        }
+        #expect(error?.localizedDescription.contains("https://mail.google.com") == true)
+        #expect(error?.localizedDescription.contains("review the exact destination") == true)
+
+        let call = ToolCall(name: "browser_navigate", arguments: ["url": .string("https://mail.google.com"), "browser": .string("Safari")])
+        let unreviewed = await #expect(throws: RelayError.self) { try await MacTools().execute(call) }
+        #expect(unreviewed?.localizedDescription.contains("needs a new explicit review") == true)
+    }
 }

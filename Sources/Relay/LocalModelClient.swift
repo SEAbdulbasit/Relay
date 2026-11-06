@@ -8,6 +8,7 @@ final class LocalModelClient {
     static let maximumNativeTokens = 8_192
     static let maximumOutputTokens = 1_536
     static let maximumToolArgumentsBytes = 64 * 1_024
+    static let defaultSamplerTopK = 64
     typealias RuntimeFactory = @MainActor (URL, String, URL) async throws -> any LocalModelRuntime
     private let runtimeFactory: RuntimeFactory
     private var runtime: (any LocalModelRuntime)?
@@ -107,7 +108,7 @@ final class LocalModelClient {
             systemMessage: LiteRTLM.Message(context.systemPrompt, role: .system),
             initialMessages: Array(nativeHistory.dropLast()),
             tools: try LiteRTLM.RelayNativeTools.makeTools(named: tools.map(\.name)),
-            samplerConfig: try LiteRTLM.SamplerConfig(topK: 40, topP: 0.95, temperature: 0.15),
+            samplerConfig: try LiteRTLM.SamplerConfig(topK: Self.defaultSamplerTopK, topP: 0.95, temperature: 0.15),
             thinkingConfig: LiteRTLM.ThinkingConfig(enableThinking: false),
             automaticToolCalling: false
         )

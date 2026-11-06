@@ -14,12 +14,22 @@ nonisolated enum DailyPreparationPolicy {
         let day = String(format: "%04d-%02d-%02d", date.year ?? 0, date.month ?? 0, date.day ?? 0)
         if let lastHandledDay, lastHandledDay > day { return .clockMovedBack }
         if lastHandledDay == day { return .handled }
-        let start = calendar.startOfDay(for: now)
-        guard let scheduled = calendar.nextDate(after: start.addingTimeInterval(-1), matching: DateComponents(hour: hour, minute: minute), matchingPolicy: .nextTime, repeatedTimePolicy: .first, direction: .forward),
-              calendar.isDate(scheduled, inSameDayAs: now) else { throw RelayError.message("Today's local preparation time could not be determined.") }
+        guard let scheduled = scheduledTime(on: now, hour: hour, minute: minute, calendar: calendar) else {
+            throw RelayError.message("Today's local preparation time could not be determined.")
+        }
         if now < scheduled { return .waiting }
         if now.timeIntervalSince(scheduled) > 6 * 3600 { return .missed }
         return .due(day: day)
+    }
+
+    static func scheduledTime(on day: Date, hour: Int, minute: Int, calendar: Calendar) -> Date? {
+        guard (0...23).contains(hour), (0...59).contains(minute),
+              let date = calendar.nextDate(
+                after: calendar.startOfDay(for: day).addingTimeInterval(-1),
+                matching: DateComponents(hour: hour, minute: minute),
+                matchingPolicy: .nextTime, repeatedTimePolicy: .first
+              ), calendar.isDate(date, inSameDayAs: day) else { return nil }
+        return date
     }
     static func validDayKey(_ value: String) -> Bool {
         guard value.range(of: #"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"#, options: .regularExpression) != nil else { return false }
@@ -37,8 +47,7 @@ nonisolated enum DailyPreparationPolicy {
     }
 }
 
-/// Optional app-running preparation only. Never wakes the Mac, launches other apps, runs
-/// a model, connects to the network or dispatches computer actions.
+/// Optional preparation for current local sources while Relay is running.
 @Observable @MainActor
 final class PreparationScheduler {
     private(set) var enabled = false
@@ -52,9 +61,14 @@ final class PreparationScheduler {
     @ObservationIgnored private let persistenceURL: URL?
     @ObservationIgnored private let automaticTimers: Bool
     @ObservationIgnored private let lowPower: () -> Bool
+    @ObservationIgnored private let thermalLimited: () -> Bool
     @ObservationIgnored private let clock: () -> Date
+    @ObservationIgnored private let systemTimeZone: () -> TimeZone
+    @ObservationIgnored private let onExternalPower: () -> Bool
+    @ObservationIgnored private let scheduledWakeDates: () -> [Date]?
     @ObservationIgnored private var timer: Task<Void, Never>?
-    @ObservationIgnored private var wakeObserver: NSObjectProtocol?
+    @ObservationIgnored private var observers: [(NotificationCenter, NSObjectProtocol)] = []
+    @ObservationIgnored private var sleeping = false
     @ObservationIgnored private var isPreparing = false
     @ObservationIgnored private var lastHandledDay: String?
     @ObservationIgnored private var lastOutcome: Outcome?
@@ -69,11 +83,23 @@ final class PreparationScheduler {
         let lastPreparedAt: Date?
     }
 
-    init(persistenceURL: URL? = nil, automaticTimers: Bool = true, lowPower: @escaping () -> Bool = { ProcessInfo.processInfo.isLowPowerModeEnabled }, clock: @escaping () -> Date = { Date() }) {
+    init(
+        persistenceURL: URL? = nil, automaticTimers: Bool = true,
+        lowPower: @escaping () -> Bool = { ProcessInfo.processInfo.isLowPowerModeEnabled },
+        clock: @escaping () -> Date = { Date() },
+        systemTimeZone: @escaping () -> TimeZone = { .autoupdatingCurrent },
+        thermalLimited: @escaping () -> Bool = PreparationWakeSystem.isThermallyLimited,
+        onExternalPower: @escaping () -> Bool = PreparationWakeSystem.isOnExternalPower,
+        scheduledWakeDates: @escaping () -> [Date]? = PreparationWakeSystem.scheduledDates
+    ) {
         self.persistenceURL = persistenceURL
         self.automaticTimers = automaticTimers
         self.lowPower = lowPower
         self.clock = clock
+        self.systemTimeZone = systemTimeZone
+        self.thermalLimited = thermalLimited
+        self.onExternalPower = onExternalPower
+        self.scheduledWakeDates = scheduledWakeDates
         restore()
     }
     /// Called only after the owner has restored/revalidated source scope and installed callbacks.
@@ -89,10 +115,10 @@ final class PreparationScheduler {
         guard (0...23).contains(hour), (0...59).contains(minute) else { throw RelayError.message("Choose an hour from 0–23 and minute from 0–59.") }
         self.hour = hour; self.minute = minute
         status = enabled ? "Preparation time updated. At most one automatic brief per local day." : "Time saved. Scheduled preparation remains off."
-        persist()
+        if persist(), enabled, automaticTimers { evaluateSchedule() }
     }
     func tick(now: Date = Date(), timeZone: TimeZone = .autoupdatingCurrent) {
-        guard enabled, !isPreparing else { return }
+        guard enabled, !isPreparing, !sleeping else { return }
         do {
             switch try DailyPreparationPolicy.decision(now: now, hour: hour, minute: minute, lastHandledDay: lastHandledDay, timeZone: timeZone) {
             case .waiting: status = "Waiting for today's local preparation time. Relay must stay open."
@@ -107,6 +133,7 @@ final class PreparationScheduler {
             case .due(let day):
                 guard !isBusy() else { status = "Waiting for the current task, voice input or indexing to finish."; return }
                 guard !lowPower() else { status = "Preparation paused in Low Power Mode. Nothing was prepared."; return }
+                guard !thermalLimited() else { status = "Preparation is waiting for this Mac to cool down."; return }
                 guard let prepare else { status = "Preparation is not connected to selected sources."; return }
                 let priorDay = lastHandledDay
                 let priorOutcome = lastOutcome
@@ -133,24 +160,59 @@ final class PreparationScheduler {
             }
         } catch { status = "Preparation could not determine its next run."; errorMessage = error.localizedDescription }
     }
+
+    func wakeSetup() -> PreparationWakeSetup {
+        PreparationWakeSetup.make(now: clock(), timeZone: systemTimeZone(), hour: hour, minute: minute,
+                                  lastHandledDay: lastHandledDay, enabled: enabled,
+                                  onExternalPower: onExternalPower(), powerLimited: lowPower() || thermalLimited(),
+                                  scheduledDates: scheduledWakeDates())
+    }
+
+    func systemWillSleep() { sleeping = true }
+
+    func systemDidWake() {
+        sleeping = false
+        evaluateSchedule()
+    }
+
+    private func evaluateSchedule() { tick(now: clock(), timeZone: systemTimeZone()) }
+
     private func startTimer() {
         guard automaticTimers, timer == nil, enabled else { return }
-        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor [weak self] in if let self { self.tick(now: self.clock()) } }
+        let workspace = NSWorkspace.shared.notificationCenter
+        observe(NSWorkspace.willSleepNotification, on: workspace) { $0.systemWillSleep() }
+        observe(NSWorkspace.didWakeNotification, on: workspace) { $0.systemDidWake() }
+        for name in [
+            Notification.Name.NSSystemClockDidChange, .NSSystemTimeZoneDidChange, .NSCalendarDayChanged,
+            .NSProcessInfoPowerStateDidChange, ProcessInfo.thermalStateDidChangeNotification,
+            NSApplication.didBecomeActiveNotification
+        ] {
+            observe(name, on: .default) { $0.evaluateSchedule() }
         }
         // The saved opt-in is explicit. This checks only an already-enabled schedule.
         timer = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(60)) } catch { return }
                 guard let self, self.enabled, !Task.isCancelled else { return }
-                self.tick(now: self.clock())
+                self.evaluateSchedule()
             }
         }
-        tick(now: clock())
+        evaluateSchedule()
     }
+
+    private func observe(_ name: Notification.Name, on center: NotificationCenter,
+                         perform action: @escaping @MainActor @Sendable (PreparationScheduler) -> Void) {
+        let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { if let self { action(self) } }
+        }
+        observers.append((center, token))
+    }
+
     private func stopTimer() {
         timer?.cancel(); timer = nil
-        if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver); self.wakeObserver = nil }
+        for (center, token) in observers { center.removeObserver(token) }
+        observers.removeAll()
+        sleeping = false
     }
     @discardableResult private func persist() -> Bool {
         guard let persistenceURL else { return true }
@@ -174,8 +236,5 @@ final class PreparationScheduler {
         lastHandledDay = saved.lastHandledDay; lastOutcome = saved.lastOutcome; lastPreparedAt = saved.lastPreparedAt
         status = enabled ? "Saved schedule is on; it starts only after selected sources are restored." : "Scheduled preparation is off."
     }
-    isolated deinit {
-        timer?.cancel()
-        if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
-    }
+    isolated deinit { stopTimer() }
 }

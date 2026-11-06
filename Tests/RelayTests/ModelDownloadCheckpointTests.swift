@@ -138,6 +138,28 @@ struct ModelDownloadCheckpointTests {
         try await second.discardOwned()
     }
 
+    @Test func closingCheckpointReleasesLockEvenWhileDescriptorCopyExists() async throws {
+        let root = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        let pinned = manifest(Data("abc".utf8)), first = ModelDownloadCheckpoint()
+        _ = try await first.open(manifest: pinned, directory: root)
+        var lockInfo = stat()
+        #expect(lstat(root.appendingPathComponent(".relay-download.lock").path, &lockInfo) == 0)
+        // dup shares the open file description, as the short fork-to-exec interval
+        // of a concurrently launched subprocess does. It must not retain a lock
+        // after the checkpoint owner deliberately closes its operation.
+        let ownedFD = try #require((0..<getdtablesize()).first { fd in
+            var info = stat()
+            return fstat(fd, &info) == 0 && info.st_dev == lockInfo.st_dev && info.st_ino == lockInfo.st_ino
+        })
+        let inheritedCopy = fcntl(ownedFD, F_DUPFD_CLOEXEC, 0)
+        #expect(inheritedCopy >= 0)
+        defer { if inheritedCopy >= 0 { Darwin.close(inheritedCopy) } }
+        try await first.close()
+        let second = ModelDownloadCheckpoint()
+        #expect(try await second.open(manifest: pinned, directory: root).offset == 0)
+        try await second.discardOwned()
+    }
+
     @Test func strongETagSyntaxAndManifestURLRestrictionsAreExplicit() async throws {
         #expect(ModelDownloadCheckpoint.isStrongETag("\"v1\""))
         for value in ["W/\"v1\"", "v1", "\"bad tag\"", "\"bad\n\"", "\"embedded\"quote\""] { #expect(!ModelDownloadCheckpoint.isStrongETag(value)) }

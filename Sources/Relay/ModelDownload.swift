@@ -18,6 +18,30 @@ nonisolated struct ModelManifest: Codable, Sendable, Equatable {
         size: 2_588_147_712,
         sha256: "181938105e0eefd105961417e8da75903eacda102c4fce9ce90f50b97139a63c"
     )
+
+    static let gemma4E4B = ModelManifest(
+        displayName: "Gemma 4 E4B",
+        filename: "gemma-4-E4B-it.litertlm",
+        sourceURL: URL(string: "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm")!,
+        size: 3_659_530_240,
+        sha256: "0b2a8980ce155fd97673d8e820b4d29d9c7d99b8fa6806f425d969b145bd52e0"
+    )
+
+    static let catalog: [ModelManifest] = [
+        .gemma4E4B,
+        .recommended
+    ]
+
+    static let supportedArchitecturesNote = "Compatible with LiteRT-LM (.litertlm) packages for Gemma 4 (E2B, E4B, 12B, 26B-A4B, 31B with MTP speculative decoding), Qwen 3, Qwen 2.5, Gemma 3 / 3n, and FunctionGemma."
+
+    static func resolveInstalledURL(for manifest: ModelManifest, in directory: URL? = nil) -> URL? {
+        let modelDirectory = directory ?? URL.applicationSupportDirectory.appending(path: "Relay/Models", directoryHint: .isDirectory)
+        let candidate = modelDirectory.appendingPathComponent(manifest.filename)
+        guard let values = try? candidate.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .isReadableKey]),
+              values.isRegularFile == true, values.isSymbolicLink != true, values.isReadable == true,
+              Int64(values.fileSize ?? -1) == manifest.size else { return nil }
+        return candidate
+    }
 }
 
 /// Model provisioning is separate from engine readiness. Nothing downloads until Start is pressed.

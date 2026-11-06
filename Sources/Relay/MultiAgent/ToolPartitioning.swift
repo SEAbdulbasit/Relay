@@ -34,7 +34,9 @@ nonisolated enum ToolPartitioning {
                 "move_file",
                 "create_document",
                 "create_spreadsheet",
-                "open_url"
+                "open_url",
+                "browser_navigate",
+                "search_web"
             ]
 
         case .critic:

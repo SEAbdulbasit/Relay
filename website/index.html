@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Relay — 100% Offline Multi-Agent Intelligence for macOS</title>
-  <meta name="description" content="Relay is an intelligent, completely offline macOS assistant powered by local LiteRT-LM and Gemma 4 E2B. On-device multi-agent coordination with Planner, Navigator, Executor, and Critic roles. Zero cloud dependencies.">
+  <title>Relay — On-Device Assistance for macOS</title>
+  <meta name="description" content="Relay is a macOS assistant that uses on-device Gemma by default. You can also use your existing ChatGPT sign-in via Codex CLI for workspace requests while Relay runs Mac actions locally.">
 
   <!-- Favicon / Brand Mark -->
   <link rel="icon" type="image/svg+xml" href="assets/icons/relay-orb.svg">
@@ -45,14 +45,14 @@
       </nav>
 
       <div class="nav-cta-cluster">
-        <a href="https://github.com/relay-assistant/relay" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm" aria-label="View Relay on GitHub">
+        <a href="https://github.com/SEAbdulbasit/Relay" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm" aria-label="View Relay on GitHub">
           GitHub
         </a>
         <div class="btn-halo-container">
           <div class="btn-halo-glow" aria-hidden="true"></div>
           <a href="#download" class="btn btn-primary btn-sm">
             <img src="assets/icons/apple.svg" alt="" class="btn-icon">
-            <span>Download</span>
+            <span>Build</span>
           </a>
         </div>
         <button class="nav-toggle-btn" aria-label="Toggle navigation menu" aria-expanded="false">
@@ -76,18 +76,19 @@
           <div>
             <div class="eyebrow-badge">
               <span class="pulse-dot" aria-hidden="true"></span>
-              <span>100% Offline • Pinned Gemma 4 E2B • Zero Cloud Telemetry</span>
+              <span>On-Device Gemma by Default • Optional ChatGPT</span>
             </div>
 
             <h1 style="line-height: 1.08;">
-              Personal AI that never leaves your desk.<br>
-              <span class="text-prism animate-shimmer font-serif" style="font-weight: 400; font-size: 1.06em;">Completely offline.</span>
+              A personal assistant for your Mac.<br>
+              <span class="text-prism animate-shimmer font-serif" style="font-weight: 400; font-size: 1.06em;">On-device by default.</span>
             </h1>
 
             <div class="hero-value-lines">
               <span><strong>Remembers</strong> your local files, notes, and workspace context.</span>
               <span><strong>Coordinates</strong> four specialized agents on a shared Blackboard.</span>
-              <span><strong>Acts</strong> safely across your Mac with zero network sockets.</span>
+              <span><strong>Acts</strong> across your Mac with scoped tools and action reviews.</span>
+              <span>Optional ChatGPT uses your existing sign-in through Codex CLI. Requests go to OpenAI, and Relay asks before sharing app or webpage excerpts.</span>
             </div>
 
             <!-- Call to Action Buttons -->
@@ -96,7 +97,7 @@
                 <div class="btn-halo-glow" aria-hidden="true"></div>
                 <a href="#download" class="btn btn-primary" style="padding: 0.9rem 1.85rem; font-size: 1rem;">
                   <img src="assets/icons/apple.svg" alt="" class="btn-icon" style="width: 1.25rem; height: 1.25rem;">
-                  <span>Download for macOS</span>
+                  <span>Build for macOS</span>
                 </a>
               </div>
 
@@ -108,16 +109,16 @@
 
             <!-- Terminal Install Pill + Monospace Whisper -->
             <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 0.85rem;">
-              <div class="terminal-pill" role="region" aria-label="Command line installation">
+              <div class="terminal-pill" role="region" aria-label="Build command after cloning the repository">
                 <span class="terminal-pill-prompt">$</span>
-                <span class="terminal-pill-cmd">brew install --cask relay-ai</span>
-                <button class="terminal-copy-btn" aria-label="Copy Homebrew install command to clipboard">
+                <span class="terminal-pill-cmd">./Scripts/build-app.sh release</span>
+                <button class="terminal-copy-btn" aria-label="Copy Relay build command to clipboard">
                   <img src="assets/icons/copy.svg" alt="" class="btn-icon">
                   <span>Copy</span>
                 </button>
               </div>
               <div class="mono-whisper" style="color: var(--color-text-dim); font-size: 0.68rem;">
-                NO SIGN-UP · NO CLOUD API KEYS · FREE FOR MACOS (APPLE SILICON)
+                NO RELAY ACCOUNT · APPLE SILICON · BUILD FROM SOURCE
               </div>
             </div>
           </div>
@@ -142,7 +143,7 @@
                 Just click your notch to let Relay take over.
               </h3>
               <p style="font-size: 0.9rem; color: var(--color-text-muted); margin: 0;">
-                Relay lives inside your MacBook bezel. Click the notch to expand the command bar, see which local Markdown note it remembers, and watch the 4-role Blackboard execute.
+                Try the illustrated notch interface to see how a workspace request and local notes can fit into a Mac workflow.
               </p>
             </div>
 
@@ -184,7 +185,7 @@
                 Double tap <kbd style="font-family: var(--font-mono); font-size: 0.85em;">⌘⌘</kbd> and Relay writes in your voice.
               </h3>
               <p style="font-size: 0.9rem; color: var(--color-text-muted); margin: 0;">
-                Three rainbow comets spiral into your text caret and draft what you would have written using your local <code>writingstyle.md</code> and project notes.
+                Try a simulated Double Tap draft. In Relay, drafting uses the on-device model and your approved writing preferences.
               </p>
             </div>
 
@@ -224,11 +225,11 @@
         
         <div class="section-header">
           <div class="mono-whisper" style="margin-bottom: 0.6rem; color: var(--color-accent-gold);">
-            MORNING BRIEFING &amp; COOPERATIVE BLACKBOARD
+            ILLUSTRATIVE DEMO · COOPERATIVE BLACKBOARD
           </div>
-          <h2>Four specialized agents. <span class="font-serif" style="font-weight: 400;">One air-gapped Mac.</span></h2>
+          <h2>Four specialized agents. <span class="font-serif" style="font-weight: 400;">One on-device workflow.</span></h2>
           <p>
-            Unlike monolithic cloud models that hallucinate actions, Relay prepares proactive local briefings and distributes tasks across discrete on-device roles using a sequential turn-based Blackboard.
+            These scripted examples illustrate how Relay can divide a local task among Planner, Navigator, Executor, and Critic. The demo uses sample data and does not access your Mac.
           </p>
         </div>
 
@@ -243,10 +244,10 @@
                 <span class="traffic-light green"></span>
               </div>
               <div class="mac-title">
-                <span>Relay — Multi-Agent Cooperative Mode</span>
+                <span>Relay — Multi-Agent Demo</span>
                 <span class="model-status-pill">
                   <span class="pulse-dot" style="width: 6px; height: 6px;"></span>
-                  Local Gemma 4 E2B • 100% Offline
+                  Example on-device Gemma workflow
                 </span>
               </div>
               <div style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--color-text-dim);" aria-hidden="true">
@@ -387,7 +388,7 @@
                     ~/Downloads, ~/Documents/Taxes
                   </div>
                   <div style="font-size: 0.72rem; color: var(--color-text-dim); margin-top: 0.35rem;">
-                    Sandboxed disk access • Zero outbound network sockets
+                    Illustrative scope • Sample data only
                   </div>
                 </div>
 
@@ -412,31 +413,31 @@
     </section>
 
     <!-- ==========================================================================
-         Overnight Catch-Up (03:00 AM → 09:00 AM) + Constellation Star Map & Obsidian Vault
+         Knowledge Graph and Markdown Vault Preview
          ========================================================================== -->
     <section id="knowledge-vault" class="section" style="padding-top: 1.5rem;">
       <div class="container">
         <div class="section-header">
           <div class="mono-whisper" style="margin-bottom: 0.6rem; color: #6fb6ff;">
-            03:00 AM OVERNIGHT CATCH-UP · PLAIN MARKDOWN VAULT
+            ILLUSTRATIVE DEMO · PLAIN MARKDOWN VAULT
           </div>
-          <h2>It did the catching up <span class="font-serif" style="font-weight: 400;">while you slept.</span></h2>
+          <h2>See how your notes <span class="font-serif" style="font-weight: 400;">connect.</span></h2>
           <p>
-            Every night on your Mac, Relay connects your explicitly granted notes, emails, and project docs into a 60fps force-directed Constellation Galaxy and clean Obsidian-compatible Markdown files—100% offline.
+            Explore a sample knowledge graph and Markdown notes. In Relay, you choose the sources to index locally and the notes you want to export.
           </p>
         </div>
 
         <div class="constellation-vault-window scroll-reveal-card">
           <div class="vault-toolbar">
             <div style="display: flex; align-items: center; gap: 0.65rem;">
-              <span class="badge-tag success" id="vault-clock-badge">03:00 AM · Overnight Synthesis</span>
+              <span class="badge-tag success" id="vault-clock-badge">Sample Knowledge Graph</span>
               <span style="font-family: var(--font-mono); font-size: 0.74rem; color: var(--color-text-muted);">
-                ~/Documents/Relay/Knowledge · Plain Markdown. Entirely yours.
+                Example vault · Plain Markdown
               </span>
             </div>
             <div style="display: flex; align-items: center; gap: 0.5rem;">
-              <button type="button" class="btn btn-secondary btn-sm" id="btn-vault-03am">03:00 AM Graph</button>
-              <button type="button" class="btn btn-secondary btn-sm" id="btn-vault-09am">09:00 AM Briefing</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-vault-03am">Show Graph</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-vault-09am">Preview Briefing</button>
             </div>
           </div>
 
@@ -485,19 +486,19 @@
             <div class="vault-reader-pane">
               <div>
                 <div class="mono-whisper" id="vault-note-domain" style="color: var(--color-accent-gold); font-size: 0.66rem; margin-bottom: 0.35rem;">
-                  CORE VAULT · UPDATED OVERNIGHT
+                  SAMPLE VAULT · LINKED NOTES
                 </div>
                 <h3 class="font-serif" id="vault-note-title" style="font-size: 1.65rem; font-weight: 400; margin-bottom: 0.75rem;">
                   README.md
                 </h3>
                 <div id="vault-note-body" style="font-size: 0.86rem; color: var(--color-text-secondary); line-height: 1.6;">
-                  Your personal knowledge graph lives as plain Markdown files inside <code>~/Documents/Relay</code>. Linked notes like <span class="wikilink-pill" data-target="Northstar pilot.md">[[Northstar pilot.md]]</span> and <span class="wikilink-pill" data-target="writingstyle.md">[[writingstyle.md]]</span> power both Sidekick and Double Tap without a single byte leaving your Mac.
+                  This sample vault links notes like <span class="wikilink-pill" data-target="Northstar pilot.md">[[Northstar pilot.md]]</span> and <span class="wikilink-pill" data-target="writingstyle.md">[[writingstyle.md]]</span>. Relay stores your knowledge locally and lets you export Markdown.
                 </div>
               </div>
 
               <div style="padding-top: 1rem; border-top: 1px solid var(--color-border-subtle); display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 0.7rem; color: var(--color-text-dim);">
                 <span>BACKLINKS: 4 CONNECTED NOTES</span>
-                <span style="color: var(--color-accent-emerald);">● Air-Gapped Disk Sync</span>
+                <span style="color: var(--color-accent-emerald);">● Sample content</span>
               </div>
             </div>
           </div>
@@ -512,11 +513,11 @@
       <div class="container">
         <div class="section-header">
           <div class="mono-whisper" style="margin-bottom: 0.6rem; color: var(--color-accent-gold);">
-            PROACTIVE INTELLIGENCE · FOR YOU BRIEFING
+            ILLUSTRATIVE DEMO · FOR YOU BRIEFING
           </div>
           <h2>A head start. <span class="font-serif" style="font-weight: 400;">Before you even ask.</span></h2>
           <p>
-            Click any morning briefing card below—or break the wax seal on your welcome letter—to inspect the dog-eared <code>LetterPaper</code> modal and editable <code>PlanEditor</code>.
+            Open a sample briefing card to see an editable plan. These examples do not read your accounts or run any of the illustrated actions.
           </p>
         </div>
 
@@ -643,16 +644,16 @@
           </div>
           <h2>Personal AI, <span class="font-serif" style="font-weight: 400;">architected for privacy.</span></h2>
           <p>
-            Every model weight, Markdown note, and multi-agent turn executes inside your Mac's Apple Silicon Unified Memory.
+            Gemma inference and Mac actions run on your device. The optional ChatGPT workspace mode sends your request and action status to OpenAI while Relay controls actions and reviews locally.
           </p>
         </div>
 
         <!-- Sentient OS 2-Column "Under the Hood" Schematic -->
         <div class="under-hood-grid" style="margin-bottom: 3rem;">
-          <!-- Left Box: YOUR MAC (100% OF RELAY'S COMPUTE) -->
+          <!-- Left Box: DEFAULT LOCAL MODE -->
           <div class="under-hood-mac">
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
-              <span class="mono-whisper" style="color: var(--color-accent-emerald);">YOUR MAC · 100% OF RELAY'S COMPUTE</span>
+              <span class="mono-whisper" style="color: var(--color-accent-emerald);">YOUR MAC · DEFAULT LOCAL MODE</span>
               <span class="badge-tag success">Local Apple Silicon</span>
             </div>
 
@@ -687,21 +688,21 @@
             </div>
           </div>
 
-          <!-- Right Box: EXTERNAL SERVERS ("There's nothing here.") -->
+          <!-- Right Box: OPTIONAL CHATGPT MODE -->
           <div class="under-hood-cloud">
-            <div class="mono-whisper" style="color: var(--color-text-dim);">EXTERNAL SERVERS</div>
+            <div class="mono-whisper" style="color: var(--color-text-dim);">OPTIONAL CHATGPT MODE</div>
             <div style="padding: 2.5rem 0;">
               <div class="font-serif" style="font-size: 2rem; font-style: italic; color: var(--color-text-secondary); margin-bottom: 1rem;">
-                There’s nothing here.
+                ChatGPT via Codex CLI
               </div>
               <div style="display: flex; flex-direction: column; gap: 0.35rem; font-family: var(--font-mono); font-size: 0.72rem; color: var(--color-text-dim); letter-spacing: 0.14em;">
-                <span>NO ACCOUNTS</span>
-                <span>NO CLOUD API KEYS</span>
-                <span>NO TELEMETRY</span>
+                <span>OFF BY DEFAULT</span>
+                <span>EXISTING CHATGPT SIGN-IN</span>
+                <span>MAC ACTIONS STAY LOCAL</span>
               </div>
             </div>
             <div style="font-size: 0.75rem; color: var(--color-text-dim);">
-              0 outbound sockets · Verifiable via <code>lsof</code>
+              Relay asks before sharing an app list or a visible app or webpage excerpt.
             </div>
           </div>
         </div>
@@ -709,12 +710,12 @@
         <!-- Bento Feature Cards Grid -->
         <div class="bento-grid">
           
-          <!-- Large Card 1: Air-gapped blackboard -->
+          <!-- Large Card 1: Local blackboard -->
           <div class="glass-card bento-card bento-col-8">
             <div class="bento-card-icon amethyst">
               <img src="assets/icons/sparkles.svg" alt="" style="width: 22px; height: 22px;">
             </div>
-            <h3>Air-Gapped Multi-Agent Blackboard</h3>
+            <h3>On-Device Multi-Agent Blackboard</h3>
             <p>
               Relay coordinates four distinct roles (Planner, Navigator, Executor, Critic) over an in-memory blackboard. Each agent receives only the exact tool schemas required for its phase—reducing context token consumption by 75% and eliminating role confusion.
             </p>
@@ -817,7 +818,7 @@
           </div>
           <h2>Engineered for Apple Silicon macOS.</h2>
           <p>
-            Relay runs as a native Swift 6 application with direct hardware acceleration and zero external dependencies.
+            Relay is a native Swift application for Apple silicon Macs.
           </p>
         </div>
 
@@ -826,7 +827,7 @@
           <div class="spec-card">
             <div class="spec-label">Processor Architecture</div>
             <div class="spec-value">Apple Silicon</div>
-            <div class="spec-desc">M1, M2, M3, M4 (Pro, Max, Ultra) or Intel Core Mac.</div>
+            <div class="spec-desc">Apple silicon Macs.</div>
           </div>
 
           <div class="spec-card">
@@ -849,8 +850,8 @@
 
           <div class="spec-card">
             <div class="spec-label">Network State</div>
-            <div class="spec-value">100% Air-Gapped</div>
-            <div class="spec-desc">0 inbound or outbound network sockets required for full AI inference.</div>
+            <div class="spec-value">Offline Local Inference</div>
+            <div class="spec-desc">Gemma works offline after setup. ChatGPT, downloads, and browser tasks can use the network.</div>
           </div>
 
           <div class="spec-card">
@@ -888,7 +889,7 @@
               <img src="assets/icons/chevron-down.svg" alt="" class="faq-chevron" aria-hidden="true">
             </summary>
             <div class="faq-content">
-              <strong>No. Absolutely zero data leaves your Mac.</strong> Relay operates in a strict air-gapped configuration. The embedded LiteRT-LM runtime loads model weights from your local disk and performs all matrix math directly in unified memory. You can run Relay in airplane mode, behind a corporate firewall, or with your Wi-Fi completely disabled.
+              <strong>Gemma inference runs on your Mac by default.</strong> If you choose ChatGPT via Codex CLI in Settings → Model, your workspace request and action status go to OpenAI. Relay asks before sharing an app list or visible app or webpage text. Downloads, browser tasks, and services you choose can also use the network.
             </div>
           </details>
 
@@ -908,7 +909,7 @@
               <img src="assets/icons/chevron-down.svg" alt="" class="faq-chevron" aria-hidden="true">
             </summary>
             <div class="faq-content">
-              Relay asks for macOS Accessibility permissions so the Navigator agent can inspect active window elements and UI controls. For file operations, Relay uses Apple's security-scoped bookmarks—meaning Relay can only read or write to directories you explicitly grant access to. Relay never performs whole-disk indexing.
+              Relay asks for macOS Accessibility permissions so the Navigator agent can inspect active window elements and UI controls. Relay limits file operations to files and folders you select and to the access you grant.
             </div>
           </details>
 
@@ -918,7 +919,7 @@
               <img src="assets/icons/chevron-down.svg" alt="" class="faq-chevron" aria-hidden="true">
             </summary>
             <div class="faq-content">
-              Relay is optimized for <strong>Google Gemma 4 E2B</strong> packaged in LiteRT-LM format (`.litertlm`). During onboarding, the app validates your local model package with a cryptographic SHA-256 checksum. You can also link existing `.litertlm` or compatible GGUF models from your own drive.
+              Relay is optimized for <strong>Google Gemma 4 E2B</strong> packaged in LiteRT-LM format (`.litertlm`). Relay verifies the pinned download with SHA-256. You can also select a compatible `.litertlm` model from your own drive.
             </div>
           </details>
 
@@ -928,7 +929,7 @@
               <img src="assets/icons/chevron-down.svg" alt="" class="faq-chevron" aria-hidden="true">
             </summary>
             <div class="faq-content">
-              Yes. Relay features an immediate human-in-the-loop safety gate. Pressing the <kbd>Esc</kbd> key or clicking the floating Stop button immediately aborts in-flight agent actions, cancels tool dispatch, and leaves your filesystem in a consistent state.
+              Click Stop to cancel planning and block new tool dispatch. An action already underway may finish, and Relay reports its outcome when it can verify it.
             </div>
           </details>
 
@@ -952,15 +953,15 @@
           </h2>
 
           <p style="color: var(--color-text-secondary); max-width: 540px; margin: 0 auto 2.5rem auto;">
-            Download Relay for macOS Sequoia 15.0+ and join the local-first intelligence movement. Free and open source.
+            Build the Relay alpha from source for Apple silicon Macs running macOS Sequoia 15.0 or later.
           </p>
 
           <div style="display: flex; justify-content: center; gap: 1rem; flex-wrap: wrap;">
             <div class="btn-halo-container">
               <div class="btn-halo-glow" aria-hidden="true"></div>
-              <a href="https://github.com/relay-assistant/relay/releases" target="_blank" rel="noopener noreferrer" class="btn btn-primary" style="padding: 0.95rem 2rem; font-size: 1.05rem;">
+              <a href="https://github.com/SEAbdulbasit/Relay#build-and-run" target="_blank" rel="noopener noreferrer" class="btn btn-primary" style="padding: 0.95rem 2rem; font-size: 1.05rem;">
                 <img src="assets/icons/apple.svg" alt="" class="btn-icon" style="width: 1.3rem; height: 1.3rem;">
-                <span>Download Relay for macOS</span>
+                <span>View Build Instructions</span>
               </a>
             </div>
           </div>
@@ -968,8 +969,8 @@
           <div style="margin-top: 2rem;">
             <div class="terminal-pill">
               <span class="terminal-pill-prompt">$</span>
-              <span class="terminal-pill-cmd">brew install --cask relay-ai</span>
-              <button class="terminal-copy-btn" aria-label="Copy Homebrew install command">
+              <span class="terminal-pill-cmd">./Scripts/build-app.sh release</span>
+              <button class="terminal-copy-btn" aria-label="Copy Relay build command">
                 <img src="assets/icons/copy.svg" alt="" class="btn-icon">
                 <span>Copy</span>
               </button>
@@ -977,7 +978,7 @@
           </div>
 
           <div style="margin-top: 1.5rem; font-size: var(--font-size-xs); color: var(--color-text-dim);">
-            Universal Binary (Apple Silicon &amp; Intel 64-bit) • Signed &amp; Notarized by Apple • Apache-2.0 License
+            Apple silicon · macOS 15.0 or later · Xcode 26 or later
           </div>
 
         </div>
@@ -1000,7 +1001,7 @@
             <span>Relay</span>
           </a>
           <p>
-            Privacy-first on-device multi-agent assistant for macOS. Powered by LiteRT-LM and pinned Gemma 4 E2B inference.
+            A Mac assistant with on-device Gemma and optional ChatGPT through Codex CLI.
           </p>
           <div style="margin-top: 1.25rem;">
             <span class="model-status-pill">
@@ -1031,11 +1032,11 @@
         </div>
 
         <div class="footer-col">
-          <h5>Open Source</h5>
+          <h5>Project</h5>
           <ul>
-            <li><a href="https://github.com/relay-assistant/relay" target="_blank" rel="noopener noreferrer">GitHub Repository</a></li>
-            <li><a href="https://github.com/relay-assistant/relay/releases" target="_blank" rel="noopener noreferrer">Releases &amp; Changelog</a></li>
-            <li><a href="https://github.com/relay-assistant/relay/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Apache-2.0 License</a></li>
+            <li><a href="https://github.com/SEAbdulbasit/Relay" target="_blank" rel="noopener noreferrer">GitHub Repository</a></li>
+            <li><a href="https://github.com/SEAbdulbasit/Relay#build-and-run" target="_blank" rel="noopener noreferrer">Build Instructions</a></li>
+            <li><a href="https://github.com/SEAbdulbasit/Relay#third-party-licenses" target="_blank" rel="noopener noreferrer">Third-Party Licenses</a></li>
             <li><a href="#download">Installation Guide</a></li>
           </ul>
         </div>
@@ -1047,7 +1048,7 @@
           © 2026 Relay Assistant Project. Built with love for macOS sovereignty.
         </div>
         <div>
-          Inspired by Sentient OS &amp; ChatGPT design aesthetics. 100% on-device AI.
+          On-device by default. ChatGPT via Codex CLI is optional.
         </div>
       </div>
 

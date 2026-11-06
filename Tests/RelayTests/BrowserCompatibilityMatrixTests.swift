@@ -5,6 +5,39 @@ import Testing
 /// Cross-browser adapter contracts, not live Safari/Chrome qualification.
 @MainActor
 struct BrowserCompatibilityMatrixTests {
+    @Test func directOpenRunsOnlyForAnExplicitPreDispatchCapabilityGap() async throws {
+        var opens = 0
+        let deadline = Date().addingTimeInterval(30)
+        let result = try await BrowserAutomation.withDirectOpenFallback(deadline: deadline) {
+            throw BrowserAutomation.DirectOpenFallback.unsupportedAddressControl
+        } open: {
+            opens += 1
+            return ToolResult(summary: "Requested open", evidence: "Synthetic direct-open fixture", verified: false)
+        }
+        #expect(opens == 1)
+        #expect(!result.verified)
+
+        for failure in [RelayError.message("Address confirmation uncertain"), CancellationError()] as [any Error] {
+            await #expect(throws: (any Error).self) {
+                try await BrowserAutomation.withDirectOpenFallback(deadline: deadline) {
+                    throw failure
+                } open: {
+                    opens += 1
+                    return result
+                }
+            }
+        }
+        await #expect(throws: RelayError.self) {
+            try await BrowserAutomation.withDirectOpenFallback(deadline: Date().addingTimeInterval(-1)) {
+                throw BrowserAutomation.DirectOpenFallback.unavailableSafariTabSelection
+            } open: {
+                opens += 1
+                return result
+            }
+        }
+        #expect(opens == 1)
+    }
+
     @Test func navigationRequiresEveryIdentityDimensionForBothAddressStyles() throws {
         let expected = try BrowserAutomation.validatedURL("http://127.0.0.1:49217/fixture/run")
         for address in [expected.absoluteString, "127.0.0.1:49217/fixture/run"] {

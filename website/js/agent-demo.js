@@ -1,6 +1,6 @@
 /**
  * Relay Marketing Website - Interactive Multi-Agent Demo & Site Logic
- * Simulates genuine on-device Planner, Navigator, Executor, and Critic coordination.
+ * Shows scripted examples of Planner, Navigator, Executor, and Critic coordination.
  */
 
 (function () {
@@ -67,7 +67,7 @@
           timestamp: '14:02:14.180',
           thought: 'Validating postconditions: inspecting destination directory count, checking for unhandled exceptions, and calculating financial sum.',
           toolCall: 'verify_destination(path: "~/Documents/Taxes/2026", expectedFiles: 6)',
-          content: 'Verification passed: 6/6 files verified at target directory with identical SHA-256 integrity. Total expenditures calculated: $1,063.50 across 6 services. All actions completed offline.',
+          content: 'Verification passed: 6/6 files verified at target directory with identical SHA-256 integrity. Total expenditures calculated: $1,063.50 across 6 services. This is a scripted example of a local workflow.',
           plan: [
             { text: 'Inspect Downloads for 2026 tax documents', status: 'completed' },
             { text: 'Ensure ~/Documents/Taxes/2026 destination exists', status: 'completed' },
@@ -80,7 +80,7 @@
           roleName: 'Relay Assistant',
           badgeClass: 'critic',
           timestamp: '14:02:14.610',
-          content: 'Done! I have organized your 6 tax receipts into `~/Documents/Taxes/2026`.\n\n**Summary of Q1 2026 Expenses:**\n• Total: **$1,063.50**\n• Items: AWS ($240.00), Figma ($45.00), JetBrains ($289.00), GitHub ($210.00), Google Cloud ($180.50), Apple ($99.00).\n\nAll operations ran 100% locally with zero cloud network access.',
+          content: 'Done! I have organized your 6 tax receipts into `~/Documents/Taxes/2026`.\n\n**Summary of Q1 2026 Expenses:**\n• Total: **$1,063.50**\n• Items: AWS ($240.00), Figma ($45.00), JetBrains ($289.00), GitHub ($210.00), Google Cloud ($180.50), Apple ($99.00).\n\nSample results from the scripted demo.',
           plan: [
             { text: 'Inspect Downloads for 2026 tax documents', status: 'completed' },
             { text: 'Ensure ~/Documents/Taxes/2026 destination exists', status: 'completed' },
@@ -240,7 +240,7 @@
           roleName: 'Relay Assistant',
           badgeClass: 'critic',
           timestamp: '09:15:33.200',
-          content: 'You can safely reclaim **28.0 GB** of disk space:\n• **Xcode DerivedData**: 24.8 GB across 18 dormant projects\n• **Swift Package Manager Cache**: 3.2 GB\n\nBecause Relay enforces strict safety gates, no files were deleted automatically. Click "Clean Caches" in Settings or run `rm -rf ~/Library/Developer/Xcode/DerivedData/*` when ready.',
+          content: 'You can safely reclaim **28.0 GB** of disk space:\n• **Xcode DerivedData**: 24.8 GB across 18 dormant projects\n• **Swift Package Manager Cache**: 3.2 GB\n\nThe demo does not inspect or delete files. Review the sample recommendations before making any cleanup decisions on your Mac.',
           plan: [
             { text: 'Scan Xcode DerivedData for stale build folders', status: 'completed' },
             { text: 'Analyze SwiftPM cache storage', status: 'completed' },
@@ -532,7 +532,7 @@
     copyBtns.forEach(btn => {
       btn.addEventListener('click', async () => {
         const cmdEl = btn.closest('.terminal-pill')?.querySelector('.terminal-pill-cmd');
-        const textToCopy = cmdEl ? cmdEl.textContent.trim() : 'brew install --cask relay-ai';
+        const textToCopy = cmdEl ? cmdEl.textContent.trim() : './Scripts/build-app.sh release';
 
         try {
           if (navigator.clipboard && window.isSecureContext) {
@@ -610,24 +610,24 @@
 
     const NODE_DETAILS = {
       'source': {
-        title: 'Local Context Ingestion (Zero-Network)',
-        badge: 'Air-Gapped Source',
-        desc: 'Relay accesses files, Notes, Mail, or window elements exclusively via macOS sandboxed security-scoped bookmarks and Accessibility APIs. Data never traverses network sockets or unmanaged disk locations.'
+        title: 'Local Context Ingestion',
+        badge: 'Scoped Source',
+        desc: 'Relay uses files and folders you select and macOS permissions for supported sources and visible app controls. Gemma processes this context on your Mac.'
       },
       'blackboard': {
         title: 'Sequential Multi-Agent Blackboard',
         badge: 'In-Memory State',
-        desc: 'The Blackboard pattern maintains a turn-based memory store in macOS Unified Memory. Roles (Planner, Navigator, Executor, Critic) exchange structured messages locally without external RPCs or cloud databases.'
+        desc: 'In local multi-agent mode, Planner, Navigator, Executor, and Critic exchange structured messages on your Mac.'
       },
       'litert': {
         title: 'Pinned Gemma 4 E2B on LiteRT-LM Runtime',
         badge: 'Apple Silicon Hardware Accelerated',
-        desc: 'Inference runs entirely on-chip via LiteRT-LM v0.18.1 compiled for Apple Silicon Neural Engine (NPU) and Metal GPU. Zero tokens leave device memory. No remote telemetry or weights updates.'
+        desc: 'The installed Gemma model runs through LiteRT-LM on your Mac. It does not need an internet connection for inference.'
       },
       'executor': {
         title: 'Safe Scoped Execution & Critic Verification',
         badge: 'User Safety Gates',
-        desc: 'The Executor dispatches targeted system actions under strict safety gates. Consequential mutations require explicit confirmation. The Critic inspects postconditions before returning the final response.'
+        desc: 'Relay dispatches scoped actions locally and asks for review where its action policy requires it. It reports which outcomes it can verify.'
       }
     };
 
@@ -914,9 +914,9 @@
 
     const NOTES = {
       'README.md': {
-        domain: 'CORE VAULT · UPDATED OVERNIGHT',
+        domain: 'SAMPLE VAULT · LINKED NOTES',
         color: '#fde2a3',
-        body: 'Your personal knowledge graph lives as plain Markdown files inside <code>~/Documents/Relay</code>. Linked notes like <span class="wikilink-pill" data-target="Northstar pilot.md">[[Northstar pilot.md]]</span> and <span class="wikilink-pill" data-target="writingstyle.md">[[writingstyle.md]]</span> power both Sidekick and Double Tap without a single byte leaving your Mac.'
+        body: 'This sample vault links notes like <span class="wikilink-pill" data-target="Northstar pilot.md">[[Northstar pilot.md]]</span> and <span class="wikilink-pill" data-target="writingstyle.md">[[writingstyle.md]]</span>. Relay stores your knowledge locally and lets you export Markdown.'
       },
       'Northstar pilot.md': {
         domain: 'WORK & PILOTS · 3 BACKLINKS',
@@ -931,7 +931,7 @@
       'Apple silicon.md': {
         domain: 'TECHNOLOGY & RESEARCH · M-SERIES NPU',
         color: '#6fb6ff',
-        body: 'Pinned Gemma 4 E2B runs inside Unified Memory via LiteRT-LM v0.18.1. Zero outbound sockets; Planner, Navigator, Executor, and Critic share an in-memory Blackboard.'
+        body: 'Pinned Gemma runs on your Mac through LiteRT-LM. In local multi-agent mode, Planner, Navigator, Executor, and Critic share an in-memory Blackboard.'
       },
       'Interface taste.md': {
         domain: 'DESIGN SYSTEM · OLED OBSIDIAN',
@@ -973,12 +973,12 @@
 
     if (btn03 && clockBadge) {
       btn03.addEventListener('click', () => {
-        clockBadge.textContent = '03:00 AM · Overnight Synthesis';
+        clockBadge.textContent = 'Sample Knowledge Graph';
       });
     }
     if (btn09 && clockBadge) {
       btn09.addEventListener('click', () => {
-        clockBadge.textContent = '09:00 AM · Morning Briefing Ready';
+        clockBadge.textContent = 'Sample Briefing';
       });
     }
 
@@ -1101,8 +1101,8 @@
       welcome: {
         kicker: 'PERSONAL LETTER · SEALED ENVELOPE',
         title: 'Welcome to Relay.',
-        summary: 'A personal note from your air-gapped Mac assistant:',
-        plan: 'Dear Friend,\n\nEvery model weight, Markdown note, and 4-agent turn runs 100% offline inside your Mac\'s Unified Memory.\n\nClick the notch to hand off a task, or double-tap Right ⌘ to draft in your voice.'
+        summary: 'A sample note from Relay:',
+        plan: 'Dear Friend,\n\nGemma runs on your Mac by default. You can also opt in to ChatGPT via Codex CLI for workspace requests.\n\nClick the notch to hand off a task, or double-tap Right ⌘ to draft in your voice.'
       }
     };
 

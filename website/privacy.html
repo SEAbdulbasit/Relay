@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Privacy Architecture & Air-Gapped Sovereignty — Relay</title>
-  <meta name="description" content="In-depth architectural overview of Relay's offline privacy engineering. Zero telemetry, on-device LiteRT-LM inference, Apple Silicon sandboxing, and verifiable air-gap guarantees.">
+  <title>Privacy and Data Flow — Relay</title>
+  <meta name="description" content="See what stays on your Mac with on-device Gemma and what goes to OpenAI when you choose ChatGPT via Codex CLI.">
 
   <!-- Favicon / Brand Mark -->
   <link rel="icon" type="image/svg+xml" href="assets/icons/relay-orb.svg">
@@ -46,14 +46,14 @@
       </nav>
 
       <div class="nav-cta-cluster">
-        <a href="https://github.com/relay-assistant/relay" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm" aria-label="View Relay on GitHub">
+        <a href="https://github.com/SEAbdulbasit/Relay" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm" aria-label="View Relay on GitHub">
           GitHub
         </a>
         <div class="btn-halo-container">
           <div class="btn-halo-glow" aria-hidden="true"></div>
           <a href="index.html#download" class="btn btn-primary btn-sm">
             <img src="assets/icons/apple.svg" alt="" class="btn-icon">
-            <span>Download</span>
+            <span>Build</span>
           </a>
         </div>
       </div>
@@ -71,7 +71,7 @@
         
         <div class="eyebrow-badge">
           <span class="pulse-dot" aria-hidden="true"></span>
-          <span>Zero Telemetry • Cryptographically Verified • Air-Gapped</span>
+          <span>Zero Telemetry in Relay • On-Device by Default</span>
         </div>
 
         <h1>
@@ -80,7 +80,7 @@
         </h1>
 
         <p style="font-size: var(--font-size-body-lg); color: var(--color-text-secondary); max-width: 680px; margin: 1.5rem auto 0 auto;">
-          Cloud AI assistants require transmitting your confidential files, sensitive emails, and keystrokes to remote data centers. Relay inverts this paradigm by executing 100% of intelligence, context, and memory within your Mac's unified hardware.
+          Gemma runs on your Mac by default. If you choose ChatGPT via Codex CLI, your workspace request and action status go to OpenAI. Relay asks before sharing an app list or visible app or webpage text. Mac actions and reviews run locally in either mode.
         </p>
 
       </div>
@@ -98,7 +98,7 @@
           </div>
           <h2>The On-Device Execution Pipeline</h2>
           <p>
-            Click any stage of the pipeline below to inspect its cryptographic isolation and sandboxing guarantees.
+            This diagram illustrates the default local mode. Select a stage to see how Relay uses your context and runs Mac actions.
           </p>
         </div>
 
@@ -135,7 +135,7 @@
                   <img src="assets/icons/cpu.svg" alt="" style="width: 20px; height: 20px;">
                 </div>
                 <h4>3. LiteRT-LM Gemma</h4>
-                <p>Pinned 2.59 GB weights on Metal GPU / Neural Engine</p>
+                <p>Pinned model weights run on Apple silicon</p>
               </div>
 
               <!-- Node 4: Safe Executor -->
@@ -154,19 +154,18 @@
           <div class="glass-card" style="margin-top: 1.5rem; background: rgba(16, 17, 23, 0.9);">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
               <h3 id="flow-detail-title" style="font-size: var(--font-size-h4);">
-                Local Context Ingestion (Zero-Network)
+                Local Context Ingestion
               </h3>
-              <span id="flow-detail-badge" class="badge-tag success">Air-Gapped Source</span>
+              <span id="flow-detail-badge" class="badge-tag success">Scoped Source</span>
             </div>
             <p id="flow-detail-body" style="color: var(--color-text-secondary); margin: 0; line-height: var(--line-height-loose);">
-              Relay accesses files, Notes, Mail, or window elements exclusively via macOS sandboxed security-scoped bookmarks and Accessibility APIs. Data never traverses network sockets or unmanaged disk locations.
+              Relay uses files and folders you select and macOS permissions for supported sources and visible app controls. Gemma processes this context on your Mac.
             </p>
           </div>
 
-          <!-- Blocked Cloud Banner -->
+          <!-- Optional hosted mode disclosure -->
           <div class="cloud-blocked-banner" role="status">
-            <span style="font-size: 1.25rem;">🚫</span>
-            <span>AIR-GAP ENFORCEMENT: All outbound connections to external APIs, telemetry hosts, and cloud models are blocked by process-level sandboxing.</span>
+            <span>OPTIONAL CHATGPT MODE: Relay uses your existing ChatGPT sign-in. It does not attach your prior chats, files, or screenshots to hosted planning requests.</span>
           </div>
 
         </div>
@@ -186,7 +185,7 @@
           </div>
           <h2>The Four Pillars of Relay Sovereignty</h2>
           <p>
-            Architectural rules hardcoded into the foundation of Relay's codebase.
+            How Relay handles local inference, file access, notes, and model downloads.
           </p>
         </div>
 
@@ -196,9 +195,9 @@
             <div class="bento-card-icon emerald">
               <img src="assets/icons/shield.svg" alt="" style="width: 22px; height: 22px;">
             </div>
-            <h3>1. Zero Network Sockets</h3>
+            <h3>1. Local Inference by Default</h3>
             <p>
-              Relay does not open HTTP, WebSocket, or gRPC connections during task execution. The model inference loop runs entirely through embedded C++ LiteRT-LM bindings mapped to your local Silicon hardware.
+              Once the Gemma model is installed, local inference works without internet access. Downloads, browser tasks, optional ChatGPT, and services you select can use the network.
             </p>
           </div>
 
@@ -208,7 +207,7 @@
             </div>
             <h3>2. Scoped Permission Boundaries</h3>
             <p>
-              Unlike legacy desktop agents that demand unrestricted disk access, Relay operates through macOS security-scoped bookmarks. Relay can only inspect or modify the explicit folders you grant.
+              Relay limits file access to files and folders you select. Inspecting and controlling other apps also depends on macOS permissions.
             </p>
           </div>
 
@@ -218,7 +217,7 @@
             </div>
             <h3>3. Open Markdown Storage</h3>
             <p>
-              Your agent memories, task outputs, and logs are stored in standard human-readable Markdown. There are no proprietary binary databases, no hidden sync servers, and no platform lock-in.
+              Relay stores conversation history and the activity log on your Mac. You can export selected notes as Markdown.
             </p>
           </div>
 
@@ -228,7 +227,7 @@
             </div>
             <h3>4. Cryptographically Verified Weights</h3>
             <p>
-              The Gemma 4 E2B `.litertlm` package is verified against an immutable SHA-256 hash before loading into memory. Relay rejects any modified or unverified model binaries.
+              Relay verifies the pinned Gemma download against its SHA-256 checksum before use.
             </p>
           </div>
 
@@ -247,61 +246,61 @@
           <div class="eyebrow-badge">
             <span>Direct Comparison</span>
           </div>
-          <h2>How Relay compares to Cloud AI Copilots</h2>
+          <h2>Compare Relay’s two model modes</h2>
           <p>
-            Evaluate the real architectural differences between local-first sovereignty and centralized cloud assistants.
+            Gemma is the default. Select ChatGPT via Codex CLI in Settings → Model if you want hosted planning.
           </p>
         </div>
 
         <div class="matrix-container">
-          <table class="matrix-table" aria-label="Relay versus Cloud AI Copilots feature comparison">
+          <table class="matrix-table" aria-label="Relay’s on-device and optional hosted model modes">
             <thead>
               <tr>
                 <th scope="col" style="width: 32%;">Security & Architecture Dimension</th>
-                <th scope="col" style="width: 34%;">Relay (On-Device Multi-Agent)</th>
-                <th scope="col" style="width: 34%;">Typical Cloud AI Copilot</th>
+                <th scope="col" style="width: 34%;">Gemma on your Mac</th>
+                <th scope="col" style="width: 34%;">Optional ChatGPT via Codex CLI</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td><strong>Inference Location</strong></td>
-                <td><span class="badge-tag success">✓ Local Apple Silicon RAM</span></td>
-                <td><span class="badge-tag danger">✗ Remote Cloud Data Centers</span></td>
+                <td><span class="badge-tag success">On your Mac</span></td>
+                <td><span class="badge-tag danger">OpenAI</span></td>
               </tr>
               <tr>
                 <td><strong>Network Requirement</strong></td>
-                <td><span class="badge-tag success">✓ 0 bytes / 100% Offline</span></td>
-                <td><span class="badge-tag danger">✗ Continuous High-Bandwidth Internet</span></td>
+                <td><span class="badge-tag success">Inference works offline after setup</span></td>
+                <td><span class="badge-tag danger">Internet required for planning</span></td>
               </tr>
               <tr>
-                <td><strong>User Data Retention</strong></td>
-                <td><span class="badge-tag success">✓ Stays exclusively on your Mac</span></td>
-                <td><span class="badge-tag danger">✗ Stored on remote corporate servers</span></td>
+                <td><strong>What goes to OpenAI</strong></td>
+                <td><span class="badge-tag success">No inference requests</span></td>
+                <td><span class="badge-tag danger">Your request and action status</span></td>
               </tr>
               <tr>
-                <td><strong>Model Training on Inputs</strong></td>
-                <td><span class="badge-tag success">✓ Mathematically impossible</span></td>
-                <td><span class="badge-tag danger">✗ Subject to terms / RLHF retraining</span></td>
+                <td><strong>Visible app or webpage text</strong></td>
+                <td><span class="badge-tag success">Processed on your Mac</span></td>
+                <td><span class="badge-tag danger">Shared only after your review</span></td>
               </tr>
               <tr>
-                <td><strong>Airplane Mode Functionality</strong></td>
-                <td><span class="badge-tag success">✓ 100% Functional, zero degradation</span></td>
-                <td><span class="badge-tag danger">✗ Completely disabled without Wi-Fi</span></td>
+                <td><strong>App lists</strong></td>
+                <td><span class="badge-tag success">Processed on your Mac</span></td>
+                <td><span class="badge-tag danger">Shared only after your review</span></td>
               </tr>
               <tr>
-                <td><strong>Agent Role Architecture</strong></td>
-                <td><span class="badge-tag success">✓ Local 4-Role Blackboard (Partitioned)</span></td>
-                <td><span class="badge-tag danger">✗ Single monolithic prompt / API call</span></td>
+                <td><strong>Planning</strong></td>
+                <td><span class="badge-tag success">On-device model with optional local multi-agent mode</span></td>
+                <td><span class="badge-tag danger">ChatGPT proposes one action at a time</span></td>
               </tr>
               <tr>
-                <td><strong>Emergency Stop & Safety</strong></td>
-                <td><span class="badge-tag success">✓ Instant Esc halt & local review gates</span></td>
-                <td><span class="badge-tag danger">✗ Server-side timeouts & delayed cancel</span></td>
+                <td><strong>Mac actions and reviews</strong></td>
+                <td><span class="badge-tag success">Handled by Relay on your Mac</span></td>
+                <td><span class="badge-tag danger">Handled by Relay on your Mac</span></td>
               </tr>
               <tr>
-                <td><strong>Cost & Subscriptions</strong></td>
-                <td><span class="badge-tag success">✓ 100% Free & Open Source ($0/mo)</span></td>
-                <td><span class="badge-tag danger">✗ $20 to $200 / user / month</span></td>
+                <td><strong>Sign-in</strong></td>
+                <td><span class="badge-tag success">No account required</span></td>
+                <td><span class="badge-tag danger">Existing compatible ChatGPT sign-in</span></td>
               </tr>
             </tbody>
           </table>
@@ -320,46 +319,46 @@
           <div class="eyebrow-badge">
             <span>Don't Take Our Word For It</span>
           </div>
-          <h2>Verify Air-Gapped Execution Yourself</h2>
+          <h2>Audit Local Inference on Your Mac</h2>
           <p>
-            True security is verifiable. Use standard macOS UNIX inspection tools to confirm that Relay maintains zero open network connections during multi-agent task execution.
+            For an air-gapped inference check, install the local model first, disconnect from the network, then ask Relay a question with Gemma selected.
           </p>
         </div>
 
         <div class="glass-card" style="padding: 2.5rem; margin-bottom: 2rem;">
           <h3 style="margin-bottom: 1rem; font-size: var(--font-size-h4);">
-            1. Verify Open Network Sockets with <code>lsof</code>
+            1. Inspect Relay’s Network Sockets with <code>lsof</code>
           </h3>
           <p style="font-size: var(--font-size-sm); color: var(--color-text-muted);">
-            While Relay is running a multi-agent task, query macOS network file descriptors for the Relay process ID:
+            While Relay runs a local task, inspect Internet sockets open in the Relay process. Check browser and CLI processes separately for their own connections.
           </p>
           <div class="bento-preview" style="margin: 1rem 0;">
-            <div style="color: var(--color-text-dim); margin-bottom: 0.35rem;"># Check all internet/network sockets attached to Relay</div>
-            <div style="color: var(--color-accent-gold);">$ lsof -p $(pgrep Relay) -i</div>
-            <div style="color: var(--color-accent-emerald); margin-top: 0.5rem;">[Expected Result: Exit code 0, 0 open sockets returned]</div>
+            <div style="color: var(--color-text-dim); margin-bottom: 0.35rem;"># Inspect Internet sockets opened by the Relay process</div>
+            <div style="color: var(--color-accent-gold);">$ lsof -a -c Relay -i</div>
+            <div style="color: var(--color-accent-emerald); margin-top: 0.5rem;">This is a point-in-time process check.</div>
           </div>
         </div>
 
         <div class="glass-card" style="padding: 2.5rem; margin-bottom: 2rem;">
           <h3 style="margin-bottom: 1rem; font-size: var(--font-size-h4);">
-            2. Audit Network State with <code>netstat</code>
+            2. Confirm Gemma Works Offline
           </h3>
           <p style="font-size: var(--font-size-sm); color: var(--color-text-muted);">
-            Confirm zero TCP or UDP connection states associated with the application:
+            Select the installed Gemma model, disconnect your Mac, and ask a question that needs no website or remote service.
           </p>
           <div class="bento-preview" style="margin: 1rem 0;">
-            <div style="color: var(--color-text-dim); margin-bottom: 0.35rem;"># Verify zero ESTABLISHED or SYN_SENT connection states</div>
-            <div style="color: var(--color-accent-gold);">$ netstat -anv | grep -i relay</div>
-            <div style="color: var(--color-accent-emerald); margin-top: 0.5rem;">[Expected Result: Empty output]</div>
+            <div style="color: var(--color-text-dim); margin-bottom: 0.35rem;"># Example prompt in Relay</div>
+            <div style="color: var(--color-accent-gold);">What is 7 × 8?</div>
+            <div style="color: var(--color-accent-emerald); margin-top: 0.5rem;">The local model can answer without a network connection.</div>
           </div>
         </div>
 
         <div class="glass-card" style="padding: 2.5rem;">
           <h3 style="margin-bottom: 1rem; font-size: var(--font-size-h4);">
-            3. Compatible with Application Firewalls
+            3. Try the ChatGPT Data Review
           </h3>
           <p style="font-size: var(--font-size-sm); color: var(--color-text-secondary);">
-            Relay operates seamlessly under third-party macOS application firewalls such as <strong>Little Snitch</strong> or <strong>LuLu</strong>. You can configure a strict rule blocking all network traffic for Relay; the multi-agent system and Gemma inference will continue operating at full speed.
+            In ChatGPT mode, request an inspection of an app window. Relay displays the excerpt and gives you the choice to share it or keep it on your Mac.
           </p>
         </div>
 
@@ -381,15 +380,15 @@
           </h2>
 
           <p style="color: var(--color-text-secondary); max-width: 540px; margin: 0 auto 2.5rem auto;">
-            Download Relay for macOS Sequoia 15.0+ and run private multi-agent intelligence directly on your device.
+            Build the Relay alpha from source for Apple silicon Macs running macOS Sequoia 15.0 or later.
           </p>
 
           <div style="display: flex; justify-content: center; gap: 1rem; flex-wrap: wrap;">
             <div class="btn-halo-container">
               <div class="btn-halo-glow" aria-hidden="true"></div>
-              <a href="https://github.com/relay-assistant/relay/releases" target="_blank" rel="noopener noreferrer" class="btn btn-primary" style="padding: 0.95rem 2rem; font-size: 1.05rem;">
+              <a href="https://github.com/SEAbdulbasit/Relay#build-and-run" target="_blank" rel="noopener noreferrer" class="btn btn-primary" style="padding: 0.95rem 2rem; font-size: 1.05rem;">
                 <img src="assets/icons/apple.svg" alt="" class="btn-icon" style="width: 1.3rem; height: 1.3rem;">
-                <span>Download Relay for macOS</span>
+                <span>View Build Instructions</span>
               </a>
             </div>
             <a href="index.html" class="btn btn-secondary" style="padding: 0.95rem 1.6rem; font-size: 1.05rem;">
@@ -448,11 +447,11 @@
         </div>
 
         <div class="footer-col">
-          <h5>Open Source</h5>
+          <h5>Project</h5>
           <ul>
-            <li><a href="https://github.com/relay-assistant/relay" target="_blank" rel="noopener noreferrer">GitHub Repository</a></li>
-            <li><a href="https://github.com/relay-assistant/relay/releases" target="_blank" rel="noopener noreferrer">Releases & Changelog</a></li>
-            <li><a href="https://github.com/relay-assistant/relay/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Apache-2.0 License</a></li>
+            <li><a href="https://github.com/SEAbdulbasit/Relay" target="_blank" rel="noopener noreferrer">GitHub Repository</a></li>
+            <li><a href="https://github.com/SEAbdulbasit/Relay#build-and-run" target="_blank" rel="noopener noreferrer">Build Instructions</a></li>
+            <li><a href="https://github.com/SEAbdulbasit/Relay#third-party-licenses" target="_blank" rel="noopener noreferrer">Third-Party Licenses</a></li>
             <li><a href="index.html#download">Installation Guide</a></li>
           </ul>
         </div>
@@ -464,7 +463,7 @@
           © 2026 Relay Assistant Project. Built with love for macOS sovereignty.
         </div>
         <div>
-          Inspired by Sentient OS & ChatGPT design aesthetics. 100% on-device AI.
+          On-device by default. ChatGPT via Codex CLI is optional.
         </div>
       </div>
 

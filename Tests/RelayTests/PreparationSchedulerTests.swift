@@ -8,18 +8,52 @@ struct PreparationSchedulerTests {
     private let utc = TimeZone(secondsFromGMT: 0)!
 
     @Test func disabledInitAndTickNeverPrepare() {
-        let scheduler = PreparationScheduler(automaticTimers: false, lowPower: { false })
+        let scheduler = PreparationScheduler(automaticTimers: false, lowPower: { false }, thermalLimited: { false })
         var count = 0
         scheduler.prepare = { count += 1; return "Synthetic" }
         scheduler.tick(now: date("2026-10-30T10:00:00Z"), timeZone: utc)
         #expect(!scheduler.enabled)
         #expect(count == 0)
     }
+    @Test func sleepDefersPreparationAndWakeUsesCurrentTimeZoneOnce() {
+        let now = date("2026-10-30T07:00:00Z")
+        var zone = utc
+        var count = 0
+        let scheduler = PreparationScheduler(
+            automaticTimers: false, lowPower: { false }, clock: { now },
+            systemTimeZone: { zone }, thermalLimited: { false }
+        )
+        scheduler.prepare = { count += 1; return "Synthetic" }
+        scheduler.setEnabled(true)
+        scheduler.systemWillSleep()
+        zone = TimeZone(identifier: "Asia/Riyadh")!
+        scheduler.tick(now: now, timeZone: zone)
+        #expect(count == 0)
+        scheduler.systemDidWake()
+        scheduler.systemDidWake()
+        #expect(count == 1)
+        #expect(scheduler.lastPreparedAt == now)
+    }
+
+    @Test func thermalLimitDelaysWithoutReservingTheDay() {
+        let now = date("2026-10-30T10:00:00Z")
+        var limited = true
+        var count = 0
+        let scheduler = PreparationScheduler(automaticTimers: false, lowPower: { false }, thermalLimited: { limited })
+        scheduler.prepare = { count += 1; return "Synthetic" }
+        scheduler.setEnabled(true)
+        scheduler.tick(now: now, timeZone: utc)
+        #expect(count == 0)
+        #expect(scheduler.status.contains("cool down"))
+        limited = false
+        scheduler.tick(now: now.addingTimeInterval(60), timeZone: utc)
+        #expect(count == 1)
+    }
     @Test func busyAndLowPowerDelayWithoutDuplicatePreparation() {
         var busy = true
         var lowPower = true
         var count = 0
-        let scheduler = PreparationScheduler(automaticTimers: false, lowPower: { lowPower })
+        let scheduler = PreparationScheduler(automaticTimers: false, lowPower: { lowPower }, thermalLimited: { false })
         scheduler.isBusy = { busy }
         scheduler.prepare = { count += 1; return "Synthetic" }
         scheduler.setEnabled(true)
@@ -40,12 +74,12 @@ struct PreparationSchedulerTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         let url = folder.appendingPathComponent("schedule.json")
         var count = 0
-        let first = PreparationScheduler(persistenceURL: url, automaticTimers: false, lowPower: { false })
+        let first = PreparationScheduler(persistenceURL: url, automaticTimers: false, lowPower: { false }, thermalLimited: { false })
         first.prepare = { count += 1; return "Synthetic" }
         first.setEnabled(true)
         let now = date("2026-10-30T10:00:00Z")
         first.tick(now: now, timeZone: utc)
-        let restored = PreparationScheduler(persistenceURL: url, automaticTimers: false, lowPower: { false })
+        let restored = PreparationScheduler(persistenceURL: url, automaticTimers: false, lowPower: { false }, thermalLimited: { false })
         restored.prepare = { count += 1; return "Synthetic" }
         restored.tick(now: now, timeZone: utc)
         restored.tick(now: now.addingTimeInterval(-86_400), timeZone: utc)
@@ -56,7 +90,7 @@ struct PreparationSchedulerTests {
     }
     @Test func failuresAreNotRetriedEveryMinuteAndDisableBlocksFutureTicks() {
         var attempts = 0
-        let scheduler = PreparationScheduler(automaticTimers: false, lowPower: { false })
+        let scheduler = PreparationScheduler(automaticTimers: false, lowPower: { false }, thermalLimited: { false })
         scheduler.prepare = { attempts += 1; throw RelayError.message("Synthetic unavailable source") }
         scheduler.setEnabled(true)
         let now = date("2026-10-30T10:00:00Z")
@@ -84,7 +118,7 @@ struct PreparationSchedulerTests {
         #expect(try DailyPreparationPolicy.decision(now: date("2026-11-01T06:30:00Z"), hour: 1, minute: 30, lastHandledDay: "2026-11-01", timeZone: zone) == .handled)
     }
     @Test func reentrantTickCannotPrepareTwice() {
-        let scheduler = PreparationScheduler(automaticTimers: false, lowPower: { false })
+        let scheduler = PreparationScheduler(automaticTimers: false, lowPower: { false }, thermalLimited: { false })
         let now = date("2026-10-30T10:00:00Z")
         var count = 0
         scheduler.prepare = { count += 1; scheduler.tick(now: now, timeZone: self.utc); return "Synthetic" }
@@ -98,7 +132,7 @@ struct PreparationSchedulerTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let blocker = root.appendingPathComponent("not-a-folder")
         try Data("block".utf8).write(to: blocker)
-        let scheduler = PreparationScheduler(persistenceURL: blocker.appendingPathComponent("schedule.json"), automaticTimers: false, lowPower: { false })
+        let scheduler = PreparationScheduler(persistenceURL: blocker.appendingPathComponent("schedule.json"), automaticTimers: false, lowPower: { false }, thermalLimited: { false })
         var count = 0
         scheduler.prepare = { count += 1; return "Synthetic" }
         scheduler.setEnabled(true)
@@ -110,7 +144,7 @@ struct PreparationSchedulerTests {
         #expect(!PreparationScheduler(persistenceURL: oversized, automaticTimers: false).enabled)
     }
     @Test func disablingInsidePreparationLeavesItOff() {
-        let scheduler = PreparationScheduler(automaticTimers: false, lowPower: { false })
+        let scheduler = PreparationScheduler(automaticTimers: false, lowPower: { false }, thermalLimited: { false })
         var count = 0
         scheduler.prepare = { count += 1; scheduler.setEnabled(false); return "Synthetic" }
         scheduler.setEnabled(true)
@@ -121,7 +155,7 @@ struct PreparationSchedulerTests {
     }
     @Test func disablingInsideInitialAutomaticTickDoesNotRetainScheduler() throws {
         let now = date("2026-10-30T10:00:00Z")
-        var scheduler: PreparationScheduler? = PreparationScheduler(automaticTimers: true, lowPower: { false }, clock: { now })
+        var scheduler: PreparationScheduler? = PreparationScheduler(automaticTimers: true, lowPower: { false }, clock: { now }, thermalLimited: { false })
         let components = Calendar.current.dateComponents([.hour, .minute], from: now)
         try scheduler?.setTime(hour: components.hour ?? 0, minute: components.minute ?? 0)
         var count = 0
@@ -129,7 +163,7 @@ struct PreparationSchedulerTests {
         scheduler?.setEnabled(true)
         #expect(count == 1)
         #expect(scheduler?.enabled == false)
-        weak var reference = scheduler
+        weak let reference = scheduler
         scheduler = nil
         #expect(reference == nil)
     }

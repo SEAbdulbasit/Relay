@@ -11,6 +11,10 @@ enum BrowserAutomation {
         var name: String { self == .chrome ? "Google Chrome" : "Safari" }
     }
 
+    // Only explicitly identified capability gaps before any destination input
+    // may use Launch Services instead of the address control.
+    enum DirectOpenFallback: Error { case unsupportedAddressControl, unavailableSafariTabSelection }
+
     static func validatedBrowser(_ name: String) throws -> Browser {
         let normalized = name.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").lowercased()
         switch normalized {
@@ -79,51 +83,78 @@ enum BrowserAutomation {
         try checkNavigationDeadline(deadline)
         _ = try validatedURL(url.absoluteString)
         let applicationURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: browser.rawValue)
-        if !AXIsProcessTrusted() {
-            if let applicationURL {
-                let config = NSWorkspace.OpenConfiguration()
-                config.activates = true
-                _ = try? await NSWorkspace.shared.open([url], withApplicationAt: applicationURL, configuration: config)
-                return ToolResult(
-                    summary: "Opened \(url.absoluteString) in \(browser.name).",
-                    evidence: "Opened \(url.absoluteString) directly in \(browser.name) via NSWorkspace (Accessibility address-bar typing not enabled).",
-                    verified: true
-                )
-            } else if NSWorkspace.shared.open(url) {
-                return ToolResult(
-                    summary: "Opened \(url.absoluteString) in your default browser.",
-                    evidence: "Opened \(url.absoluteString) via NSWorkspace.",
-                    verified: true
-                )
-            }
-        }
-        guard AXIsProcessTrusted() else { throw RelayError.message("Browser navigation needs Relay's Accessibility permission. Nothing was opened or typed.") }
-        try checkNavigationDeadline(deadline)
         guard let applicationURL else {
-            if NSWorkspace.shared.open(url) {
-                return ToolResult(
-                    summary: "Opened \(url.absoluteString) in your default browser.",
-                    evidence: "\(browser.name) was not installed; opened \(url.absoluteString) in default browser via NSWorkspace.",
-                    verified: true
-                )
+            throw RelayError.message("\(browser.name) is not installed. Install it or explicitly choose another browser; Relay did not open a different browser.")
+        }
+        if !AXIsProcessTrusted() {
+            return try await openDirectly(url: url, browser: browser, applicationURL: applicationURL)
+        }
+        try checkNavigationDeadline(deadline)
+        return try await withDirectOpenFallback(deadline: deadline) {
+            try await navigateWithAXAddressBar(url: url, browser: browser, applicationURL: applicationURL, deadline: deadline)
+        } open: {
+            try await openDirectly(url: url, browser: browser, applicationURL: applicationURL)
+        }
+    }
+
+    static func withDirectOpenFallback(deadline: Date, addressBar: () async throws -> ToolResult,
+                                       open: () async throws -> ToolResult) async throws -> ToolResult {
+        do { return try await addressBar() }
+        catch is DirectOpenFallback {
+            try checkNavigationDeadline(deadline)
+            return try await open()
+        }
+    }
+
+    private static func openDirectly(url: URL, browser: Browser, applicationURL: URL) async throws -> ToolResult {
+        try Task.checkCancellation()
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        let app = try await NSWorkspace.shared.open([url], withApplicationAt: applicationURL, configuration: config)
+        if AXIsProcessTrusted() {
+            let root = AXUIElementCreateApplication(app.processIdentifier)
+            AXUIElementSetMessagingTimeout(root, 0.15)
+            var matched = false
+            for _ in 0..<18 {
+                try Task.checkCancellation()
+                if let window = elementAttribute(root, kAXFocusedWindowAttribute),
+                   let doc = firstWebDocument(in: window) {
+                    let currentURL = stringAttribute(doc, "AXURL")
+                    if matchesDestination(currentURL, expected: url) {
+                        matched = true
+                        break
+                    }
+                }
+                try await Task.sleep(for: .milliseconds(150))
             }
-            throw RelayError.message("\(browser.name) is not installed. Inspect installed apps or choose another supported browser.")
+            if matched, url.host?.lowercased().contains("mail.google.com") == true {
+                try? await Task.sleep(for: .milliseconds(900))
+            }
         }
-        do {
-            return try await navigateWithAXAddressBar(url: url, browser: browser, applicationURL: applicationURL, deadline: deadline)
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            // Fallback to direct NSWorkspace URL open in the target browser if single-tab/AX address bar fails
-            let config = NSWorkspace.OpenConfiguration()
-            config.activates = true
-            _ = try await NSWorkspace.shared.open([url], withApplicationAt: applicationURL, configuration: config)
-            return ToolResult(
-                summary: "Opened \(url.absoluteString) in \(browser.name).",
-                evidence: "Opened \(url.absoluteString) directly in \(browser.name) via NSWorkspace.",
-                verified: true
-            )
+        return ToolResult(
+            summary: "Requested opening \(url.absoluteString) in \(browser.name).",
+            evidence: "NSWorkspace accepted the URL in \(browser.name). Observe this browser to verify the loaded page and requested outcome.",
+            verified: false
+        )
+    }
+
+    private static func firstWebDocument(in window: AXUIElement) -> AXUIElement? {
+        var queue = [window]
+        var cursor = 0
+        var visited = Set<CFHashCode>()
+        let deadline = Date().addingTimeInterval(0.3)
+        while cursor < queue.count, cursor < 200, Date() < deadline {
+            let current = queue[cursor]; cursor += 1
+            guard visited.insert(CFHash(current)).inserted else { continue }
+            AXUIElementSetMessagingTimeout(current, 0.02)
+            if attribute(current, "AXHidden") as? Bool == true { continue }
+            let role = stringAttribute(current, kAXRoleAttribute)
+            if role == "AXWebArea" { return current }
+            if let children = attribute(current, kAXChildrenAttribute) as? [AXUIElement] {
+                queue.append(contentsOf: children.prefix(80))
+            }
         }
+        return nil
     }
 
     private static func navigateWithAXAddressBar(url: URL, browser: Browser, applicationURL: URL, deadline: Date) async throws -> ToolResult {
@@ -145,6 +176,10 @@ enum BrowserAutomation {
         }
         try rejectSensitiveWindow(originalWindow)
         guard let originalTab = selectedTab(in: originalWindow) else {
+            if browser == .safari, isOrdinarySafariWindow(stringAttribute(originalWindow, kAXIdentifierAttribute)) {
+                try assertForeground(pid)
+                throw DirectOpenFallback.unavailableSafariTabSelection
+            }
             throw RelayError.message("The browser does not expose one original selected tab identity. No new tab, address entry or confirmation was dispatched. In Safari, open a blank second tab or show the tab bar manually, then retry the reviewed request. Hidden single-tab navigation is not qualified; other unsupported layouts need manual inspection.")
         }
         // A known original tab is required before revealing a new one. Newly exposed AX
@@ -160,13 +195,15 @@ enum BrowserAutomation {
             }
             try await Task.sleep(for: .milliseconds(50))
         }
-        guard let address, let window = elementAttribute(root, kAXFocusedWindowAttribute),
+        guard let window = elementAttribute(root, kAXFocusedWindowAttribute),
               CFEqual(window, originalWindow), let navigationTab = selectedTab(in: window),
               !CFEqual(navigationTab, originalTab) else {
-            throw RelayError.message("The browser did not expose a qualified address field. No destination was typed. This workflow currently supports English Chrome/Safari controls.")
+            throw RelayError.message("The new browser tab could not be verified in its original window. Inspect the browser before retrying. No destination was typed.")
         }
         try rejectSensitiveWindow(window)
         try assertSelectedTab(root: root, window: window, tab: navigationTab)
+        try assertForeground(pid)
+        guard let address else { throw DirectOpenFallback.unsupportedAddressControl }
         try assertAddressFocus(root: root, field: address, pid: pid)
         // Discover both capabilities before editing. Process-wide selection, deletion,
         // Unicode key events and Return are never used to carry a destination URL.
@@ -175,16 +212,20 @@ enum BrowserAutomation {
         var rawActions: CFArray?
         let actionStatus = AXUIElementCopyActionNames(address, &rawActions)
         let advertisedActions = actionStatus == .success ? rawActions as? [String] : nil
-        guard let confirmation = BrowserAddressCommit.entryConfirmationAction(
+        let confirmation = BrowserAddressCommit.entryConfirmationAction(
             settableQuerySucceeded: valueStatus == .success, valueSettable: valueSettable.boolValue,
-            advertisedActions: advertisedActions) else {
-            let writable = valueStatus == .success ? (valueSettable.boolValue ? "yes" : "no") : "unavailable"
-            throw RelayError.message("The browser address control does not support qualified direct entry and confirmation. Native AXValue writable: \(writable); action names: \(BrowserAddressCommit.diagnostic(advertisedActions: advertisedActions)). No URL value or confirmation was sent. A new tab may already exist; inspect it and open the reviewed address manually. No text-key or Return fallback is available.")
-        }
+            advertisedActions: advertisedActions)
         try assertSelectedTab(root: root, window: window, tab: navigationTab)
         try assertAddressFocus(root: root, field: address, pid: pid)
+        guard let confirmation else {
+            try rejectSensitiveWindow(window)
+            try assertForeground(pid)
+            throw DirectOpenFallback.unsupportedAddressControl
+        }
         try checkNavigationDeadline(deadline)
         let destination = url.absoluteString
+        RelayActionPointer.shared.show(element: address, label: "Navigate")
+        defer { RelayActionPointer.shared.finishAction() }
         guard AXUIElementSetAttributeValue(address, kAXValueAttribute as CFString, destination as CFString) == .success else {
             throw RelayError.message("Direct browser address entry did not report success. Its effect is uncertain; inspect the new tab and address before retrying. No confirmation or keyboard fallback was sent.")
         }
@@ -349,8 +390,11 @@ enum BrowserAutomation {
     }
 
     static func isOrdinarySafariWindow(_ identifier: String) -> Bool {
-        let prefix = "SafariWindow?IsSecure=false&UUID="
-        return identifier.hasPrefix(prefix) && identifier.utf8.count > prefix.utf8.count && identifier.utf8.count <= 256
+        // Safari uses both values for its ordinary content windows. Neither value
+        // establishes tab selection; callers must still verify the selected document.
+        return ["SafariWindow?IsSecure=false&UUID=", "SafariWindow?IsSecure=true&UUID="].contains { prefix in
+            identifier.hasPrefix(prefix) && identifier.utf8.count > prefix.utf8.count && identifier.utf8.count <= 256
+        }
     }
 
     /// Safari Start Page contains a content AXTabGroup distinct from its native tab bar.

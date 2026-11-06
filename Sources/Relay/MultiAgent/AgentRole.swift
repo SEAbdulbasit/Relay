@@ -112,12 +112,13 @@ nonisolated enum AgentRole: String, CaseIterable, Codable, Sendable {
             - move_file: Move or rename a file using a validated preview ticket.
             - create_document: Generate a native PDF, RTF, or DOCX document.
             - create_spreadsheet: Generate an XLSX workbook.
-            - open_url: Open an explicit URL in the default browser.
+            - open_url: Open an explicit URL in Google Chrome unless the user names Safari.
 
             Rules:
             1. Only dispatch actions relevant to the active plan step.
             2. Never repeat identical failing actions without new context.
             3. Respect all security boundaries and user review requirements.
+            4. Use Google Chrome for web tasks unless the user explicitly names Safari. Keep all navigation, observation and reading in that browser. Gmail email searches require inspecting search results and the matching message; opening the inbox alone is incomplete.
             """
 
         case .critic:
@@ -133,7 +134,7 @@ nonisolated enum AgentRole: String, CaseIterable, Codable, Sendable {
 
             Evaluate the tool output and evidence:
             - Confirm if the expected postcondition is satisfied (verified: true).
-            - If unverified or ambiguous, identify specific discrepancies and request a targeted retry.
+            - If unverified or ambiguous, identify the specific discrepancy. Do not ask to replay a mutation.
             - Output your verdict clearly: start with VERIFIED: or UNVERIFIED: with the supporting evidence.
             """
         }

@@ -7,7 +7,7 @@ struct LetterPaper: Shape {
     var fold: CGFloat
     var radius: CGFloat = 14
 
-    func path(in r: CGRect) -> Path {
+    nonisolated func path(in r: CGRect) -> Path {
         let f = min(fold, min(r.width, r.height) * 0.35)
         let rad = min(radius, (min(r.width, r.height) - f) * 0.5)
         var p = Path()
@@ -32,7 +32,7 @@ struct LetterPaper: Shape {
 struct LetterPaperFold: Shape {
     var fold: CGFloat
 
-    func path(in r: CGRect) -> Path {
+    nonisolated func path(in r: CGRect) -> Path {
         let f = min(fold, min(r.width, r.height) * 0.35)
         var p = Path()
         p.move(to: CGPoint(x: r.maxX - f, y: r.minY))

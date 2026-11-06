@@ -15,6 +15,18 @@
 <key>NSHumanReadableCopyright</key><string>Relay contributors</string>
 <key>NSCalendarsFullAccessUsageDescription</key>
 <string>Relay can read events from calendars you explicitly select to help with your requests. macOS grants full calendar access; Relay does not create or change events.</string>
+<key>NSAppleEventsUsageDescription</key>
+<string>Relay reads only the notes or messages you select in Apple Notes or Apple Mail when you press Capture. Captured text stays on this Mac for the current session.</string>
+<key>NSAppTransportSecurity</key>
+<dict>
+    <key>NSExceptionDomains</key>
+    <dict>
+        <key>127.0.0.1</key>
+        <dict><key>NSExceptionAllowsInsecureHTTPLoads</key><true/></dict>
+        <key>::1</key>
+        <dict><key>NSExceptionAllowsInsecureHTTPLoads</key><true/></dict>
+    </dict>
+</dict>
     <key>NSMicrophoneUsageDescription</key>
     <string>Relay uses the microphone only when you start voice input. Audio is processed by on-device speech recognition; unsupported local recognition is refused.</string>
     <key>NSSpeechRecognitionUsageDescription</key>

@@ -6,6 +6,7 @@ A native SwiftUI personal assistant with embedded **LiteRT-LM + local Gemma**, a
 
 - Native macOS chat interface built with SwiftUI.
 - Local Gemma inference through Google's LiteRT-LM; no hosted inference account required.
+- Optional ChatGPT reasoning for workspace and Mac app tasks through an existing Codex CLI sign-in.
 - Desktop-control integration with Vercel Labs' `agent-desktop`, alongside Relay's native Accessibility tools.
 - Explicit file and folder grants, inspectable activity, and checked tool outcomes.
 - Early alpha: build from source; desktop workflows and hardware support are still being qualified.
@@ -34,7 +35,7 @@ Thanks to the teams behind these projects. Relay is an independent project; thes
 
 ## Build and run
 
-Requires Apple silicon or Intel macOS 15+, Xcode 26+ / Swift 6.2+. Hardware support has not been broadly qualified. The publication-time `swift test` check currently fails on actor-isolation errors in the `LetterPaper` and `LetterPaperFold` Shape conformances in `Sources/Relay/SentientBriefingComponents.swift`; this source snapshot needs those compilation issues resolved before the test suite can run.
+Requires an Apple silicon Mac with macOS 15+ and Xcode 26+ / Swift 6.2+. The app’s setup check requires at least 8 GB of unified memory; 16 GB or more is recommended. Model and desktop compatibility depend on the Mac, backend, and apps used.
 
 ```bash
 git clone https://github.com/SEAbdulbasit/Relay.git
@@ -59,16 +60,16 @@ The updater downloads official Vercel Labs release archives and verifies their p
 ## Set up a model
 
 1. Open Relay. The first-run assistant checks this Mac and explains local inference. Reopen it later from Settings → Run setup assistant.
-2. Download the pinned recommended Gemma package (2.59 GB), check an existing downloaded package, or import a **Gemma `.litertlm` package with native tool-call support**. Downloads are explicit; real progress, cancellation and SHA-256 verification are shown. Cancellation restarts the transfer rather than resuming. GGUF/Ollama packages are not compatible.
-3. Load and check the model. Relay initializes the embedded engine and requests a side-effect-free structured-call probe. A saved model path does not count as a loaded model after relaunch. Recommended setup starts with CPU; GPU remains available in Settings for supported packages.
+2. Download the pinned recommended Gemma package (2.59 GB), check an existing downloaded package, or import a **Gemma `.litertlm` package with native tool-call support**. Downloads are explicit and display progress and SHA-256 verification. Paused downloads can resume from verified chunks when the host supports range requests; whole-file transfers restart. GGUF/Ollama packages are not compatible. For workspace and Mac app tasks, you can also choose **Use ChatGPT** with an existing Codex CLI sign-in and skip the download.
+3. Load and check the model. Relay initializes the embedded engine and requests a side-effect-free structured-call probe. A saved model path does not count as a loaded model after relaunch. Settings lists locally installed catalog packages; Relay verifies the selected package before loading it. CPU is the default; GPU availability depends on the package and runtime.
 4. Review Accessibility access and optionally run the independent local control fixture. You can skip computer control and add selected files later; no broad disk permission is requested.
 5. Choose a first request. Setup puts it in chat without executing it. You send it when ready. Setup can be dismissed and reopened without deleting conversation history.
 
-Models stay outside the app bundle. The app uses native URLSession for the explicit recommended-model download, validates byte count and SHA-256, and refuses to overwrite an unknown existing model. The development alternative downloads the same pinned public Gemma 4 E2B package using `python3 Scripts/download-gemma.py`, checks the published SHA-256 and records provenance under `~/Library/Application Support/Relay/Models/`. No account, hosted inference or license click-through is required for that public Apache-2.0 artifact. A successful probe does not establish vision, task accuracy or support for every Mac application. The app currently consumes text and accessibility observations; screenshot/vision inference is not implemented. LiteRT-LM's non-streaming API is deliberate: the pinned SDK streaming callback can auto-execute tools despite its flag. Native tools in Relay are schema-only at the SDK layer, and only Relay's executor dispatches actions.
+Models stay outside the app bundle. The app uses native URLSession for the explicit recommended-model download, validates byte count and SHA-256, and refuses to overwrite an unknown existing model. The development alternative downloads the same pinned public Gemma 4 E2B package using `python3 Scripts/download-gemma.py`, checks the published SHA-256 and records provenance under `~/Library/Application Support/Relay/Models/`. No account, hosted inference or license click-through is required for that public Apache-2.0 artifact. The chat probe checks native tool calls. Image inspection separately checks that the selected package accepts image input. LiteRT-LM's non-streaming API is deliberate: the pinned SDK streaming callback can auto-execute tools despite its flag. Native tools in Relay are schema-only at the SDK layer, and only Relay's executor dispatches actions.
 
 ## Use it
 
-Speak naturally in one conversation. The imported model dynamically chooses available tools; there is no keyword router or mandatory template selection.
+Speak naturally in one conversation. The local model chooses available tools. Relay validates their arguments and resolves browser requests before presenting them for review.
 
 - “Open VLC.” App launch is checked using NSWorkspace process state.
 - Attach a text document or text-based PDF, then ask for a summary.
@@ -80,16 +81,25 @@ Ordinary scoped observations, app opening, new-file creation, supported scrollin
 
 During execution you can send a follow-up instruction. Relay cancels old planning, waits for any in-flight tool to settle, invalidates approvals and resumes with the new constraint. **Stop** blocks new dispatch immediately; an in-progress operation may finish. Resume asks the model to refresh state; stale UI references cannot be reused. Crash recovery never replays unfinished mutations automatically.
 
+Knowledge lets you read selected indexed sources and create or edit local Markdown notes in folders. Relay can generate highlights with source provenance, refresh changed sources, and copy a generated note into an editable note. Settings → Knowledge lets you share selected authored notes with a local MCP client or export an encrypted portable archive.
+
+Settings → Sources can capture the selected items in Apple Notes or Mail, read a selected Messages backup conversation or WhatsApp text export, and connect to a user-supplied MCP endpoint for reviewed reads. You can ask about these results locally without adding them to saved chat. Notes and Mail capture require macOS Automation consent for those apps. Messages backups include supported plain-text rows only.
+
+In the workspace attachment menu, choose **Inspect Image or Window**. Select a still image or use the macOS picker to select one window, then ask a question. Relay shows a preview and runs local image analysis with no tools. The image and answer are cleared when the panel closes.
+
+Settings → Access offers two opt-in shortcuts. Tap Right Command once to open or close Sidekick, or twice at the end of a supported multiline reply field to draft there. Double Tap checks that the field and its content are still current before editing. You can select a separate local drafting model and approve editable style suggestions from examples in Settings → Memory.
+
 Activity shows actual tool evidence, errors and uncertain effects. The model response is accompanied by software-generated checked outcomes. A “finished” run is not a claim that an arbitrary user goal or an evaluation suite has passed.
 
 ## Boundaries
 
-- All inference is embedded and local. No hosted fallback, API-key field or inference network client exists.
+- Gemma is the default and works without an account. For this session, opt in under **Settings → Model → ChatGPT via Codex CLI → Use ChatGPT**. Relay reuses an existing ChatGPT login from a compatible local Codex CLI. No Relay account, API key entry, or automatic hosted fallback is involved.
+- In ChatGPT mode, workspace requests and action status go to OpenAI. Relay asks before sending the displayed app list or excerpt from an app or page. Relay runs the actual Mac tools and applies its normal action reviews. Earlier conversations, saved memory, indexed sources, calendar, files, background drafts, and image analysis stay with the local model. Follow-up workspace requests in ChatGPT mode start with fresh context.
 - User-requested websites may be opened after destination review; the browser may use the internet and an existing session. Network dependence differs from local inference.
 - Files are limited to explicitly granted paths, resolved against symlink escape. No broad disk scan.
-- Text/PDF extraction and output are bounded. Scanned PDFs need OCR, which is not implemented.
+- Text/PDF extraction and output are bounded. Selected images and the first three pages of a scanned PDF can use local OCR. Review the recognized text for errors.
 - AX control requires user-granted Accessibility. Canvas apps, inaccessible controls and unsupported scrolling report limitations; no screenshot-coordinate fallback is claimed.
-- No unrestricted shell, scheduled work, purchases, account administration, automatic passwords or mobile app.
+- Opt-in preparation can refresh a local source brief while Relay is running. Relay can show an exact one-time macOS wake command and verify its presence in the system queue. The command must be applied separately with macOS authorization, and actual wake depends on the hardware and power state. Purchases, account administration, automatic password entry, unrestricted shell access and a mobile companion are unavailable.
 - No persistent screenshots or telemetry. Conversation, activity, explicit memory and grants are stored locally in `~/Library/Application Support/Relay/state.json` with user-only permissions. Clear Conversation removes conversation/activity; memory and context are removable separately. Selected originals stay in place. No task content becomes memory automatically.
 - File/model loading and native inference can fail or run slowly. Task loop and model inference have budgets; already-applied changes are not rolled back.
 
@@ -107,7 +117,7 @@ Tests cover action dispatch after Stop, false model narratives, interrupted-stat
 
 See [the test cases](planning/accessibility-test-plan.md). Settings → Access → **Run accessibility check** operates a bundled harmless native window: real text entry, a reviewed Apply click, AX readback plus an independent JSON oracle, stale/disabled control rejection, review drift and queued-click invalidation. It needs user-granted Accessibility. No model is used for this controller test.
 
-`search_finder` opens Finder and enters the requested query through its visible accessibility search field. It confirms the query, not the existence of a matching file. Actual Finder execution is an explicit desktop integration test; model planning is tested separately.
+`search_finder` opens Finder and enters the requested query through its visible search field. The entered query and any visible exact filename evidence are reported separately. The desktop integration test checks the visible query; model planning is tested separately.
 
 Benign named AXButton clicks are now available with complete window/editable-field review binding. Incomplete/secure/oversized contexts refuse. Final submission, sends, publication and consequential controls remain excluded.
 

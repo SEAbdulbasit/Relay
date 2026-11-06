@@ -90,6 +90,7 @@ nonisolated struct PendingReview: Identifiable, Sendable {
     var call: ToolCall
     var reason: String
     var revision: Int
+    var sharesWithOpenAI = false
 }
 nonisolated enum RunPhase: String, Sendable { case idle, thinking, acting, awaitingReview, stopped, failed, completed, needsInput }
 nonisolated enum RelayError: LocalizedError {
@@ -100,6 +101,6 @@ nonisolated enum RelayError: LocalizedError {
 nonisolated enum ModelProtocolError: LocalizedError {
     case invalidAction(String)
     var errorDescription: String? {
-        switch self { case .invalidAction(let reason): "The local model returned an invalid action request: \(reason). No action from that reply was dispatched." }
+        switch self { case .invalidAction(let reason): "The model returned an invalid action request: \(reason). No action from that reply was dispatched." }
     }
 }

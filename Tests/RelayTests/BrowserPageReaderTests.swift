@@ -4,6 +4,18 @@ import Testing
 
 @MainActor
 struct BrowserPageReaderTests {
+    @Test func titleMetadataNeverBecomesHeadingEvidenceWhenNoHeadingWasExposed() {
+        let absent = BrowserPageReader.headingEvidence(headings: [], truncated: false)
+        #expect(absent.contains("No heading exposed"))
+        #expect(absent.contains("do not report it as a main heading"))
+        let partial = BrowserPageReader.headingEvidence(headings: [], truncated: true)
+        #expect(partial.contains("omitted heading may exist"))
+        let observed = BrowserPageReader.headingEvidence(headings: ["Documentation"], truncated: false)
+        #expect(observed.contains("Documentation"))
+        #expect(observed.contains("no main-heading rank established"))
+        #expect(!observed.contains("No heading exposed"))
+    }
+
     @Test func linkSnapshotAcceptsOnlyBoundedHTTPDestinations() throws {
         let base = URL(string: "https://example.com/docs/page")!
         #expect(BrowserPageReader.validatedLink(title: "Next", url: "../next?q=123", relativeTo: base)?.url == "https://example.com/next?q=123")
@@ -59,7 +71,7 @@ struct BrowserPageReaderTests {
         let safari = "SafariWindow?IsSecure=false&UUID=synthetic"
         #expect(BrowserPageReader.isUnselectedSafariContentGroup(windowIdentifier: safari,
             childRoles: ["AXScrollArea", "AXCollection"], complete: true))
-        for identifier in ["ChromeWindow", "SafariWindow?IsSecure=true&UUID=private", "SafariWindow?IsSecure=false&UUID="] {
+        for identifier in ["ChromeWindow", "SafariWindow?IsSecure=unknown&UUID=synthetic", "SafariWindow?IsSecure=false&UUID="] {
             #expect(!BrowserPageReader.isUnselectedSafariContentGroup(windowIdentifier: identifier,
                 childRoles: ["AXCollection"], complete: true))
         }
@@ -70,6 +82,38 @@ struct BrowserPageReaderTests {
         #expect(!BrowserPageReader.isUnselectedSafariContentGroup(windowIdentifier: safari,
             childRoles: ["AXCollection"], complete: false))
         #expect(BrowserAutomation.selectedTabIndex(explicit: nil, tabs: [], traversalComplete: true) == nil)
+    }
+
+    @Test func safariHTTPSContentGroupAndHiddenTabBarRequireFocusedUniqueDocument() {
+        let httpsWindow = "SafariWindow?IsSecure=true&UUID=04266DB5-7CF9-4B86-84DC-888EEDC34527"
+        #expect(BrowserPageReader.isUnselectedSafariContentGroup(windowIdentifier: httpsWindow,
+            childRoles: ["AXScrollArea"], complete: true))
+        func permits(_ identifier: String = httpsWindow, tabs: Int = 0, documents: Int = 1,
+                     focused: Bool? = true, complete: Bool = true) -> Bool {
+            BrowserPageReader.permitsDocumentIdentity(windowIdentifier: identifier, selectedTabCount: tabs,
+                documentCount: documents, focusedDocumentMatches: focused, traversalComplete: complete)
+        }
+        #expect(permits())
+        #expect(permits(focused: nil)) // Safari keyboard focus remains in address toolbar.
+        #expect(!permits("ChromeWindow", focused: nil))
+        #expect(!permits(tabs: 2, focused: nil))
+        #expect(!permits(documents: 2, focused: nil))
+        #expect(!permits("ChromeWindow"))
+        #expect(!permits(tabs: 1))
+        #expect(!permits(tabs: 2))
+        #expect(!permits(documents: 0))
+        #expect(!permits(documents: 2))
+        #expect(!permits(focused: false))
+        #expect(!permits(complete: false))
+        #expect(!BrowserPageReader.isUnselectedSafariContentGroup(windowIdentifier: httpsWindow,
+            childRoles: ["AXRadioButton", "AXRadioButton"], complete: true))
+    }
+
+    @Test func webKitDocumentDescriptionSuppliesMissingTitleWithoutBorrowingWindowLabels() {
+        #expect(BrowserPageReader.readableDocumentTitle(title: "", description: "Example Domain") == "Example Domain")
+        #expect(BrowserPageReader.readableDocumentTitle(title: "   ", description: "Example Domain") == "Example Domain")
+        #expect(BrowserPageReader.readableDocumentTitle(title: "Actual title", description: "Other") == "Actual title")
+        #expect(BrowserPageReader.readableDocumentTitle(title: "", description: "").isEmpty)
     }
 
     @Test func onlyPlainDestinationMismatchSuggestsReviewedNavigation() throws {

@@ -43,6 +43,10 @@ final class MultiAgentOrchestrator {
     var onRoleChange: ((AgentRole) -> Void)?
     var onActivity: ((AgentActivityItem) -> Void)?
     var onPlanUpdate: (([String]) -> Void)?
+    var onToolResult: ((ToolCall, ToolResult) -> Void)?
+    private(set) var didDispatchTool = false
+
+    private enum StepOutcome: Equatable { case verified, unverified, declined }
 
     init(
         blackboard: MultiAgentBlackboard? = nil,
@@ -68,6 +72,7 @@ final class MultiAgentOrchestrator {
     func executeTask(goal: String) async throws -> MultiAgentResult {
         try gate?()
         blackboard.reset(with: goal)
+        didDispatchTool = false
 
         // 1. Planner Turn: Goal Decomposition
         let planGenerated = try await runPlannerTurn(goal: goal)
@@ -76,37 +81,44 @@ final class MultiAgentOrchestrator {
         // If the planner identified an informational query or produced no automation steps,
         // return the synthesized or informational reply immediately without spinning up navigation/execution.
         if !planGenerated || blackboard.structuredPlan.isEmpty {
-            let directAnswer = blackboard.criticFeedback ?? "Task completed."
+            let directAnswer = blackboard.criticFeedback ?? ""
             return MultiAgentResult(
-                content: directAnswer,
+                content: directAnswer.isEmpty ? "The local model returned no answer. Try again with a narrower request." : directAnswer,
                 verifiedResults: blackboard.verifiedResults,
                 artifacts: blackboard.verifiedResults.compactMap(\.artifactPath),
-                isSuccess: true
+                isSuccess: !directAnswer.isEmpty
             )
         }
 
         // 2. Sequential Step Execution Loop
-        var stepFailures = 0
-        for step in blackboard.structuredPlan {
+        let plan = blackboard.structuredPlan
+        for (index, step) in plan.enumerated() {
             try gate?()
-            let stepSuccess = try await executePlanStepWithVerification(step: step, goal: goal)
-            if !stepSuccess {
-                stepFailures += 1
-                if stepFailures >= 2 {
-                    break
-                }
+            let outcome = try await executePlanStepWithVerification(step: step, goal: goal)
+            try gate?()
+            guard outcome == .verified else {
+                recordActivity(role: step.role, title: "Step incomplete", detail: step.title)
+                // Later steps may depend on this outcome. Stop here without letting synthesis
+                // promote a partial result or send the same action through another step.
+                let unfinished = plan.dropFirst(index).map { "• \($0.title)" }.joined(separator: "\n")
+                let reason = outcome == .declined ? "That action was declined. The remaining steps were paused." : "I couldn’t verify every step."
+                return MultiAgentResult(
+                    content: "\(reason)\n\nUnfinished steps:\n\(unfinished)",
+                    verifiedResults: blackboard.verifiedResults,
+                    artifacts: blackboard.verifiedResults.compactMap(\.artifactPath),
+                    isSuccess: false
+                )
             }
+            blackboard.completeStep(step.title)
         }
 
-        // 3. Synthesis Turn: Planner compiles final verified answer
-        try gate?()
+        // 3. Synthesis Turn: Planner compiles final verified answer.
         let finalResponse = try await runSynthesisTurn(goal: goal)
 
         return MultiAgentResult(
             content: finalResponse,
             verifiedResults: blackboard.verifiedResults,
-            artifacts: blackboard.verifiedResults.compactMap(\.artifactPath),
-            isSuccess: stepFailures == 0
+            artifacts: blackboard.verifiedResults.compactMap(\.artifactPath)
         )
     }
 
@@ -150,70 +162,23 @@ final class MultiAgentOrchestrator {
     }
 
     /// Executes an individual plan step through the appropriate role sequence (Navigator -> Executor -> Critic).
-    private func executePlanStepWithVerification(step: PlanStep, goal: String) async throws -> Bool {
-        var retries = 0
-        let maxRetries = 2
-
-        while retries <= maxRetries {
+    private func executePlanStepWithVerification(step: PlanStep, goal: String) async throws -> StepOutcome {
+        switch step.role {
+        case .navigator:
+            return try await runNavigatorTurn(step: step, goal: goal) ? .verified : .unverified
+        case .planner:
+            return .unverified
+        case .critic:
+            return try await runCriticTurn(step: step, goal: goal, actionResults: nil) ? .verified : .unverified
+        case .executor:
+            guard let results = try await runExecutorTurn(step: step, goal: goal) else { return .declined }
             try gate?()
-
-            switch step.role {
-            case .navigator:
-                let navResult = try await runNavigatorTurn(step: step, goal: goal)
-                if navResult {
-                    blackboard.completeStep(step.title)
-                    return true
-                } else {
-                    return false
-                }
-            case .planner:
-                blackboard.completeStep(step.title)
-                return true
-            case .critic:
-                let verified = try await runCriticTurn(step: step, goal: goal, actionExecuted: false)
-                if verified {
-                    blackboard.completeStep(step.title)
-                    return true
-                } else {
-                    return false
-                }
-            case .executor:
-                // Executor Turn
-                let actionExecuted = try await runExecutorTurn(step: step, goal: goal)
-                try gate?()
-
-                // Critic Turn
-                let verified = try await runCriticTurn(step: step, goal: goal, actionExecuted: actionExecuted)
-                try gate?()
-
-                if verified {
-                    blackboard.completeStep(step.title)
-                    blackboard.criticFeedback = nil
-                    recordActivity(
-                        role: .critic,
-                        title: "Step certified",
-                        detail: "Verified: \(step.title)"
-                    )
-                    return true
-                } else {
-                    retries += 1
-                    if retries <= maxRetries {
-                        recordActivity(
-                            role: .critic,
-                            title: "Critic requested retry (\(retries)/\(maxRetries))",
-                            detail: blackboard.criticFeedback ?? "Postconditions unverified"
-                        )
-                    }
-                }
-            }
+            // Tool results may be uncertain after dispatch. Read back once and preserve the result.
+            // A second mutation requires a new explicit task after reconciling current state.
+            guard try await runCriticTurn(step: step, goal: goal, actionResults: results) else { return .unverified }
+            recordActivity(role: .critic, title: "Step verified", detail: step.title)
+            return .verified
         }
-
-        recordActivity(
-            role: .critic,
-            title: "Step incomplete",
-            detail: "Max retries reached for: \(step.title)"
-        )
-        return false
     }
 
     /// Runs the Navigator agent to inspect UI, applications, or files without mutations.
@@ -239,28 +204,22 @@ final class MultiAgentOrchestrator {
         let reply = try await complete([system, userMsg], tools, configuration)
         try gate?()
 
-        if reply.toolCalls.isEmpty {
-            if !reply.content.isEmpty {
-                blackboard.addObservation(reply.content)
-            }
-            return true
-        }
+        try validate(reply.toolCalls, against: tools)
+        var results: [ToolResult] = []
 
         for call in reply.toolCalls {
             try gate?()
             recordActivity(role: .navigator, title: "Dispatching inspection", detail: call.name)
-            let result = try await execute(call)
-            blackboard.addObservation("\(call.name): \(result.summary)")
+            let result = try await dispatch(call)
+            results.append(result)
+            blackboard.addObservation("\(call.name): \(result.summary) [verified=\(result.verified)]")
             recordActivity(role: .navigator, title: "Observed \(call.name)", detail: result.summary)
-            if result.verified {
-                blackboard.verifiedResults.append(result)
-            }
         }
-        return true
+        return allVerified(results)
     }
 
     /// Runs the Executor agent to perform the concrete action required by the step.
-    private func runExecutorTurn(step: PlanStep, goal: String) async throws -> Bool {
+    private func runExecutorTurn(step: PlanStep, goal: String) async throws -> [ToolResult]? {
         transition(to: .executor)
         recordActivity(
             role: .executor,
@@ -273,44 +232,39 @@ final class MultiAgentOrchestrator {
         if !blackboard.observations.isEmpty {
             context += "\nFresh observations from Navigator:\n" + blackboard.observations.joined(separator: "\n")
         }
-        if let feedback = blackboard.criticFeedback {
-            context += "\nCritic postcondition feedback from previous attempt: \(feedback)\nAdjust your tool arguments to resolve this feedback."
-        }
         let userMsg = ModelMessage(role: "user", content: context)
         let tools = ToolPartitioning.partitionedTools(for: .executor, from: allTools)
 
         let reply = try await complete([system, userMsg], tools, configuration)
         try gate?()
 
-        if reply.toolCalls.isEmpty {
-            // Model did not dispatch a tool (e.g. pure verbal action or fallback)
-            return false
-        }
+        try validate(reply.toolCalls, against: tools)
+        var results: [ToolResult] = []
 
         for call in reply.toolCalls {
             try gate?()
-            // Check review requirement
-            if let reason = reviewReason?(call), let requestReview {
+            if let reason = reviewReason?(call) {
+                guard let requestReview else { throw RelayError.message("This action requires review before dispatch.") }
                 let approved = try await requestReview(call, reason)
                 try gate?()
                 guard approved else {
                     recordActivity(role: .executor, title: "Action declined by user", detail: call.name)
-                    return false
+                    return nil
                 }
             }
 
             recordActivity(role: .executor, title: "Dispatching mutation", detail: call.name)
-            let result = try await execute(call)
+            let result = try await dispatch(call)
+            results.append(result)
             recordActivity(role: .executor, title: "Executed \(call.name)", detail: result.summary)
-            if result.verified {
-                blackboard.verifiedResults.append(result)
-            }
+            // Later calls in a batch may depend on this action having succeeded.
+            if !result.verified { break }
         }
-        return true
+        return results
     }
 
     /// Runs the Critic agent to independently verify whether the action's postconditions were fulfilled.
-    private func runCriticTurn(step: PlanStep, goal: String, actionExecuted: Bool) async throws -> Bool {
+    private func runCriticTurn(step: PlanStep, goal: String, actionResults: [ToolResult]?) async throws -> Bool {
         transition(to: .critic)
         recordActivity(
             role: .critic,
@@ -319,10 +273,12 @@ final class MultiAgentOrchestrator {
         )
 
         let system = ModelMessage(role: "system", content: AgentRole.critic.systemPrompt)
-        let recentResults = blackboard.verifiedResults.suffix(3)
-        var context = "User objective: \(goal)\nEvaluated step: \(step.title)\nAction was dispatched: \(actionExecuted)"
-        if !recentResults.isEmpty {
-            context += "\nRecent tool evidence:\n" + recentResults.map { "• \($0.summary) — \($0.evidence) [verified=\($0.verified)]" }.joined(separator: "\n")
+        var context = "User objective: \(goal)\nEvaluated step: \(step.title)"
+        if let actionResults {
+            context += "\nAction was dispatched: \(!actionResults.isEmpty)"
+            context += "\nTool evidence for this step:\n" + actionResults.suffix(3).map {
+                "• \($0.summary) — \($0.evidence) [verified=\($0.verified)]"
+            }.joined(separator: "\n")
         }
         if !blackboard.observations.isEmpty {
             context += "\nLatest observations:\n" + blackboard.observations.suffix(3).joined(separator: "\n")
@@ -335,34 +291,21 @@ final class MultiAgentOrchestrator {
 
         let reply = try await complete([system, userMsg], tools, configuration)
         try gate?()
+        try validate(reply.toolCalls, against: tools)
 
-        // If the Critic chooses to execute an independent inspection tool (e.g. read_file, observe_app)
-        if !reply.toolCalls.isEmpty {
-            for call in reply.toolCalls {
-                try gate?()
-                recordActivity(role: .critic, title: "Dispatching verification readback", detail: call.name)
-                let result = try await execute(call)
-                recordActivity(role: .critic, title: "Critic readback result", detail: result.summary)
-                if result.verified {
-                    blackboard.verifiedResults.append(result)
-                }
-            }
+        var readbacks: [ToolResult] = []
+        for call in reply.toolCalls {
+            try gate?()
+            recordActivity(role: .critic, title: "Dispatching verification readback", detail: call.name)
+            let result = try await dispatch(call)
+            readbacks.append(result)
+            recordActivity(role: .critic, title: "Critic readback result", detail: result.summary)
         }
 
-        let contentUpper = reply.content.uppercased()
-        if contentUpper.contains("VERIFIED") && !contentUpper.contains("UNVERIFIED") {
-            return true
-        }
-
-        // If tool itself reported verified and critic did not explicitly dispute it
-        let hasDirectVerifiedEvidence = blackboard.verifiedResults.last?.verified == true
-        if hasDirectVerifiedEvidence && !contentUpper.contains("UNVERIFIED") && !contentUpper.contains("FAIL") {
-            return true
-        }
-
-        // Store critic's diagnostic feedback for retry turn
-        blackboard.criticFeedback = reply.content.isEmpty ? "Action postcondition could not be independently verified." : reply.content
-        return false
+        let verdict = reply.content.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !verdict.hasPrefix("UNVERIFIED") else { return false }
+        guard let actionResults else { return allVerified(readbacks) }
+        return allVerified(actionResults) && (readbacks.isEmpty || allVerified(readbacks))
     }
 
     /// Runs the final synthesis turn where the Planner summarizes all completed work and verified evidence.
@@ -387,11 +330,28 @@ final class MultiAgentOrchestrator {
         let tools = ToolPartitioning.partitionedTools(for: .planner, from: allTools)
 
         let reply = try await complete([system, userMsg], tools, configuration)
+        try gate?()
         let summary = reply.content.trimmingCharacters(in: .whitespacesAndNewlines)
-        return summary.isEmpty ? "Task completed successfully." : summary
+        return summary.isEmpty ? "I’ve listed the checked outcomes below." : summary
     }
 
     // MARK: - Helper Methods
+
+    private func validate(_ calls: [ToolCall], against tools: [ToolDefinition]) throws {
+        for call in calls { try ToolPolicy.validate(call, against: tools) }
+    }
+
+    private func dispatch(_ call: ToolCall) async throws -> ToolResult {
+        didDispatchTool = true
+        let result = try await execute(call)
+        if result.verified { blackboard.verifiedResults.append(result) }
+        onToolResult?(call, result)
+        return result
+    }
+
+    private func allVerified(_ results: [ToolResult]) -> Bool {
+        !results.isEmpty && results.allSatisfy(\.verified)
+    }
 
     private func transition(to role: AgentRole) {
         blackboard.advanceRole(to: role)

@@ -96,7 +96,7 @@ nonisolated enum LocalOCR {
         let request = VNRecognizeTextRequest()
     }
 
-    private static func recognize(image: CGImage, orientation: CGImagePropertyOrientation) async throws -> String {
+    @concurrent static func recognize(image: CGImage, orientation: CGImagePropertyOrientation) async throws -> String {
         try Task.checkCancellation()
         let box = RequestBox()
         let request = box.request

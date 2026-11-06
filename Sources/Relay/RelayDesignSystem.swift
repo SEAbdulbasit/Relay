@@ -1,48 +1,51 @@
 import SwiftUI
+import AppKit
 
-// MARK: - Color Palette Tokens (Sentient OS & ChatGPT OLED Obsidian Palette)
+// MARK: - Color Palette Tokens (ChatGPT macOS & Antigravity Matte Graphite Palette)
 enum RelayColors {
-    static let pitch = Color(red: 5/255, green: 5/255, blue: 8/255)               // #050508 Pure OLED Obsidian
-    static let canvas = Color(red: 6/255, green: 7/255, blue: 10/255)             // #06070A Night Sky Base
-    static let background = Color(red: 8/255, green: 9/255, blue: 13/255)         // #08090D Deep Obsidian
-    static let cardBG = Color(red: 12/255, green: 12/255, blue: 16/255)           // #0C0C10 Sentient Card Surface
-    static let surface = Color(red: 16/255, green: 17/255, blue: 22/255)          // #101116 Elevated Panel
-    static let surfaceElevated = Color(red: 23/255, green: 25/255, blue: 32/255)  // #171920 Interactive Surface
-    static let glassBackdrop = Color(red: 16/255, green: 18/255, blue: 24/255).opacity(0.78)
+    static let pitch = Color(red: 23/255, green: 23/255, blue: 25/255)              // #171719 Primary Matte Graphite Canvas
+    static let canvas = Color(red: 19/255, green: 19/255, blue: 21/255)             // #131315 Deep Inset / Sidebar Surface
+    static let background = Color(red: 23/255, green: 23/255, blue: 25/255)         // #171719 Primary Window Background
+    static let cardBG = Color(red: 29/255, green: 29/255, blue: 32/255)             // #1D1D20 Elevated Matte Card Surface
+    static let surface = Color(red: 34/255, green: 34/255, blue: 38/255)            // #222226 Composer & Control Surface
+    static let surfaceElevated = Color(red: 43/255, green: 43/255, blue: 48/255)    // #2B2B30 User Message Pill & Hover Surface
+    static let glassBackdrop = Color(red: 29/255, green: 29/255, blue: 32/255).opacity(0.88)
 
-    static let borderSubtle = Color.white.opacity(0.08)
-    static let borderDefault = Color.white.opacity(0.14)
-    static let borderFocus = Color(red: 253/255, green: 226/255, blue: 163/255).opacity(0.45)
+    static let borderSubtle = Color.white.opacity(0.07)
+    static let borderDefault = Color.white.opacity(0.12)
+    static let borderFocus = Color.white.opacity(0.22)
 
-    static let textPrimary = Color.white   // #EEEDF3 Crisp Editorial Ink
-    static let textSecondary = Color(red: 197/255, green: 200/255, blue: 209/255) // #C5C8D1
-    static let textMuted = Color(red: 155/255, green: 154/255, blue: 160/255)     // #9B9AA0 Sentient Body Ink
-    static let textDim = Color(red: 160/255, green: 166/255, blue: 180/255)       // #6E6D75 Whisper Ink
+    static let textPrimary = Color(red: 244/255, green: 244/255, blue: 246/255)     // #F4F4F6 Crisp Warm White Ink
+    static let textBright = Color(red: 228/255, green: 228/255, blue: 231/255)      // #E4E4E7 Zinc 200
+    static let textStatus = Color(red: 212/255, green: 212/255, blue: 216/255)      // #D4D4D8 Zinc 300
+    static let textSecondary = Color(red: 161/255, green: 161/255, blue: 170/255)   // #A1A1AA Zinc 400
+    static let textMuted = Color(red: 113/255, green: 113/255, blue: 122/255)       // #71717A Zinc 500
+    static let textDim = Color(red: 82/255, green: 82/255, blue: 91/255)            // #52525B Zinc 600
+    static let textFaint = Color.white.opacity(0.28)
 
-    // Semantic Accents (Matching Sentient OS Ink Tokens)
-    static let accentEmerald = Color(red: 74/255, green: 222/255, blue: 128/255)  // #4ADE80 Sentient Green
-    static let accentAmethyst = Color(red: 187/255, green: 101/255, blue: 255/255)// #BB65FF Planner Violet
-    static let accentPeriwinkle = Color(red: 142/255, green: 166/255, blue: 255/255) // #8EA6FF Starlight Accent
-    static let accentBlue = Color(red: 111/255, green: 182/255, blue: 255/255)    // #6FB6FF Navigator Sky Blue
-    static let accentCoral = Color(red: 255/255, green: 92/255, blue: 92/255)     // #FF5C5C Status Red/Coral
-    static let accentAmber = Color(red: 255/255, green: 195/255, blue: 113/255)   // #FFC371 Sentient Amber
-    static let accentGold = Color(red: 253/255, green: 226/255, blue: 163/255)    // #FDE2A3 Prism Warm Gold
-    static let accentCyan = Color(red: 111/255, green: 182/255, blue: 255/255)    // #6FB6FF Starlight Cyan / Sky Blue
-    static let knowledgeLink = Color(red: 173/255, green: 186/255, blue: 255/255) // #ADB4FF Sentient Wikilink Violet-Blue
+    // Restrained Semantic Accents (Subtle status & role indicators only)
+    static let accentEmerald = Color(red: 52/255, green: 211/255, blue: 153/255)    // #34D399 Subtle Mint/Emerald Status
+    static let accentAmethyst = Color(red: 212/255, green: 212/255, blue: 216/255)  // #D4D4D8 Monochrome Silver Accent
+    static let accentPeriwinkle = Color(red: 161/255, green: 161/255, blue: 170/255)// #A1A1AA Muted Slate Accent
+    static let accentBlue = Color(red: 147/255, green: 197/255, blue: 253/255)      // #93C5FD Soft Sky Status
+    static let accentCoral = Color(red: 248/255, green: 113/255, blue: 113/255)     // #F87171 Soft Red Alert
+    static let accentAmber = Color(red: 251/255, green: 191/255, blue: 36/255)      // #FBBF24 Warm Amber Warning
+    static let accentGold = Color(red: 228/255, green: 228/255, blue: 231/255)      // #E4E4E7 Warm Silver Highlight
+    static let accentCyan = Color(red: 165/255, green: 243/255, blue: 252/255)      // #A5F3FC Soft Ice Cyan
+    static let knowledgeLink = Color(red: 228/255, green: 228/255, blue: 231/255)   // #E4E4E7 Clean Understated Link
 
     // Button Tokens
-    static let buttonFace = Color.white                                           // #FFFFFF Crisp White Capsule
-    static let buttonInk = Color(red: 10/255, green: 11/255, blue: 14/255)        // #0A0B0E
+    static let buttonFace = Color.white                                             // #FFFFFF High-Contrast White Pill
+    static let buttonInk = Color(red: 17/255, green: 17/255, blue: 19/255)          // #111113 Deep Graphite Ink
 }
 
-// MARK: - Sentient OS Gradients
+// MARK: - Subtle Matte Gradients
 enum RelayGradients {
     static let glowStops: [Color] = RelayTheme.prismStops
 
     static let ambientTopGlow = RadialGradient(
         colors: [
-            RelayColors.accentAmethyst.opacity(0.08),
-            RelayColors.accentGold.opacity(0.04),
+            Color.white.opacity(0.025),
             Color.clear
         ],
         center: .top,
@@ -66,46 +69,35 @@ enum RelayTheme {
     static let surface = RelayColors.surface
     static let surfaceElevated = RelayColors.surfaceElevated
     static let cardBG = RelayColors.cardBG
-    static let accent = RelayColors.accentEmerald
+    static let accent = RelayColors.textPrimary
     static let ink = RelayColors.textPrimary
     static let muted = RelayColors.textMuted
     static let line = RelayColors.borderSubtle
-    static let sidebar = Color(red: 10/255, green: 11/255, blue: 15/255) // Moonlit slate
-    static let contentWidth: CGFloat = 780
+    static let sidebar = RelayColors.canvas
+    static let contentWidth: CGFloat = 760
     static let inset: CGFloat = 24
-    static let radius: CGFloat = 12
+    static let radius: CGFloat = 14
 
-    // Canonical 8-stop Sentient/Relay Prism spectrum
+
+    // These color swatches are also used by the Relay website.
     static let prismStops: [Color] = [
-        Color(red: 253/255, green: 226/255, blue: 163/255), // #FDE2A3 Warm Gold
-        Color(red: 255/255, green: 142/255, blue: 60/255),  // #FF8E3C Orange
-        Color(red: 255/255, green: 70/255, blue: 70/255),   // #FF4646 Coral Red
-        Color(red: 232/255, green: 56/255, blue: 143/255),  // #E8388F Magenta Pink
-        Color(red: 155/255, green: 72/255, blue: 212/255),  // #9B48D4 Amethyst
-        Color(red: 108/255, green: 92/255, blue: 229/255),  // #6C5CE5 Indigo
-        Color(red: 74/255, green: 144/255, blue: 226/255),  // #4A90E2 Sky Blue
-        Color(red: 253/255, green: 226/255, blue: 163/255)  // #FDE2A3 Wrap
-    ]
+        0x4A90E2, // #4a90e2
+        0x6C5CE5, // #6c5ce5
+        0x9B48D4, // #9b48d4
+        0xE8388F, // #e8388f
+        0xFF4646, // #ff4646
+        0xFF8E3C, // #ff8e3c
+        0xFDE2A3, // #fde2a3
+    ].map { swatch in
+        Color(
+            red: Double((swatch >> 16) & 255) / 255,
+            green: Double((swatch >> 8) & 255) / 255,
+            blue: Double(swatch & 255) / 255
+        )
+    }
 
-    static let prismGradient = LinearGradient(
-        stops: [
-            .init(color: Color(red: 253/255, green: 226/255, blue: 163/255), location: 0.01),
-            .init(color: Color(red: 255/255, green: 142/255, blue: 60/255), location: 0.15),
-            .init(color: Color(red: 255/255, green: 70/255, blue: 70/255), location: 0.28),
-            .init(color: Color(red: 232/255, green: 56/255, blue: 143/255), location: 0.42),
-            .init(color: Color(red: 155/255, green: 72/255, blue: 212/255), location: 0.57),
-            .init(color: Color(red: 108/255, green: 92/255, blue: 229/255), location: 0.71),
-            .init(color: Color(red: 74/255, green: 144/255, blue: 226/255), location: 0.84),
-            .init(color: Color(red: 253/255, green: 226/255, blue: 163/255), location: 0.99)
-        ],
-        startPoint: .leading,
-        endPoint: .trailing
-    )
-
-    static let prismAngularGradient = AngularGradient(
-        colors: prismStops,
-        center: .center
-    )
+    static let prismGradient = LinearGradient(colors: prismStops, startPoint: .leading, endPoint: .trailing)
+    static let prismAngularGradient = AngularGradient(colors: prismStops + Array(prismStops.prefix(1)), center: .center)
 
     // Agent Role Color Mapping
     static func agentColor(for role: String) -> Color {
@@ -140,35 +132,59 @@ enum RelayTheme {
     }
 }
 
-// MARK: - Editorial Serif + Native System Typography (Sentient OS Typography System)
-extension Font {
-    static let relayDisplayHero = Font.system(size: 34, weight: .regular, design: .serif)
-    static let relayDisplayTitle = Font.system(size: 22, weight: .regular, design: .serif)
-    static let relayHeadline = Font.system(size: 18, weight: .semibold, design: .default)
-    static let relayBody = Font.system(size: 14.5, weight: .regular, design: .default)
-    static let relayCaption = Font.system(size: 12, weight: .regular, design: .default)
-    static let relayMono = Font.system(size: 12, weight: .medium, design: .monospaced)
+// MARK: - Display Typography
 
-    static let relayEditorialHero = Font.system(size: 32, weight: .regular, design: .serif)
-    static let relayEditorialTitle = Font.system(size: 20, weight: .regular, design: .serif)
-    static let relayEditorialSubtitle = Font.system(size: 16, weight: .regular, design: .default)
+extension View {
+    func display(_ size: CGFloat, weight: Font.Weight = .medium) -> some View {
+        font(.system(size: size, weight: weight))
+    }
 }
 
-/// Monospace ALL-CAPS with wide tracking — Sentient OS's machine whisper voice.
+extension Font {
+    static let relayDisplayHero = Font.system(size: 30, weight: .medium, design: .default)
+    static let relayDisplayTitle = Font.system(size: 22, weight: .medium, design: .default)
+    static let relayHeadline = Font.system(size: 16, weight: .medium, design: .default)
+    static let relayBody = Font.system(size: 14, weight: .regular, design: .default)
+    static let relayCaption = Font.system(size: 12, weight: .regular, design: .default)
+    static let relayMono = Font.system(size: 12, weight: .medium, design: .default).monospacedDigit()
+
+    static let relayEditorialHero = Font.system(size: 28, weight: .medium, design: .default)
+    static let relayEditorialTitle = Font.system(size: 20, weight: .medium, design: .default)
+    static let relayEditorialSubtitle = Font.system(size: 14.5, weight: .regular, design: .default)
+}
+
+
+struct OnboardingWhisper: View {
+    let text: String
+
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .textCase(.uppercase)
+            .tracking(1.4)
+            .foregroundStyle(RelayColors.textSecondary)
+            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
+            .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 5))
+    }
+}
+
 struct RelayMonoCaps: View {
     let text: String
-    var size: CGFloat = 13
-    var tracking: CGFloat = 1.6
+    var size: CGFloat = 10.5
+    var tracking: CGFloat = 1.4
     var color: Color = RelayColors.textDim
 
-    init(_ text: String, size: CGFloat = 13, tracking: CGFloat = 1.6, color: Color = RelayColors.textDim) {
+    init(_ text: String, size: CGFloat = 10.5, tracking: CGFloat = 1.4, color: Color = RelayColors.textDim) {
         self.text = text
         self.size = size
         self.tracking = tracking
         self.color = color
     }
 
-    init(text: String, color: Color = RelayColors.textDim, size: CGFloat = 13, tracking: CGFloat = 1.6) {
+    init(text: String, color: Color = RelayColors.textDim, size: CGFloat = 10.5, tracking: CGFloat = 1.4) {
         self.text = text
         self.size = size
         self.tracking = tracking
@@ -177,147 +193,165 @@ struct RelayMonoCaps: View {
 
     var body: some View {
         Text(text.uppercased())
-            .font(.system(size: size, weight: .medium, design: .monospaced))
+            .font(.system(size: max(9.5, size), weight: .medium, design: .monospaced))
             .tracking(tracking)
             .foregroundStyle(color)
     }
 }
 
+
+// MARK: - Status Indicator
+
+struct RelayHealthDot: View {
+    static let warnAmber = Color(red: 0.98, green: 0.69, blue: 0.36)
+    let color: Color
+
+    var body: some View {
+        ZStack {
+            Circle().fill(color.opacity(0.16)).frame(width: 14, height: 14)
+            Circle().strokeBorder(color.opacity(0.30), lineWidth: 0.75).frame(width: 11, height: 11)
+            Circle().fill(color).frame(width: 5, height: 5)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
 // MARK: - Frosted Glass & Editorial Card Modifiers
 struct RelayGlassCardModifier: ViewModifier {
-    var cornerRadius: CGFloat = 16
+    var cornerRadius: CGFloat = 14
     var strokeColor: Color = RelayColors.borderSubtle
-    var fillOpacity: Double = 0.88
+    var fillOpacity: Double = 0.05
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         content
-            .background(RelayColors.cardBG.opacity(fillOpacity), in: shape)
+            .background(RelayColors.cardBG, in: shape)
             .overlay(
-                shape.strokeBorder(
-                    LinearGradient(
-                        colors: [strokeColor.opacity(1.3), strokeColor.opacity(0.5)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
+                shape.strokeBorder(strokeColor, lineWidth: 1)
             )
     }
 }
 
 extension View {
-    func relayGlassCard(cornerRadius: CGFloat = 16, strokeColor: Color = RelayColors.borderSubtle) -> some View {
+    func relayGlassCard(cornerRadius: CGFloat = 14, strokeColor: Color = RelayColors.borderSubtle) -> some View {
         modifier(RelayGlassCardModifier(cornerRadius: cornerRadius, strokeColor: strokeColor))
     }
 }
 
-// MARK: - Brand Marks & Living Sentient Orb
-/// A quiet relay glyph shared by navigation and conversation authorship.
+
+// MARK: - Relay Brand
+
 struct RelayMark: View {
-    var size: CGFloat = 24
+    var size: CGFloat = 20
     var illuminated: Bool = true
 
     var body: some View {
-        Image(systemName: "arrow.triangle.swap")
-            .font(.system(size: size * 0.56, weight: .semibold))
-            .foregroundStyle(Color.white.opacity(0.94))
+        Image(systemName: "circle.hexagongrid.fill")
+            .font(.system(size: size * 0.84, weight: .medium))
+            .foregroundStyle(illuminated ? RelayColors.textPrimary : RelayColors.textSecondary)
             .frame(width: size, height: size)
-            .background(Color.white.opacity(illuminated ? 0.08 : 0.04), in: RoundedRectangle(cornerRadius: size * 0.24))
+            .shadow(color: illuminated ? RelayColors.accentBlue.opacity(0.40) : .clear, radius: 5)
             .accessibilityHidden(true)
     }
 }
 
-/// Sentient OS inspired dimensional Orb with glowing white heart, nebula sphere, and tilted orbital ring.
 struct RelayPrismOrb: View {
-    var size: CGFloat = 76
+    enum Mode { case idle, processing, attention }
+
+    var mode: Mode = .idle
+    var size: CGFloat = 96
+    var paused: Bool = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ZStack {
-            // Ambient multi-stop rainbow aura
-            Circle()
-                .fill(RelayTheme.prismAngularGradient)
-                .frame(width: size * 1.35, height: size * 1.35)
-                .blur(radius: size * 0.32)
-                .opacity(0.38)
-
-            // Tilted outer orbital ring (back arc)
-            Ellipse()
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            RelayColors.accentGold.opacity(0.55),
-                            RelayColors.accentAmethyst.opacity(0.25),
-                            RelayColors.accentBlue.opacity(0.65)
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    ),
-                    lineWidth: 1.4
-                )
-                .frame(width: size * 1.48, height: size * 0.52)
-                .rotationEffect(.degrees(-22))
-
-            // Dark glassy planet body
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [
-                            Color(red: 0.22, green: 0.20, blue: 0.34),
-                            Color(red: 0.08, green: 0.07, blue: 0.14),
-                            Color(red: 0.015, green: 0.015, blue: 0.03)
-                        ],
-                        center: UnitPoint(x: 0.34, y: 0.28),
-                        startRadius: 1,
-                        endRadius: size * 0.56
-                    )
-                )
-                .frame(width: size, height: size)
-
-            // Subtle internal prism nebula cloud
-            Circle()
-                .fill(RelayTheme.prismAngularGradient)
-                .frame(width: size * 0.78, height: size * 0.78)
-                .blur(radius: size * 0.16)
-                .opacity(0.28)
-                .clipShape(Circle())
-
-            // Glowing white heart halo
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [.white, .white.opacity(0.35), .clear],
-                        center: .center,
-                        startRadius: 0,
-                        endRadius: size * 0.26
-                    )
-                )
-                .frame(width: size * 0.52, height: size * 0.52)
-
-            // Crisp white heart dot
-            Circle()
-                .fill(Color.white)
-                .frame(width: size * 0.24, height: size * 0.24)
-                .shadow(color: .white.opacity(0.8), radius: 6)
-
-            // Specular rim light on the sphere
-            Circle()
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            .white.opacity(0.75),
-                            RelayColors.accentAmethyst.opacity(0.45),
-                            .white.opacity(0.10)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1.25
-                )
-                .frame(width: size, height: size)
+        let still = paused || reduceMotion
+        TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: still)) { timeline in
+            let elapsed = timeline.date.timeIntervalSinceReferenceDate
+            let period = mode == .processing ? 5.0 : 13.0
+            let phase = still ? 0.8 : elapsed.truncatingRemainder(dividingBy: period) / period * 2 * .pi
+            artwork(phase: phase)
         }
-        .frame(width: size * 1.55, height: size * 1.25)
+        .frame(width: size, height: size)
         .accessibilityHidden(true)
+    }
+
+    private func artwork(phase: Double) -> some View {
+        let light = mode == .attention ? RelayColors.accentAmber : RelayColors.accentBlue
+        let rim = mode == .attention ? RelayColors.accentCoral : RelayColors.accentAmethyst
+
+        return Canvas { context, dimensions in
+            let center = CGPoint(x: dimensions.width / 2, y: dimensions.height / 2)
+            let unit = min(dimensions.width, dimensions.height)
+            let glowBounds = CGRect(x: center.x - unit / 2, y: center.y - unit / 2, width: unit, height: unit)
+            let core = unit * 0.255
+            let coreBounds = CGRect(x: center.x - core, y: center.y - core, width: core * 2, height: core * 2)
+            let tilt = -0.40 + 0.12 * sin(phase)
+
+            context.fill(Path(ellipseIn: glowBounds), with: .radialGradient(
+                Gradient(colors: [light.opacity(0.24), rim.opacity(0.10), .clear]),
+                center: center, startRadius: core * 0.65, endRadius: unit / 2
+            ))
+
+            func orbitPoint(_ angle: Double, radius: CGFloat, depth: CGFloat, tilt: Double) -> CGPoint {
+                let horizontal = radius * cos(angle)
+                let vertical = depth * sin(angle)
+                return CGPoint(
+                    x: center.x + horizontal * cos(tilt) - vertical * sin(tilt),
+                    y: center.y + horizontal * sin(tilt) + vertical * cos(tilt)
+                )
+            }
+
+            func orbitArc(from start: Double, to end: Double, radius: CGFloat, depth: CGFloat, tilt: Double) -> Path {
+                Path { path in
+                    path.move(to: orbitPoint(start, radius: radius, depth: depth, tilt: tilt))
+                    for index in 1...28 {
+                        let angle = start + (end - start) * Double(index) / 28
+                        path.addLine(to: orbitPoint(angle, radius: radius, depth: depth, tilt: tilt))
+                    }
+                }
+            }
+
+            let orbitRadius = unit * 0.45
+            let orbitDepth = unit * 0.155
+            let backArc = orbitArc(from: .pi, to: 2 * .pi, radius: orbitRadius, depth: orbitDepth, tilt: tilt)
+            let outerArc = orbitArc(from: 0, to: 2 * .pi, radius: unit * 0.47, depth: unit * 0.20, tilt: tilt + 0.36)
+            context.stroke(outerArc, with: .color(rim.opacity(0.24)), lineWidth: 0.65)
+            context.stroke(backArc, with: .color(light.opacity(0.32)), lineWidth: 0.8)
+
+            let satellite = orbitPoint(phase, radius: orbitRadius, depth: orbitDepth, tilt: tilt)
+            let inFront = sin(phase) >= 0
+            let satelliteRadius = unit * (inFront ? 0.022 : 0.013)
+            let satelliteBounds = CGRect(x: satellite.x - satelliteRadius, y: satellite.y - satelliteRadius,
+                                         width: satelliteRadius * 2, height: satelliteRadius * 2)
+            let satelliteShape = Path(ellipseIn: satelliteBounds)
+            if !inFront {
+                context.fill(satelliteShape, with: .color(light.opacity(0.7)))
+            }
+
+            let highlight = CGPoint(x: center.x - core * 0.38, y: center.y - core * 0.47)
+            context.fill(Path(ellipseIn: coreBounds), with: .radialGradient(
+                Gradient(stops: [
+                    .init(color: .white, location: 0),
+                    .init(color: light, location: 0.32),
+                    .init(color: rim.opacity(0.82), location: 0.65),
+                    .init(color: RelayColors.canvas, location: 1),
+                ]),
+                center: highlight, startRadius: 0, endRadius: core * 1.58
+            ))
+            context.stroke(Path(ellipseIn: coreBounds), with: .color(light.opacity(0.52)), lineWidth: 0.65)
+
+            let frontArc = orbitArc(from: 0, to: .pi, radius: orbitRadius, depth: orbitDepth, tilt: tilt)
+            let arcStart = orbitPoint(0, radius: orbitRadius, depth: orbitDepth, tilt: tilt)
+            let arcEnd = orbitPoint(.pi, radius: orbitRadius, depth: orbitDepth, tilt: tilt)
+            context.stroke(frontArc, with: .linearGradient(
+                Gradient(colors: [light.opacity(0.62), .white.opacity(0.86), rim.opacity(0.85)]),
+                startPoint: arcStart, endPoint: arcEnd
+            ), style: StrokeStyle(lineWidth: max(0.9, unit * 0.013), lineCap: .round))
+
+            if inFront {
+                context.fill(satelliteShape, with: .color(.white.opacity(0.88)))
+            }
+        }
     }
 }
 
@@ -344,22 +378,21 @@ struct RelayRoleBadge: View {
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: roleIcon)
-                .font(.system(size: 10.5, weight: .semibold))
-            Text(role.uppercased())
-                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                .tracking(0.8)
+                .font(.system(size: 11, weight: .medium))
+            Text(role)
+                .font(.system(size: 11, weight: .medium, design: .default))
         }
         .foregroundStyle(roleColor)
         .padding(.horizontal, 9)
         .padding(.vertical, 4)
-        .background(roleColor.opacity(0.12), in: Capsule())
-        .overlay(Capsule().strokeBorder(roleColor.opacity(0.32), lineWidth: 1))
+        .background(roleColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(roleColor.opacity(0.32), lineWidth: 1))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(role) role")
     }
 }
 
-// MARK: - Button Styles (Sentient OS GlowButton & QuietPillButton)
+// MARK: - Button Styles
 struct RelayPressStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reducedMotion
     @Environment(\.isEnabled) private var enabled
@@ -369,21 +402,38 @@ struct RelayPressStyle: ButtonStyle {
             .contentShape(Rectangle())
             .opacity(enabled ? (configuration.isPressed ? 0.82 : 1) : 0.4)
             .scaleEffect(enabled && !reducedMotion && configuration.isPressed ? 0.97 : 1)
+            .animation(.easeOut(duration: 0.16), value: configuration.isPressed)
     }
 }
 
-/// High-contrast white CTA button with full-bounds hit testing and hover feedback.
+/// Subtle translucent graphite pill for secondary Back navigation buttons (ChatGPT macOS / Antigravity style).
+
+struct RelayBackButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .medium))
+            .padding(.horizontal, 12)
+            .frame(minHeight: 30)
+            .background(configuration.isPressed ? .white.opacity(0.13) : .white.opacity(0.035),
+                        in: RoundedRectangle(cornerRadius: 7))
+            .foregroundStyle(isEnabled ? RelayColors.textPrimary : RelayColors.textMuted)
+            .contentShape(Rectangle())
+    }
+}
+
 struct RelayPrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
     @State private var hovered = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13, weight: .semibold))
+            .font(.system(size: 13.5, weight: .medium))
             .foregroundStyle(enabled ? RelayColors.buttonInk : RelayColors.textDim)
             .padding(.horizontal, 14).padding(.vertical, 8).frame(minHeight: 34)
-            .background(enabled ? Color.white.opacity(configuration.isPressed ? 0.82 : hovered ? 0.92 : 1) : Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Color.white.opacity(enabled ? 0.22 : 0.05), lineWidth: 0.75))
+            .background(enabled ? Color.white.opacity(configuration.isPressed ? 0.82 : hovered ? 0.92 : 1) : Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(enabled ? 0.22 : 0.05), lineWidth: 0.75))
             .contentShape(Rectangle())
             .onHover { hovered = $0 }
     }
@@ -395,11 +445,19 @@ struct RelaySecondaryButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(enabled ? RelayTheme.ink : RelayColors.textDim.opacity(0.6))
-            .padding(.horizontal, 12).padding(.vertical, 7).frame(minHeight: 32)
-            .background(Color.white.opacity(enabled ? (configuration.isPressed ? 0.12 : hovered ? 0.08 : 0.045) : 0.02), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Color.white.opacity(enabled ? (hovered ? 0.18 : 0.10) : 0.04), lineWidth: 0.75))
+            .font(.system(size: 13.5, weight: .medium))
+            .foregroundStyle(enabled ? RelayColors.textBright : RelayColors.textDim.opacity(0.6))
+            .padding(.horizontal, 13).padding(.vertical, 7).frame(minHeight: 34)
+            .background(
+                enabled
+                    ? (configuration.isPressed ? Color(white: 0.14) : hovered ? Color(white: 0.12) : Color(white: 0.075))
+                    : Color.white.opacity(0.02),
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Color.white.opacity(enabled ? 0.16 : 0.04), lineWidth: 1)
+            )
             .contentShape(Rectangle())
             .onHover { hovered = $0 }
     }
@@ -412,26 +470,23 @@ struct RelayGhostButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 14, weight: .medium))
-            .foregroundStyle(enabled ? (configuration.isPressed || hovered ? RelayTheme.ink : RelayTheme.muted) : RelayColors.textDim)
+            .font(.system(size: 13.5, weight: .medium))
+            .foregroundStyle(enabled ? (configuration.isPressed || hovered ? RelayTheme.ink : RelayColors.textBright) : RelayColors.textDim)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .frame(minHeight: 32)
+            .frame(minHeight: 34)
             .background(
-                configuration.isPressed ? Color.white.opacity(0.08) : (hovered ? Color.white.opacity(0.045) : Color.clear),
+                configuration.isPressed ? Color.white.opacity(0.08) : (hovered ? Color.white.opacity(0.05) : Color.clear),
                 in: Capsule(style: .continuous)
             )
-            .contentShape(Rectangle())
+            .contentShape(Capsule())
             .onHover { hovered = $0 }
     }
 }
 
-// MARK: - Full-Row Clickable DisclosureGroupStyle (Fixes tiny chevron-only click area on macOS)
-
-/// Replaces macOS SwiftUI's chevron-only `DisclosureGroup` header with a full-width clickable button row,
-/// hover illumination, a 24x24 rotating chevron pill, and a subtle left accent rule for expanded content.
+// MARK: - Full-Row Clickable DisclosureGroupStyle
 struct RelayDisclosureGroupStyle: DisclosureGroupStyle {
-    var accent: Color = RelayColors.accentAmethyst
+    var accent: Color = RelayColors.textBright
     var verticalPadding: CGFloat = 8
     var horizontalPadding: CGFloat = 10
     var cornerRadius: CGFloat = 10
@@ -446,24 +501,10 @@ struct RelayDisclosureGroupStyle: DisclosureGroupStyle {
                 cornerRadius: cornerRadius
             )
             if configuration.isExpanded {
-                HStack(alignment: .top, spacing: 12) {
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(
-                            LinearGradient(
-                                colors: [accent.opacity(0.55), Color.white.opacity(0.08)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                        .frame(width: 2)
-                        .padding(.leading, 10)
-                        .padding(.vertical, 4)
-
-                    configuration.content
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .padding(.top, 10)
-                .transition(.opacity)
+                configuration.content
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 10)
+                    .transition(.opacity)
             }
         }
     }
@@ -478,7 +519,7 @@ struct RelayDisclosureGroupStyle: DisclosureGroupStyle {
 
         var body: some View {
             Button {
-                withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
+                withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
                     configuration.isExpanded.toggle()
                 }
             } label: {
@@ -487,34 +528,31 @@ struct RelayDisclosureGroupStyle: DisclosureGroupStyle {
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                     HStack(spacing: 5) {
-                        Text(configuration.isExpanded ? "Hide" : "Expand")
-                            .font(.system(size: 11, weight: .medium))
+                        Text(configuration.isExpanded ? "Hide" : "Details")
+                            .font(.system(size: 11.5, weight: .medium))
                             .foregroundStyle(hovered ? RelayColors.textPrimary : RelayColors.textMuted)
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 10.5, weight: .bold))
-                            .foregroundStyle(hovered || configuration.isExpanded ? accent : RelayColors.textSecondary)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(hovered || configuration.isExpanded ? RelayColors.textPrimary : RelayColors.textSecondary)
                             .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
-                            .frame(width: 22, height: 22)
+                            .frame(width: 20, height: 20)
                             .background(
-                                (configuration.isExpanded ? accent : Color.white)
-                                    .opacity(configuration.isExpanded ? 0.16 : (hovered ? 0.09 : 0.04)),
+                                Color.white.opacity(configuration.isExpanded ? 0.10 : (hovered ? 0.07 : 0.03)),
                                 in: Circle()
                             )
                     }
                 }
                 .padding(.vertical, verticalPadding)
                 .padding(.horizontal, horizontalPadding)
-                .frame(minHeight: 38, maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(Color.white.opacity(hovered ? 0.055 : (configuration.isExpanded ? 0.035 : 0.02)))
+                        .fill(Color.white.opacity(hovered ? 0.045 : (configuration.isExpanded ? 0.03 : 0.015)))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                         .strokeBorder(
-                            hovered || configuration.isExpanded
-                                ? accent.opacity(0.28)
-                                : Color.white.opacity(0.06),
+                            Color.white.opacity(hovered || configuration.isExpanded ? 0.12 : 0.06),
                             lineWidth: 1
                         )
                 )
@@ -526,12 +564,10 @@ struct RelayDisclosureGroupStyle: DisclosureGroupStyle {
     }
 }
 
-// MARK: - Semantic Jewel Icon Badge & Directional Lit Card Surface
-
-/// Top-lit jewel squircle icon badge that gives dark surfaces semantic color warmth instead of flat grayscale.
+// MARK: - Clean Matte Graphite Icon Badge & Card Surface
 struct RelayIconBadge: View {
     let icon: String
-    var color: Color = RelayColors.accentAmethyst
+    var color: Color = RelayColors.textBright
     var size: CGFloat = 36
     var iconSize: CGFloat? = nil
 
@@ -539,32 +575,17 @@ struct RelayIconBadge: View {
         let corner = size * 0.28
         let shape = RoundedRectangle(cornerRadius: corner, style: .continuous)
         ZStack {
-            shape.fill(
-                RadialGradient(
-                    colors: [color.opacity(0.24), color.opacity(0.07)],
-                    center: .topLeading,
-                    startRadius: 2,
-                    endRadius: size * 1.1
-                )
-            )
-            shape.strokeBorder(
-                LinearGradient(
-                    colors: [color.opacity(0.55), color.opacity(0.14)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
-            )
+            shape.fill(Color.white.opacity(0.055))
+            shape.strokeBorder(Color.white.opacity(0.09), lineWidth: 1)
             Image(systemName: icon)
-                .font(.system(size: iconSize ?? (size * 0.44), weight: .semibold))
-                .foregroundStyle(color)
+                .font(.system(size: iconSize ?? (size * 0.44), weight: .medium))
+                .foregroundStyle(RelayColors.textBright)
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
     }
 }
 
-/// Guaranteed 32x32pt minimum hit-target icon button with hover illumination.
 struct RelayIconButton: View {
     let icon: String
     let label: String
@@ -583,11 +604,11 @@ struct RelayIconButton: View {
                 .frame(width: max(32, size), height: max(32, size))
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.white.opacity(hovered ? 0.09 : 0.04))
+                        .fill(Color.white.opacity(hovered ? 0.08 : 0.035))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(Color.white.opacity(hovered ? 0.16 : 0.07), lineWidth: 1)
+                        .strokeBorder(Color.white.opacity(hovered ? 0.14 : 0.06), lineWidth: 1)
                 )
                 .contentShape(Rectangle())
         }
@@ -597,9 +618,8 @@ struct RelayIconButton: View {
     }
 }
 
-/// Directional jewel-lit surface card modifier (Ported from Sentient OS BriefingCard & SettingsComponents).
 struct RelayLitCardModifier: ViewModifier {
-    var accent: Color = RelayColors.accentAmethyst
+    var accent: Color = RelayColors.textBright
     var isHovered: Bool = false
     var cornerRadius: CGFloat = 16
 
@@ -608,27 +628,13 @@ struct RelayLitCardModifier: ViewModifier {
         content
             .background(
                 ZStack {
-                    shape.fill(RelayColors.surface)
-                    shape.fill(
-                        RadialGradient(
-                            colors: [accent.opacity(isHovered ? 0.14 : 0.08), .clear],
-                            center: .topLeading,
-                            startRadius: 6,
-                            endRadius: 340
-                        )
-                    )
+                    shape.fill(RelayColors.cardBG)
+                    shape.fill(Color.white.opacity(isHovered ? 0.035 : 0.0))
                 }
             )
             .overlay(
                 shape.strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            accent.opacity(isHovered ? 0.52 : 0.32),
-                            Color.white.opacity(isHovered ? 0.12 : 0.06)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
+                    Color.white.opacity(isHovered ? 0.14 : 0.08),
                     lineWidth: 1
                 )
             )
@@ -636,15 +642,12 @@ struct RelayLitCardModifier: ViewModifier {
 }
 
 extension View {
-    func relayLitCard(accent: Color = RelayColors.accentAmethyst, isHovered: Bool = false, cornerRadius: CGFloat = 16) -> some View {
+    func relayLitCard(accent: Color = RelayColors.textBright, isHovered: Bool = false, cornerRadius: CGFloat = 16) -> some View {
         modifier(RelayLitCardModifier(accent: accent, isHovered: isHovered, cornerRadius: cornerRadius))
     }
 }
 
-// MARK: - Sentient OS Crown Light Petals & Atmospheric Canvas (`SidekickAtmosphere`)
-
-/// Renders Sentient OS's warm nocturnal atmosphere: pure obsidian canvas + top-crown spectrum light petals
-/// (sky blue, coral, warm gold, amber) + focus-responsive bottom composer halo.
+// MARK: - Calm Matte Graphite Atmospheric Canvas (ChatGPT macOS & Antigravity Style)
 struct RelayAtmosphere: View {
     var focused: Bool = false
 
@@ -652,117 +655,272 @@ struct RelayAtmosphere: View {
         ZStack {
             RelayColors.pitch.ignoresSafeArea()
 
-            // Top Crown Light Petals
-            GeometryReader { geo in
-                let w = geo.size.width
-                ZStack {
-                    Ellipse()
-                        .fill(RelayColors.accentBlue.opacity(0.13))
-                        .frame(width: 280, height: 190)
-                        .blur(radius: 64)
-                        .position(x: w * 0.34, y: 40)
-
-                    Ellipse()
-                        .fill(RelayColors.accentCoral.opacity(0.08))
-                        .frame(width: 230, height: 165)
-                        .blur(radius: 62)
-                        .position(x: w * 0.46, y: 28)
-
-                    Ellipse()
-                        .fill(RelayColors.accentGold.opacity(0.11))
-                        .frame(width: 260, height: 175)
-                        .blur(radius: 62)
-                        .position(x: w * 0.56, y: 34)
-
-                    Ellipse()
-                        .fill(RelayColors.accentAmethyst.opacity(0.12))
-                        .frame(width: 260, height: 180)
-                        .blur(radius: 66)
-                        .position(x: w * 0.66, y: 44)
-                }
-                .frame(maxWidth: .infinity, maxHeight: 320, alignment: .top)
-                .mask(
-                    LinearGradient(
-                        colors: [.white, .white.opacity(0.55), .clear],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-
-                // Bottom Composer Echo Halo
-                Ellipse()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                RelayColors.accentGold.opacity(focused ? 0.16 : 0.07),
-                                RelayColors.accentAmethyst.opacity(focused ? 0.14 : 0.06),
-                                RelayColors.accentBlue.opacity(focused ? 0.12 : 0.04)
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .frame(width: 520, height: 70)
-                    .blur(radius: 42)
-                    .position(x: w * 0.5, y: geo.size.height - 36)
-                    .animation(.easeOut(duration: 0.3), value: focused)
-            }
+            RadialGradient(
+                colors: [
+                    Color.white.opacity(focused ? 0.025 : 0.015),
+                    Color.clear
+                ],
+                center: .top,
+                startRadius: 10,
+                endRadius: 520
+            )
             .ignoresSafeArea()
             .allowsHitTesting(false)
         }
     }
 }
 
-/// Sentient OS `GlowButton` / `OnboardingNextButton`: crisp white capsule CTA with a conic spectrum halo glow.
+
+// MARK: - Primary Action and Progress
+
+struct RelayGlowHalo: View {
+    let active: Bool
+    var reversed: Bool = false
+    var colors: [Color]? = nil
+    var intensity: Double = 0.55
+    var period: Double = 3.5
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 18.0, paused: !active || reduceMotion)) { tick in
+            let span = max(1, period)
+            let elapsed = tick.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: span)
+            let phase = reduceMotion ? 0.0 : elapsed / span * 2 * .pi
+            let drift = 0.18 * sin(reversed ? -phase : phase)
+            let light = colors ?? [RelayColors.accentBlue, RelayColors.accentAmethyst, RelayColors.accentCoral]
+            Capsule()
+                .strokeBorder(LinearGradient(
+                    colors: light,
+                    startPoint: UnitPoint(x: 0.1 + drift, y: 0.15),
+                    endPoint: UnitPoint(x: 0.9 + drift, y: 0.85)
+                ), lineWidth: 4)
+                .blur(radius: 6)
+                .padding(-3)
+                .opacity(active ? min(max(intensity, 0), 1) : 0)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 struct RelayGlowButton: View {
     let title: String
-    var icon: String = "arrow.right"
+    var icon: String = ""
     var enabled: Bool = true
-    var glowOpacity: Double = 0.34
+    var glowOpacity: Double = 0.38
+    var minimumLabelWidth: CGFloat = 0
     let action: () -> Void
-
-    @State private var hovered = false
+    @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Text(title)
-                    .font(.system(size: 14.5, weight: .semibold))
                 if !icon.isEmpty {
-                    Image(systemName: icon)
-                        .font(.system(size: 12, weight: .bold))
-                        .offset(x: hovered && enabled ? 2 : 0)
+                    Image(systemName: icon).font(.system(size: 11, weight: .semibold))
                 }
             }
-            .foregroundStyle(enabled ? Color.black : Color.white.opacity(0.35))
-            .padding(.horizontal, 34)
-            .frame(minWidth: 210, minHeight: 44)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(enabled ? Color.white : Color.white.opacity(0.08))
-            )
-            .overlay(
-                Capsule(style: .continuous)
-                    .strokeBorder(
-                        enabled ? AnyShapeStyle(RelayTheme.prismAngularGradient) : AnyShapeStyle(Color.white.opacity(0.08)),
-                        lineWidth: enabled ? 1.2 : 1
-                    )
-            )
+            .font(.system(size: 13, weight: .semibold))
+            .frame(minWidth: minimumLabelWidth)
+            .padding(.horizontal, 16)
+            .frame(minHeight: 38)
+            .foregroundStyle(enabled ? RelayColors.buttonInk : RelayColors.textMuted)
+            .background {
+                ZStack {
+                    RelayGlowHalo(active: enabled, intensity: glowOpacity * (hovering ? 1.28 : 1))
+                    Capsule()
+                        .fill(enabled ? .white.opacity(hovering ? 0.94 : 0.99) : RelayColors.surfaceElevated)
+                }
+            }
             .contentShape(Capsule())
         }
-        .buttonStyle(RelayPressStyle())
-        .background {
-            if enabled && glowOpacity > 0 {
-                Capsule(style: .continuous)
-                    .fill(RelayTheme.prismAngularGradient)
-                    .blur(radius: hovered ? 18 : 14)
-                    .opacity(hovered ? min(0.65, glowOpacity * 1.45) : glowOpacity)
-                    .padding(-4)
-                    .allowsHitTesting(false)
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .onHover { hovering = $0 }
+    }
+}
+
+struct RelayGlowProgressBar: View {
+    var value: Double
+
+    var body: some View {
+        let fraction = value.isFinite ? min(max(value, 0), 1) : 0
+        GeometryReader { geometry in
+            let fillWidth = geometry.size.width * fraction
+            ZStack(alignment: .leading) {
+                Capsule().fill(RelayColors.surfaceElevated)
+                if fillWidth > 0 {
+                    Capsule()
+                        .fill(LinearGradient(colors: [RelayColors.accentAmethyst, RelayColors.accentBlue, .white],
+                                             startPoint: .leading, endPoint: .trailing))
+                        .frame(width: fillWidth)
+                        .shadow(color: RelayColors.accentBlue.opacity(0.36), radius: 4, y: 1)
+                }
             }
         }
-        .disabled(!enabled)
-        .onHover { hovered = $0 }
-        .animation(.easeOut(duration: 0.18), value: hovered)
+        .frame(height: 6)
+        .accessibilityLabel("Download progress")
+        .accessibilityValue(Text(fraction, format: .percent.precision(.fractionLength(0))))
+    }
+}
+
+// MARK: - Adaptive Chips
+
+struct RelayChipFlow: Layout {
+    var spacing: CGFloat = 8
+    var alignment: HorizontalAlignment = .center
+
+    private struct Item {
+        let index: Int
+        let size: CGSize
+    }
+
+    private struct Row {
+        var items: [Item] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+
+        mutating func append(_ item: Item, spacing: CGFloat) {
+            width += (items.isEmpty ? 0 : spacing) + item.size.width
+            height = max(height, item.size.height)
+            items.append(item)
+        }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let gap = max(0, spacing)
+        let rows = rows(fitting: proposal.width, subviews: subviews, spacing: gap)
+        return CGSize(width: rows.map(\.width).max() ?? 0,
+                      height: rows.reduce(0) { $0 + $1.height } + gap * CGFloat(max(0, rows.count - 1)))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let gap = max(0, spacing)
+        var rowY = bounds.minY
+        for row in rows(fitting: bounds.width, subviews: subviews, spacing: gap) {
+            let slack = max(0, bounds.width - row.width)
+            let inset: CGFloat = alignment == .leading ? 0 : alignment == .trailing ? slack : slack / 2
+            var itemX = bounds.minX + inset
+            for item in row.items {
+                subviews[item.index].place(
+                    at: CGPoint(x: itemX, y: rowY + (row.height - item.size.height) / 2),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(item.size)
+                )
+                itemX += item.size.width + gap
+            }
+            rowY += row.height + gap
+        }
+    }
+
+    private func rows(fitting width: CGFloat?, subviews: Subviews, spacing: CGFloat) -> [Row] {
+        let limit = width.flatMap { $0.isFinite ? max(0, $0) : nil } ?? .infinity
+        var completed: [Row] = []
+        var current = Row()
+        for index in subviews.indices {
+            let ideal = subviews[index].sizeThatFits(.unspecified)
+            let measured = ideal.width > limit
+                ? subviews[index].sizeThatFits(ProposedViewSize(width: limit, height: nil))
+                : ideal
+            let item = Item(index: index, size: CGSize(width: min(measured.width, limit), height: measured.height))
+            if !current.items.isEmpty, current.width + spacing + item.size.width > limit + 0.01 {
+                completed.append(current)
+                current = Row()
+            }
+            current.append(item, spacing: spacing)
+        }
+        if !current.items.isEmpty { completed.append(current) }
+        return completed
+    }
+}
+
+struct RelaySourceChip: View {
+    let label: String
+    var detail: String? = nil
+    var systemImage: String? = nil
+    let on: Bool
+    var isAction: Bool = false
+    var trailingSymbol: String? = nil
+    var action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        let accent = on ? RelayColors.accentEmerald : RelayColors.accentBlue
+        Button(action: action) {
+            HStack(spacing: 7) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(accent)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(RelayColors.textPrimary)
+                    if let detail {
+                        Text(detail).font(.system(size: 10)).foregroundStyle(RelayColors.textMuted)
+                    }
+                }
+                .lineLimit(1)
+                if let symbol = trailingSymbol ?? (on && !isAction ? "xmark" : nil) {
+                    Image(systemName: symbol)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(RelayColors.textMuted)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .frame(minHeight: 32)
+            .background(hovering ? RelayColors.surfaceElevated : RelayColors.surface, in: RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(accent.opacity(hovering ? 0.48 : 0.20), lineWidth: 1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityLabel(label)
+        .accessibilityValue(detail ?? "")
+    }
+}
+
+struct RelayEngineTab: View {
+    let label: String
+    var badge: String? = nil
+    let selected: Bool
+    var active: Bool = false
+    var icon = "cpu"
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: active ? "checkmark.circle.fill" : icon)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(active ? RelayColors.accentEmerald : RelayColors.textMuted)
+                Text(label)
+                    .font(.system(size: 12, weight: selected ? .semibold : .medium))
+                    .foregroundStyle(RelayColors.textPrimary)
+                    .lineLimit(1)
+                if let badge {
+                    Text(badge)
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(RelayColors.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(minHeight: 34)
+            .background(selected || hovering ? RelayColors.surfaceElevated : RelayColors.surface,
+                        in: RoundedRectangle(cornerRadius: 9))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9)
+                    .strokeBorder(selected ? RelayColors.accentBlue.opacity(0.55) : .white.opacity(0.08), lineWidth: 1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

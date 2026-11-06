@@ -28,10 +28,18 @@ nonisolated struct MacReadiness: Sendable {
         #else
         let architecture = "Intel"
         #endif
-        let directory = URL.applicationSupportDirectory
-        let capacity = (try? directory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage) ?? 0
+        // On first launch the app support directory may not exist yet. Query the volume
+        // of its nearest existing parent without creating any directories during setup.
+        var directory = URL.applicationSupportDirectory
+        while !FileManager.default.fileExists(atPath: directory.path) {
+            let parent = directory.deletingLastPathComponent()
+            if parent == directory { break }
+            directory = parent
+        }
+        let capacity = try? directory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
+        let available = capacity?.volumeAvailableCapacityForImportantUsage ?? capacity?.volumeAvailableCapacity.map(Int64.init) ?? 0
         return evaluate(architecture: architecture, osMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion,
-                        memoryBytes: ProcessInfo.processInfo.physicalMemory, freeBytes: capacity)
+                        memoryBytes: ProcessInfo.processInfo.physicalMemory, freeBytes: available)
     }
 }
 

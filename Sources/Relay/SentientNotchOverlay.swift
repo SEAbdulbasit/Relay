@@ -71,70 +71,53 @@ struct NotchSkirtShape: Shape {
     }
 }
 
-// MARK: - 2. SpinningLogo (Ported from Sentient OS SpinningLogo.swift)
+// MARK: - 2. SpinningLogo (Refined Architectural Monochrome Mark)
 
-/// The 2D Sentient mark for the notch & constellation sun: a thick, vibrant ring of the AI spectrum
-/// rendered sharp over a soft additive bloom, with a thin white ring and a lit white planet dot.
+/// Clean monochrome silver-and-white orbital emblem (ChatGPT macOS / Antigravity style).
 struct SpinningLogo: View {
     var size: CGFloat = 20
     var fast: Bool = false
     var paused: Bool = false
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var anchorAngle: Double = 0
     @State private var anchorTime: Double = Date().timeIntervalSinceReferenceDate
 
-    private static func period(fast: Bool) -> Double { fast ? 2.0 : 13.0 }
+    private var isStill: Bool { paused || !fast || reduceMotion }
+    private static let activePeriod = 1.8
 
-    private static let bandStops: [Color] = {
-        let gold = Color(red: 0.97, green: 0.70, blue: 0.24)
-        var s = RelayGradients.glowStops
-        if !s.isEmpty {
-            s[0] = gold
-            s[s.count - 1] = gold
-        }
-        return s
-    }()
+    private static let bandStops: [Color] = [
+        Color.white.opacity(0.95),
+        Color.white.opacity(0.35),
+        Color.white.opacity(0.18),
+        Color.white.opacity(0.55),
+        Color.white.opacity(0.95)
+    ]
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: fast ? 1.0 / 60.0 : 1.0 / 30.0, paused: paused)) { ctx in
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: isStill)) { ctx in
             let t = ctx.date.timeIntervalSinceReferenceDate
-            let angle = anchorAngle + (paused ? 0 : (t - anchorTime) / Self.period(fast: fast) * 360.0)
-            let spectrum = AngularGradient(colors: Self.bandStops, center: .center, angle: .degrees(angle))
+            let angle = anchorAngle + (isStill ? 0 : (t - anchorTime) / Self.activePeriod * 360.0)
+            let ringGradient = AngularGradient(colors: Self.bandStops, center: .center, angle: .degrees(angle))
             ZStack {
                 Circle()
-                    .stroke(spectrum, lineWidth: size * 0.22)
-                    .blur(radius: size * 0.14)
-                    .blendMode(.plusLighter)
+                    .fill(Color.white.opacity(0.06))
                 Circle()
-                    .stroke(spectrum, lineWidth: size * 0.17)
-                    .blur(radius: size * 0.008)
-                Circle()
-                    .stroke(.white, lineWidth: max(0.75, size * 0.028))
-                    .blur(radius: size * 0.005)
+                    .stroke(ringGradient, lineWidth: max(1.3, size * 0.11))
                 Circle()
                     .fill(.white)
-                    .frame(width: size * 0.50, height: size * 0.50)
-                    .blur(radius: size * 0.07)
-                    .blendMode(.plusLighter)
-                    .opacity(0.6)
-                Circle()
-                    .fill(.white)
-                    .frame(width: size * 0.36, height: size * 0.36)
+                    .frame(width: size * 0.34, height: size * 0.34)
             }
             .frame(width: size, height: size)
         }
         .transaction { $0.animation = nil }
-        .onChange(of: fast) { oldFast, _ in
+        .onChange(of: isStill) { wasStill, _ in
             let t = Date().timeIntervalSinceReferenceDate
-            if !paused { anchorAngle += (t - anchorTime) / Self.period(fast: oldFast) * 360.0 }
-            anchorTime = t
-        }
-        .onChange(of: paused) { wasPaused, _ in
-            let t = Date().timeIntervalSinceReferenceDate
-            if !wasPaused { anchorAngle += (t - anchorTime) / Self.period(fast: fast) * 360.0 }
+            if !wasStill { anchorAngle += (t - anchorTime) / Self.activePeriod * 360.0 }
             anchorTime = t
         }
         .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -709,6 +692,31 @@ final class NotchOverlayController {
         }
     }
 
+    /// Prepares an unsent, locally grounded contextual reply prompt in `store.draft`
+    /// using actual indexed `KnowledgeRecord` matches and `store.writingProfile`.
+    /// Never invents notes, touches the clipboard, pastes, or sends automatically.
+    @discardableResult
+    func prepareGroundedReplyPrompt(store: AssistantStore, incomingText: String) -> String? {
+        let cleaned = incomingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty, !PIIScan.containsHighRiskPII(cleaned) else {
+            rememberedNoteTitle = nil
+            return nil
+        }
+        updateRememberedNote(for: cleaned, records: store.knowledge.records)
+        let styleNote = store.writingProfile.hasApprovedProfile
+            ? "matching my saved Writing Profile (\(store.writingProfile.preferredTone.isEmpty ? "personal voice" : store.writingProfile.preferredTone))"
+            : "in a concise, natural first-person voice"
+        let knowledgeClause: String
+        if let noteTitle = rememberedNoteTitle {
+            knowledgeClause = " Use my indexed note “\(noteTitle)” via search_knowledge for factual grounding."
+        } else {
+            knowledgeClause = ""
+        }
+        let prompt = "Draft an unsent reply \(styleNote) to the following message:\n\"\(cleaned)\"\(knowledgeClause)"
+        store.draft = prompt
+        return prompt
+    }
+
     /// This legacy entry point remains inert until a real, qualified drafting
     /// pipeline is available. It does not capture the selection or screen,
     /// manufacture a reply, touch the clipboard, paste, or send a message.
@@ -718,6 +726,10 @@ final class NotchOverlayController {
         isDoubleTapSwirling = false
         swirlModel.phase = .idle
         cursorSwirlPanel?.orderOut(nil)
+        if store.focusedDraft.enabled {
+            store.selectionNotice = "Return to the reply field and tap Right Command twice to draft there."
+            return
+        }
         store.selectionNotice = "Double Tap drafting is unavailable. Enter or paste the text in Relay and ask for a draft; nothing was captured, pasted or sent."
     }
 
@@ -751,6 +763,13 @@ final class NotchOverlayController {
         }
         panel.orderFrontRegardless()
         floatingPanel = panel
+    }
+
+    func toggleFromRightCommand(store: AssistantStore) {
+        if floatingPanel != nil { hideFloatingNotchPanel(); return }
+        phase = .expanded
+        showFloatingNotchPanel(store: store)
+        floatingPanel?.makeKey()
     }
 
     func hideFloatingNotchPanel() {
@@ -1027,7 +1046,7 @@ struct NotchOverlayBar: View {
                             )
                         )
                     Text(note)
-                        .font(.system(size: 11, weight: .semibold, design: .serif).italic())
+                        .font(.system(size: 11, weight: .semibold, design: .default))
                         .foregroundStyle(.white.opacity(0.92))
                     Spacer()
                     Text("LOCAL VAULT")

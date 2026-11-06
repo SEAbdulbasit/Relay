@@ -33,6 +33,8 @@ struct RelayApp: App {
                 Button("Attach Files…") { store.chooseFiles() }
                     .keyboardShortcut("o", modifiers: [.command])
                 Button("Add Folder…") { store.chooseFolder() }
+                Button("Inspect Image or Window…") { store.showImageInspection = true }
+                    .disabled(!onboarding.completed || store.isRunning)
             }
         }
         Settings {

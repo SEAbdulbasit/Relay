@@ -34,7 +34,7 @@ nonisolated struct LocalPrivateFileWriteHooks {
 nonisolated enum LocalPrivateFileWriter {
     static let maximumSupportedBytes = 32 * 1_024 * 1_024
 
-    static func write(data: Data, to url: URL, maximumBytes: Int, hooks: LocalPrivateFileWriteHooks = .init()) throws {
+    static func write(data: Data, to url: URL, maximumBytes: Int, createOnly: Bool = false, hooks: LocalPrivateFileWriteHooks = .init()) throws {
         guard (0...maximumSupportedBytes).contains(maximumBytes), data.count <= maximumBytes else { throw LocalPrivateFileWriteError.outputTooLarge }
         guard url.isFileURL, url.baseURL == nil, !url.hasDirectoryPath, url.path.hasPrefix("/"),
               !url.path(percentEncoded: false).contains("\0"), url.path.utf8.count <= 4_096,
@@ -52,6 +52,7 @@ nonisolated enum LocalPrivateFileWriter {
         var parentIdentity = stat()
         guard fstat(parentFD, &parentIdentity) == 0, parentIdentity.st_flags & UInt32(SF_DATALESS) == 0 else { throw LocalPrivateFileWriteError.invalidDestination }
         let original = try destination(name, parent: parentFD)
+        guard !createOnly || original == nil else { throw LocalPrivateFileWriteError.destinationChanged }
         let stageName = ".relay-private-write-" + UUID().uuidString + ".tmp"
         let stageURL = parent.appendingPathComponent(stageName)
         let stageFD = stageName.withCString {

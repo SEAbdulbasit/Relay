@@ -41,18 +41,27 @@ struct SkyGraph {
         return h
     }
 
-    /// Visualizes only current indexed sources and notes explicitly created in this session.
-    /// Group links describe membership; extra links require a literal, uniquely resolvable wikilink.
-    static func build(records: [KnowledgeRecord], customNotes: [URL: (title: String, domain: String, body: String)] = [:]) -> SkyGraph {
-        guard !records.isEmpty || !customNotes.isEmpty else {
+    /// Group links describe membership. Other links come from explicit wikilinks or source provenance.
+    static func build(records: [KnowledgeRecord], customNotes: [URL: (title: String, domain: String, body: String)] = [:],
+                      generatedNotes: [GeneratedKnowledgeNote] = [], folders: [LocalMarkdownFolder] = []) -> SkyGraph {
+        guard !records.isEmpty || !customNotes.isEmpty || !folders.isEmpty else {
             return finish(nodes: [], pairs: [], domains: [])
+        }
+        let currentSources = Dictionary(records.map { ($0.sourcePath, $0) }, uniquingKeysWith: { first, _ in first })
+        let currentGenerated = generatedNotes.filter { note in
+            guard let source = currentSources[note.sourcePath] else { return false }
+            return GeneratedKnowledgeVault.name(for: source) == note.id
         }
         var domains: [String] = []
         if !records.isEmpty { domains.append("Indexed Sources") }
-        if !customNotes.isEmpty { domains.append("Your Notes") }
+        if !currentGenerated.isEmpty { domains.append(GeneratedKnowledgeNote.domain) }
+        let folderDomains = Set(folders.map(\.graphDomain))
+        if customNotes.values.contains(where: { !folderDomains.contains($0.domain) }) { domains.append("Your Notes") }
+        domains.append(contentsOf: folders.map(\.graphDomain))
         var nodes: [SkyNode] = []
         var pairs = Set<EdgePair>()
         var indices: [String: [Int]] = [:]
+        var sourceIndices: [String: Int] = [:]
 
         func add(_ title: String, _ preview: String, _ body: String, domain: Int, root: Bool = false, url: URL) -> Int {
             let index = nodes.count
@@ -61,19 +70,23 @@ struct SkyGraph {
                                  recentlyChanged: false, preview: preview, markdownBody: body,
                                  twinklePhase: Double(hash % 6283) / 1000.0,
                                  twinkleSpeed: 1.1 + Double((hash >> 16) % 1000) / 1000.0 * 2.1))
-            let key = title.hasSuffix(".md") ? String(title.dropLast(3)) : title
-            indices[key, default: []].append(index)
+            if !root, url.host != "group" {
+                let key = title.hasSuffix(".md") ? String(title.dropLast(3)) : title
+                indices[key, default: []].append(index)
+            }
             return index
         }
         func link(_ a: Int, _ b: Int) {
             if a != b { pairs.insert(EdgePair(a: min(a, b), b: max(a, b))) }
         }
         let root = add("Overview", "Current selected sources and notes.",
-                       "# Your knowledge\n\n\(records.count) indexed sources and \(customNotes.count) notes created in this session.\n\nChoose a source to read its indexed excerpt. Connections show source groups and explicit links between notes.",
+                       "# Your knowledge\n\n\(records.count) indexed sources, \(currentGenerated.count) generated notes and \(customNotes.count) editable notes.\n\nChoose a source to read its indexed excerpt. Connections show source groups and explicit links between notes.",
                        domain: -1, root: true, url: URL(string: "relay-vault://overview")!)
         for (domain, name) in domains.enumerated() {
-            let hub = add(name, "Browse \(name.lowercased()).", "# \(name)\n\nSelect a source or note from the list.",
-                          domain: domain, url: URL(string: "relay-vault://group/\(domain)")!)
+            let displayName = LocalMarkdownFolder.displayName(for: name)
+            let groupURL = URL(string: "relay-vault://group")!.appendingPathComponent(name)
+            let hub = add(displayName, "Browse \(displayName.lowercased()).", "# \(displayName)\n\nSelect a source or note from the list.",
+                          domain: domain, url: groupURL)
             link(root, hub)
             if name == "Indexed Sources" {
                 for record in records {
@@ -83,10 +96,20 @@ struct SkyGraph {
                     let body = "# \(record.title)\n\nSource: \(record.sourcePath)\n\n\(record.text)"
                     let index = add(record.title, String(preview.prefix(140)), body, domain: domain,
                                     url: URL(fileURLWithPath: record.sourcePath))
+                    sourceIndices[record.sourcePath] = index
                     link(hub, index)
+                }
+            } else if name == GeneratedKnowledgeNote.domain {
+                for note in currentGenerated {
+                    let preview = note.highlights.first ?? "Model-selected source highlights."
+                    let index = add(note.title, String(preview.prefix(140)), note.markdownBody, domain: domain, url: note.graphURL)
+                    link(hub, index)
+                    if let source = sourceIndices[note.sourcePath] { link(index, source) }
                 }
             } else {
                 for (url, note) in customNotes.sorted(by: { $0.key.absoluteString < $1.key.absoluteString }) {
+                    let noteDomain = folderDomains.contains(note.domain) ? note.domain : "Your Notes"
+                    guard noteDomain == name else { continue }
                     let preview = note.body.components(separatedBy: .newlines)
                         .map { $0.trimmingCharacters(in: .whitespaces) }
                         .first { !$0.isEmpty && !$0.hasPrefix("#") } ?? "Your local note."
@@ -96,11 +119,12 @@ struct SkyGraph {
             }
         }
         if let expression = try? NSRegularExpression(pattern: #"\[\[([^\]\n]+)\]\]"#) {
-            for (index, node) in nodes.enumerated() where !node.isRoot {
-                let range = NSRange(node.markdownBody.startIndex..., in: node.markdownBody)
-                for match in expression.matches(in: node.markdownBody, range: range) {
-                    guard let targetRange = Range(match.range(at: 1), in: node.markdownBody) else { continue }
-                    let raw = String(node.markdownBody[targetRange]).components(separatedBy: "|")[0]
+            for (index, node) in nodes.enumerated() where !node.isRoot && node.url.host != "generated" {
+                let linkable = linkableMarkdown(node.markdownBody)
+                let range = NSRange(linkable.startIndex..., in: linkable)
+                for match in expression.matches(in: linkable, range: range) {
+                    guard let targetRange = Range(match.range(at: 1), in: linkable) else { continue }
+                    let raw = String(linkable[targetRange]).components(separatedBy: "|")[0]
                     let target = raw.hasSuffix(".md") ? String(raw.dropLast(3)) : raw
                     if let candidates = indices[target], candidates.count == 1, let targetIndex = candidates.first {
                         link(index, targetIndex)
@@ -109,6 +133,29 @@ struct SkyGraph {
             }
         }
         return finish(nodes: nodes, pairs: pairs, domains: domains)
+    }
+
+    private static func linkableMarkdown(_ body: String) -> String {
+        guard body.contains("~~~") || body.contains("```") else { return body }
+        var fence: (character: Character, length: Int)?
+        return body.split(whereSeparator: \.isNewline).compactMap { line in
+            let trimmed = line.drop(while: \.isWhitespace)
+            if let current = fence {
+                let close = trimmed.prefix(while: { $0 == current.character })
+                if close.count >= current.length, trimmed.dropFirst(close.count).allSatisfy(\.isWhitespace) {
+                    fence = nil
+                }
+                return nil
+            }
+            if let marker = trimmed.first, marker == "~" || marker == "`" {
+                let length = trimmed.prefix(while: { $0 == marker }).count
+                if length >= 3 {
+                    fence = (marker, length)
+                    return nil
+                }
+            }
+            return String(line)
+        }.joined(separator: "\n")
     }
 
     private static func finish(nodes: [SkyNode], pairs: Set<EdgePair>, domains: [String]) -> SkyGraph {
@@ -352,8 +399,9 @@ final class NightSkyModel: ObservableObject {
         load(records: [], entrance: false)
     }
 
-    func load(records: [KnowledgeRecord], customNotes: [URL: (title: String, domain: String, body: String)] = [:], entrance: Bool = false) {
-        let g = SkyGraph.build(records: records, customNotes: customNotes)
+    func load(records: [KnowledgeRecord], customNotes: [URL: (title: String, domain: String, body: String)] = [:],
+              generatedNotes: [GeneratedKnowledgeNote] = [], folders: [LocalMarkdownFolder] = [], entrance: Bool = false) {
+        let g = SkyGraph.build(records: records, customNotes: customNotes, generatedNotes: generatedNotes, folders: folders)
         sim = SkySimulation(graph: g, entrance: entrance)
         graph = g
         glow = [Double](repeating: 0, count: g.nodes.count)
@@ -882,7 +930,7 @@ struct SkyRenderer {
         var placed: [CGRect] = []
         if let card = model.hoverCardRect(in: size) { placed.append(card) }
         for c in candidates {
-            var txt = ctx.resolve(Text(graph.nodes[c.i].title).font(.system(size: 11, design: .serif)))
+            var txt = ctx.resolve(Text(graph.nodes[c.i].title).font(.system(size: 11, weight: .medium, design: .default)))
             txt.shading = .color(.white.opacity(0.68 * c.alpha * reveal))
             let sz = txt.measure(in: CGSize(width: 360, height: 60))
             let rect = CGRect(x: c.anchor.x - sz.width / 2, y: c.anchor.y - sz.height / 2, width: sz.width, height: sz.height).insetBy(dx: -6, dy: -3)
@@ -1070,7 +1118,7 @@ struct SkyHoverCard: View {
             }
 
             Text(info.title)
-                .font(.system(size: 17, weight: .regular, design: .serif))
+                .font(.system(size: 16, weight: .semibold, design: .default))
                 .foregroundStyle(.white)
                 .lineLimit(1)
 

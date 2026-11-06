@@ -12,27 +12,14 @@ struct AgentDesktopFixtureTests {
     func realFindTypeClickAndIndependentReadback() async throws {
         let status = await AgentDesktopBridge.queryStatus()
         _ = try #require(status.accessibilityGranted, "agent-desktop needs existing Accessibility access; test does not request it")
-        let bundleID = "dev.relay.accessibility-fixture"
-        #expect(NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty)
-        guard NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty else { return }
-        let path = ProcessInfo.processInfo.environment["RELAY_AX_FIXTURE_APP"]
-            ?? FileManager.default.currentDirectoryPath + "/build/Relay.app/Contents/Resources/RelayAccessibilityFixture.app"
-        let fixtureURL = URL(fileURLWithPath: path)
-        _ = try #require(Bundle(url: fixtureURL)?.bundleIdentifier == bundleID)
-        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: temporary) }
-        let oracleURL = temporary.appendingPathComponent("oracle.json")
-        let token = UUID().uuidString
-        let config = NSWorkspace.OpenConfiguration()
-        config.createsNewApplicationInstance = true
-        config.environment = ["RELAY_FIXTURE_TOKEN": token, "RELAY_FIXTURE_STATE_PATH": oracleURL.path]
-        let application = try await NSWorkspace.shared.openApplication(at: fixtureURL, configuration: config)
-        defer { application.terminate() }
-        for _ in 0..<50 {
-            if FileManager.default.fileExists(atPath: oracleURL.path) { break }
-            try await Task.sleep(for: .milliseconds(100))
+        try await DesktopFixtureProcess.withLaunch(path: DesktopFixtureProcess.bundledPath) { fixture in
+            try await verifyControls(fixture)
         }
+    }
+
+    private func verifyControls(_ fixture: DesktopFixtureProcess) async throws {
+        let oracleURL = fixture.oracleURL
+        let token = fixture.token
         let initial = try oracle(oracleURL)
         #expect(initial["launchToken"] as? String == token)
         #expect(initial["clickCount"] as? Int == 0)

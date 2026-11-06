@@ -31,6 +31,9 @@ struct SemanticSearchView: View {
                 Text("Availability depends on this Mac and language. Searches use only the prepared model and current selected sources; no hosted search model is used. Passage limits apply. Results are candidates to review, not proof of a fact. This option starts off after relaunch.")
                     .font(.system(size: 14)).lineSpacing(4)
             }.padding(.top, 12)
-        }.font(.system(size: 16, weight: .medium)).foregroundStyle(.white)
+        }
+        .font(.system(size: 14.5, weight: .medium))
+        .foregroundStyle(.white)
+        .disclosureGroupStyle(RelayDisclosureGroupStyle(accent: RelayColors.accentGold))
     }
 }

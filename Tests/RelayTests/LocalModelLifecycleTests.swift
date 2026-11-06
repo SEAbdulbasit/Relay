@@ -165,6 +165,69 @@ struct LocalModelLifecycleTests {
         await settleSessions(runtime)
     }
 
+    @Test(arguments: [false, true])
+    func catalogChecksumControlsModelSelection(corrupt: Bool) async throws {
+        let (root, previous) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        let manifest = ModelManifest(displayName: "Catalog fixture", filename: "catalog.litertlm",
+                                     sourceURL: URL(string: "https://example.com/catalog.litertlm")!, size: 3,
+                                     sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+        let candidate = root.appendingPathComponent(manifest.filename)
+        try Data((corrupt ? "abd" : "abc").utf8).write(to: candidate)
+        let probe = LiteRTLM.Message(contents: [], role: .model, toolCalls: [LiteRTLM.ToolCall(name: "capability_probe", id: "", arguments: ["marker": "relay-ready"])])
+        let runtime = LifecycleRuntime(replies: [probe])
+        var loadPaths: [URL] = []
+        let client = LocalModelClient(runtimeFactory: { url, _, _ in loadPaths.append(url); return runtime })
+        let store = AssistantStore(persistenceURL: nil, modelClient: client)
+        store.configuration = previous
+        store.actionsReady = true
+        store.modelStatus = "Previous model ready"
+
+        await store.selectCatalogModel(manifest, directory: root)
+
+        #expect(!store.isPreparingModel)
+        #expect(store.actionsReady)
+        if corrupt {
+            #expect(store.configuration.modelPath == previous.modelPath)
+            #expect(store.modelStatus == "Previous model ready")
+            #expect(store.errorMessage?.contains("SHA-256 verification failed") == true)
+            #expect(loadPaths.isEmpty)
+        } else {
+            #expect(store.configuration.modelPath == candidate.path)
+            #expect(store.configuration.model == manifest.displayName)
+            #expect(loadPaths == [candidate.resolvingSymlinksInPath()])
+            #expect(store.errorMessage == nil)
+        }
+        await settleSessions(runtime)
+    }
+
+    @Test func stopDuringCatalogVerificationKeepsPreviousSelection() async throws {
+        let (root, previous) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        let manifest = ModelManifest(displayName: "Catalog fixture", filename: "catalog.litertlm",
+                                     sourceURL: URL(string: "https://example.com/catalog.litertlm")!, size: 64 * 1_024 * 1_024,
+                                     sha256: String(repeating: "0", count: 64))
+        let candidate = root.appendingPathComponent(manifest.filename)
+        try Data().write(to: candidate)
+        let file = try FileHandle(forWritingTo: candidate)
+        try file.truncate(atOffset: UInt64(manifest.size))
+        try file.close()
+        let store = AssistantStore(persistenceURL: nil)
+        store.configuration = previous
+        store.actionsReady = true
+        store.modelStatus = "Previous model ready"
+
+        let selection = Task { await store.selectCatalogModel(manifest, directory: root) }
+        for _ in 0..<2_000 where !store.isPreparingModel { await Task.yield() }
+        #expect(store.isPreparingModel)
+        store.stop()
+        await selection.value
+
+        #expect(!store.isPreparingModel)
+        #expect(store.actionsReady)
+        #expect(store.configuration.modelPath == previous.modelPath)
+        #expect(store.modelStatus == "Previous model ready")
+        #expect(store.errorMessage == nil)
+    }
+
     @Test(arguments: ["load", "probe"])
     func duplicatePreparationKeepsStatusAndStopPreventsLateReadiness(stage: String) async throws {
         let (root, configuration) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }

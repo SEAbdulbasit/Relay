@@ -189,6 +189,67 @@ struct CompletionLoopTests {
         #expect(!store.activity.contains { $0.name == "open_app" })
     }
 
+    @Test(arguments: [false, true])
+    func browserPrivacyHandoffGetsOneEvidenceBasedCorrection(afterSuccessfulRead: Bool) async {
+        var turn = 0
+        var dispatched: [String] = []
+        var correctionSeen = false
+        let store = AssistantStore(persistenceURL: nil, complete: { input, _, _ in
+            turn += 1
+            correctionSeen = correctionSeen || input.contains { $0.content.contains("Reconsider the browser handoff") }
+            if turn == 1 {
+                return ModelReply(content: "", toolCalls: [ToolCall(name: "browser_navigate", arguments: ["url": .string("https://mail.google.com"), "browser": .string("Chrome")])])
+            }
+            if afterSuccessfulRead && turn == 2 {
+                return ModelReply(content: "", toolCalls: [ToolCall(name: "read_browser_page", arguments: ["url": .string("https://mail.google.com"), "browser": .string("Chrome")])])
+            }
+            if !correctionSeen {
+                return ModelReply(content: "I cannot read your private emails for you.", toolCalls: [])
+            }
+            if !dispatched.contains("read_browser_page") {
+                return ModelReply(content: "", toolCalls: [ToolCall(name: "read_browser_page", arguments: ["url": .string("https://mail.google.com"), "browser": .string("Chrome")])])
+            }
+            return ModelReply(content: "No matching messages in the checked results.", toolCalls: [])
+        }, execute: { call in
+            dispatched.append(call.name)
+            return ToolResult(summary: call.name == "read_browser_page" ? "No matching messages" : "Navigation requested", evidence: "Synthetic oracle", verified: call.name == "read_browser_page")
+        })
+        store.draft = "check Gmail for email from bradly cooper"
+        store.send()
+        for _ in 0..<1000 where store.isRunning {
+            if store.pendingReview != nil { store.approveReview() }
+            await Task.yield()
+        }
+        #expect(!store.isRunning)
+        #expect(correctionSeen)
+        #expect(dispatched == ["browser_navigate", "read_browser_page"])
+        #expect(store.messages.last?.text.contains("No matching messages") == true)
+    }
+
+    @Test func concreteBrowserReadFailureDoesNotTriggerPrivacyCorrection() async {
+        var turn = 0
+        var correctionSeen = false
+        let store = AssistantStore(persistenceURL: nil, complete: { input, _, _ in
+            turn += 1
+            correctionSeen = correctionSeen || input.contains { $0.content.contains("Reconsider the browser handoff") }
+            if turn == 1 { return ModelReply(content: "", toolCalls: [ToolCall(name: "browser_navigate", arguments: ["url": .string("https://mail.google.com"), "browser": .string("Chrome")])]) }
+            if turn == 2 { return ModelReply(content: "", toolCalls: [ToolCall(name: "read_browser_page", arguments: ["url": .string("https://mail.google.com"), "browser": .string("Chrome")])]) }
+            return ModelReply(content: "I cannot read your private emails because Accessibility permission was denied.", toolCalls: [])
+        }, execute: { call in
+            if call.name == "read_browser_page" { throw RelayError.message("Accessibility permission denied") }
+            return ToolResult(summary: "Navigation requested", evidence: "Fixture", verified: false)
+        })
+        store.draft = "check Gmail"
+        store.send()
+        for _ in 0..<1000 where store.isRunning {
+            if store.pendingReview != nil { store.approveReview() }
+            await Task.yield()
+        }
+        #expect(!store.isRunning)
+        #expect(!correctionSeen)
+        #expect(turn == 3)
+    }
+
     private func settle(_ store: AssistantStore) async {
         for _ in 0..<500 where store.isRunning { await Task.yield() }
         #expect(!store.isRunning)

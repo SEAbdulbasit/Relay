@@ -245,8 +245,8 @@ struct MultiAgentOrchestrationTests {
         #expect(store.messages.last?.text.contains("Checked by Relay:") == true)
     }
 
-    @Test("Critic rejects unverified outcome and triggers bounded retry before completing")
-    func criticTriggersBoundedRetryOnUnverifiedAction() async throws {
+    @Test("Critic rejection preserves checked evidence without repeating the action")
+    func criticRejectionPreservesVerifiedToolOutcomeWithoutRetry() async throws {
         var executorCalls = 0
         var criticChecks = 0
 
@@ -272,13 +272,7 @@ struct MultiAgentOrchestrationTests {
                 ])
             } else if systemPrompt.contains("ROLE: Critic") {
                 criticChecks += 1
-                if criticChecks == 1 {
-                    // Critic rejects first attempt
-                    return ModelReply(content: "UNVERIFIED: Application did not become frontmost.", toolCalls: [])
-                } else {
-                    // Critic accepts second attempt
-                    return ModelReply(content: "VERIFIED: Application is running and frontmost.", toolCalls: [])
-                }
+                return ModelReply(content: "UNVERIFIED: Application did not become frontmost.", toolCalls: [])
             }
             throw RelayError.message("Unexpected turn")
         }, execute: { call in
@@ -293,10 +287,12 @@ struct MultiAgentOrchestrationTests {
         store.send()
         await settle(store)
 
-        #expect(executorCalls == 2, "Executor should have been retried once after Critic rejection")
-        #expect(criticChecks == 2, "Critic should have checked twice")
-        #expect(store.phase == .idle)
-        #expect(store.messages.last?.text.contains("Completed with verified recovery") == true)
+        #expect(executorCalls == 1)
+        #expect(criticChecks == 1)
+        #expect(store.phase == .needsInput)
+        #expect(store.messages.last?.text.contains("Unfinished steps:\n• Launch target app") == true)
+        #expect(store.messages.last?.text.contains("Process identifier running") == true)
+        #expect(store.messages.last?.text.contains("Completed with verified recovery") == false)
     }
 
     @Test("Informational requests take direct fast-path without unnecessary actions")

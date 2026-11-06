@@ -30,10 +30,8 @@ class TestF04OfflineMultiAgentLoop(RelayE2ETestBase):
         self.assertIn("parsePlan", self.orchestrator_content)
         self.assertIn("blackboard.setPlan", self.orchestrator_content)
 
-    def test_f04_03_sequential_step_execution(self):
-        """Verifies sequential step execution loop across roles."""
-        self.assertIn("executePlanStepWithVerification", self.orchestrator_content)
-        self.assertIn("for step in blackboard.structuredPlan", self.orchestrator_content)
+    # MultiAgentTests and AdversarialMultiAgentStressTests exercise step order and
+    # stopping on uncertain results through the actual Swift orchestrator.
 
     def test_f04_04_independent_critic_verification(self):
         """Verifies Critic turn independently validates tool outputs."""

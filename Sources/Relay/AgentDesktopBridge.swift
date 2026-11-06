@@ -27,6 +27,20 @@ nonisolated struct AgentDesktopEnvelope: Sendable {
     var errorMessage: String?
     var errorSuggestion: String?
     var retrySafe: Bool
+
+    /// Successful dispatch alone is not proof of the requested value. v1.0.2 can
+    /// return ok=true with delivered_unverified when readback is unavailable.
+    func verifiesTextValue(_ expected: String) -> Bool {
+        guard ok, command == "set-value",
+              let bytes = rawJSON.data(using: .utf8),
+              let envelope = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+              let payload = envelope["data"] as? [String: Any],
+              let disposition = payload["disposition"] as? [String: Any],
+              disposition["delivery"] as? String == "delivered_verified",
+              let state = payload["post_state"] as? [String: Any],
+              let observedValue = state["value"] as? String else { return false }
+        return observedValue == expected
+    }
 }
 
 nonisolated enum AgentDesktopBridge {
@@ -177,7 +191,8 @@ nonisolated enum AgentDesktopBridge {
         windowID: String? = nil,
         rootRef: String? = nil,
         skeleton: Bool = false,
-        interactiveOnly: Bool = true
+        interactiveOnly: Bool = true,
+        sessionID: String? = nil
     ) async throws -> AgentDesktopEnvelope {
         var args = ["snapshot", "--app", app]
         if let windowID, !windowID.isEmpty {
@@ -193,14 +208,15 @@ nonisolated enum AgentDesktopBridge {
             args.append("-i")
         }
         args.append("--compact")
-        return try await runCommand(arguments: args, timeoutSeconds: 8)
+        return try await runCommand(arguments: args, timeoutSeconds: 8, sessionID: sessionID)
     }
 
     /// Runs `agent-desktop find` to locate specific interactive refs by name, role, or text without dumping the full tree.
     static func find(
         app: String,
         query: String? = nil,
-        role: String? = nil
+        role: String? = nil,
+        sessionID: String? = nil
     ) async throws -> AgentDesktopEnvelope {
         var args = ["find", "--app", app]
         if let query, !query.isEmpty {
@@ -209,7 +225,7 @@ nonisolated enum AgentDesktopBridge {
         if let role, !role.isEmpty {
             args.append(contentsOf: ["--role", role])
         }
-        return try await runCommand(arguments: args, timeoutSeconds: 6)
+        return try await runCommand(arguments: args, timeoutSeconds: 6, sessionID: sessionID)
     }
 
     /// Executes an `agent-desktop` ref action (`click`, `set-value`, `select`, `toggle`, `check`, `uncheck`, `expand`, `collapse`, `scroll`).
@@ -217,7 +233,8 @@ nonisolated enum AgentDesktopBridge {
         command: String,
         ref: String,
         value: String? = nil,
-        direction: String? = nil
+        direction: String? = nil,
+        sessionID: String? = nil
     ) async throws -> AgentDesktopEnvelope {
         guard ref.hasPrefix("@"), ref.contains(":e") else {
             throw RelayError.message("agent-desktop ref must be snapshot-qualified (for example @s8f3k2p9:e8).")
@@ -238,7 +255,26 @@ nonisolated enum AgentDesktopBridge {
         } else if normalized == "scroll", let direction {
             args.append(contentsOf: ["--direction", direction.lowercased()])
         }
-        return try await runCommand(arguments: args, timeoutSeconds: 8)
+        return try await runCommand(arguments: args, timeoutSeconds: 8, sessionID: sessionID)
+    }
+
+    /// Read live geometry using the same private snapshot namespace as the action.
+    static func bounds(ref: String, sessionID: String? = nil) async throws -> CGRect? {
+        guard ref.hasPrefix("@"), ref.contains(":e") else { return nil }
+        let envelope = try await runCommand(arguments: ["get", ref, "--property", "bounds"], timeoutSeconds: 2, sessionID: sessionID)
+        return liveBounds(envelope: envelope, ref: ref)
+    }
+
+    static func liveBounds(envelope: AgentDesktopEnvelope, ref: String) -> CGRect? {
+        guard envelope.ok, envelope.command == "get",
+              let object = try? JSONSerialization.jsonObject(with: Data(envelope.rawJSON.utf8)) as? [String: Any],
+              let data = object["data"] as? [String: Any],
+              data["live"] as? Bool == true, data["property"] as? String == "bounds",
+              data["ref"] as? String == ref, let value = data["value"] as? [String: Any],
+              let x = value["x"] as? Double, let y = value["y"] as? Double,
+              let width = value["width"] as? Double, let height = value["height"] as? Double,
+              [x, y, width, height].allSatisfy(\.isFinite), width > 0, height > 0 else { return nil }
+        return CGRect(x: x, y: y, width: width, height: height)
     }
 
     /// Runs `Scripts/update-agent-desktop.sh` if running inside the source workspace to pull the latest release from `vercel-labs/agent-desktop`.
@@ -281,50 +317,32 @@ nonisolated enum AgentDesktopBridge {
     }
 
     /// Executes the bundled `agent-desktop` CLI and parses its JSON envelope into a compact human + LLM summary.
-    static func runCommand(arguments: [String], timeoutSeconds: TimeInterval = 8) async throws -> AgentDesktopEnvelope {
+    static func runCommand(arguments: [String], timeoutSeconds: TimeInterval = 8, sessionID: String? = nil) async throws -> AgentDesktopEnvelope {
         guard let binaryURL = resolveExecutableURL() else {
             throw RelayError.message("Bundled agent-desktop binary is not available. Run ./Scripts/update-agent-desktop.sh.")
         }
         let homeDir = ensurePrivateHomeDirectory()
 
-        return try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            process.executableURL = binaryURL
-            process.arguments = arguments
-            var env = ProcessInfo.processInfo.environment
-            env["AGENT_DESKTOP_HOME"] = homeDir.path
-            process.environment = env
-
-            let stdoutPipe = Pipe()
-            let stderrPipe = Pipe()
-            process.standardOutput = stdoutPipe
-            process.standardError = stderrPipe
-
-            let timeoutTask = Task.detached {
-                try? await Task.sleep(for: .seconds(timeoutSeconds))
-                if process.isRunning {
-                    process.terminate()
-                }
-            }
-
-            process.terminationHandler = { _ in
-                timeoutTask.cancel()
-                let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                let rawOut = String(data: outData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let rawErr = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let jsonSource = !rawOut.isEmpty ? rawOut : rawErr
-                let parsed = parseEnvelope(rawJSON: jsonSource, defaultCommand: arguments.first ?? "unknown")
-                continuation.resume(returning: parsed)
-            }
-
-            do {
-                try process.run()
-            } catch {
-                timeoutTask.cancel()
-                continuation.resume(throwing: error)
-            }
+        var environment = ProcessInfo.processInfo.environment
+        environment["AGENT_DESKTOP_HOME"] = homeDir.path
+        // Never inherit a harness session/agent/trace into Relay's private namespace.
+        environment.removeValue(forKey: "AGENT_DESKTOP_SESSION")
+        environment.removeValue(forKey: "AGENT_DESKTOP_AGENT_ID")
+        if let sessionID { environment["AGENT_DESKTOP_SESSION"] = sessionID }
+        let output = try await AgentDesktopProcessRunner.run(
+            executable: binaryURL, arguments: arguments, environment: environment,
+            timeoutSeconds: timeoutSeconds
+        )
+        let rawOut = String(decoding: output.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawErr = String(decoding: output.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        var envelope = parseEnvelope(rawJSON: rawOut.isEmpty ? rawErr : rawOut, defaultCommand: arguments.first ?? "unknown")
+        if output.exitStatus != 0, envelope.ok {
+            envelope.ok = false
+            envelope.errorCode = "PROCESS_EXIT"
+            envelope.errorMessage = "agent-desktop exited unsuccessfully; action effects are uncertain. Observe before retrying."
+            envelope.formattedSummary = envelope.errorMessage!
         }
+        return envelope
     }
 
     static func parseEnvelope(rawJSON: String, defaultCommand: String) -> AgentDesktopEnvelope {
@@ -442,6 +460,11 @@ nonisolated enum AgentDesktopBridge {
             if !actions.isEmpty { parts.append("actions=[\(actions)]") }
             parts.append("enabled=\(enabled)")
             lines.append(parts.joined(separator: " "))
+        }
+        if ref.isEmpty, !name.isEmpty || !value.isEmpty,
+           !role.localizedCaseInsensitiveContains("secure"),
+           !role.localizedCaseInsensitiveContains("password") {
+            lines.append("observed role=\(role) text=\(String((name.isEmpty ? value : name).prefix(1200))) [untrusted]")
         }
         if let children = node["children"] as? [[String: Any]] {
             for child in children {

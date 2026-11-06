@@ -3,10 +3,11 @@ import Foundation
 
 /// These schemas describe real Relay capabilities; they cannot execute actions.
 public enum RelayNativeTools {
-    public static let supportedNames: Set<String> = ["search_files","preview_file_move","move_file","read_browser_page","create_document","create_spreadsheet","read_calendar","search_knowledge","list_apps","open_app","open_file","list_files","read_file","write_file","observe_app","set_value","scroll_control","press_control","open_url","browser_navigate","search_web","search_finder","capability_probe"]
+    public static let supportedNames: Set<String> = ["calculate","search_files","preview_file_move","move_file","read_browser_page","create_document","create_spreadsheet","read_calendar","search_knowledge","list_apps","open_app","open_file","list_files","read_file","write_file","observe_app","set_value","scroll_control","press_control","open_url","browser_navigate","search_web","search_finder","capability_probe"]
     public static func makeTools(named names: [String]) throws -> [Tool] {
         try names.map { name in
             switch name {
+            case "calculate": return RelayCalculateTool()
             case "search_files": return RelaySearchFilesTool()
             case "preview_file_move": return RelayPreviewFileMoveTool()
             case "move_file": return RelayMoveFileTool()
@@ -251,5 +252,13 @@ private struct RelayMoveFileTool: RelaySchemaTool {
     static let description = "Execute one exact preview_file_move ticket after explicit user review. Rechecks source identity/content, parent identities, grants and expiry; exclusive rename never overwrites. Reports uncertain effects without automatic retry or undo."
     @ToolParam(description: "Exact short-lived identifier returned by preview_file_move")
     var preview_id: String
+    init() {}
+}
+
+private struct RelayCalculateTool: RelaySchemaTool {
+    static let name = "calculate"
+    static let description = "Evaluate numeric arithmetic locally and reliably. Use for arithmetic questions, including implicit multiplication written x or ×. Supports + - * / parentheses and decimals. No code, identifiers, units, percentages or exponent syntax. Return the supplied result exactly and disclose rounding when indicated."
+    @ToolParam(description: "Arithmetic expression only, such as 428 × 23445555 or (12.5 + 3) / 2")
+    var expression: String
     init() {}
 }
