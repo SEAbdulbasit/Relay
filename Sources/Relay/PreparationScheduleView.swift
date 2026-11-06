@@ -9,28 +9,48 @@ struct PreparationScheduleView: View {
     @State private var wakeFeedback: String?
 
     var body: some View {
-        DisclosureGroup("Prepare a brief each day · optional") {
-            VStack(alignment: .leading, spacing: 12) {
-                Toggle("Schedule a local source brief", isOn: Binding(get: { scheduler.enabled }, set: { scheduler.setEnabled($0) }))
-                    .disabled(!suggestionsEnabled)
-                Text("Prepares quotations from your selected sources while Relay is open, using this Mac’s current time zone. Enable source suggestions first.")
-                    .font(.system(size: 14)).lineSpacing(4)
-                HStack {
-                    Text("Around")
-                    Picker("Hour", selection: Binding(get: { scheduler.hour }, set: { try? scheduler.setTime(hour: $0, minute: scheduler.minute) })) {
-                        ForEach(0..<24) { Text(String(format: "%02d", $0)).tag($0) }
-                    }.frame(width: 90)
-                    Text(":")
-                    Picker("Minute", selection: Binding(get: { scheduler.minute }, set: { try? scheduler.setTime(hour: scheduler.hour, minute: $0) })) {
-                        ForEach(0..<60) { Text(String(format: "%02d", $0)).tag($0) }
-                    }.frame(width: 100)
-                }.font(.system(size: 15))
-                Text("A missed run can catch up within six hours after wake or launch. Busy tasks, Low Power Mode and high temperatures can delay it. Relay makes one automatic attempt per local day. Use the manual button to retry.")
-                    .font(.system(size: 14)).lineSpacing(4)
-                Text("While scheduling stays enabled, today’s cards rebuild from current authorized index records when Relay reopens. Source changes can remove cards; prepare manually after reindexing.").font(.system(size: 14)).lineSpacing(4)
-                Text(scheduler.status).font(.system(size: 14))
-                if let date = scheduler.lastPreparedAt { Text("Last prepared: \(date.formatted(date: .abbreviated, time: .shortened))").font(.system(size: 14)) }
-                if let error = scheduler.errorMessage { Text(error).font(.system(size: 14)).textSelection(.enabled) }
+        DisclosureGroup("Morning Brief schedule") {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Prepare a daily brief", isOn: Binding(get: { scheduler.enabled }, set: { scheduler.setEnabled($0) }))
+                        .toggleStyle(.switch)
+                        .disabled(!suggestionsEnabled)
+                    detail(suggestionsEnabled ? "Relay prepares the brief on this Mac while the app is running." : "Turn on proactive suggestions to schedule a brief.")
+                    HStack(spacing: 8) {
+                        Text("Local time")
+                        Picker("Hour", selection: Binding(get: { scheduler.hour }, set: { try? scheduler.setTime(hour: $0, minute: scheduler.minute) })) {
+                            ForEach(0..<24) { Text(String(format: "%02d", $0)).tag($0) }
+                        }
+                        .labelsHidden()
+                        .frame(width: 64)
+                        Text(":").accessibilityHidden(true)
+                        Picker("Minute", selection: Binding(get: { scheduler.minute }, set: { try? scheduler.setTime(hour: scheduler.hour, minute: $0) })) {
+                            ForEach(0..<60) { Text(String(format: "%02d", $0)).tag($0) }
+                        }
+                        .labelsHidden()
+                        .frame(width: 64)
+                    }
+                    .disabled(!suggestionsEnabled || scheduler.isPreparing)
+                    scheduleStatus
+                }
+                refreshScope
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Include selected calendars", isOn: Binding(
+                        get: { !scheduler.calendarRefreshIDs.isEmpty },
+                        set: { scheduler.setCalendarRefreshEnabled($0) }
+                    ))
+                    .toggleStyle(.switch)
+                    .disabled(!suggestionsEnabled || scheduler.eligibleCalendarRefreshIDs().isEmpty)
+                    detail("Choose calendars in Knowledge. Their next seven days appear in this session only.")
+                }
+                if scheduler.usesEnhancedPreparation {
+                    Button("Refresh and prepare now") { scheduler.refreshNow() }
+                        .buttonStyle(RelaySecondaryButtonStyle())
+                        .disabled(!suggestionsEnabled || scheduler.isBusy() || scheduler.isPreparing)
+                }
+                Divider()
+                MorningBriefNotificationView(notifications: scheduler.notifications)
+                LaunchAtLoginView()
                 wakeDisclosure
             }.padding(.top, 12)
         }
@@ -39,11 +59,58 @@ struct PreparationScheduleView: View {
         .disclosureGroupStyle(RelayDisclosureGroupStyle(accent: RelayColors.accentGold))
     }
 
+    private var scheduleStatus: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                if scheduler.isPreparing { ProgressView().controlSize(.small).accessibilityHidden(true) }
+                detail(scheduler.status)
+            }
+            if scheduler.enabled {
+                detail("Relay can catch up within six hours of the scheduled time after a pause, wake, or relaunch.")
+            }
+            if let date = scheduler.lastPreparedAt {
+                detail("Last prepared \(date.formatted(date: .abbreviated, time: .shortened))")
+            }
+            if let error = scheduler.errorMessage {
+                Text(error).font(.relayCaption).foregroundStyle(RelayColors.accentCoral).textSelection(.enabled)
+            }
+            if scheduler.isPreparing {
+                Button("Stop preparation") { scheduler.cancelCurrentPreparation() }
+                    .buttonStyle(RelaySecondaryButtonStyle())
+            }
+        }
+    }
+
+    private var refreshScope: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Refresh sources").font(.relayBody.weight(.semibold))
+            let sources = scheduler.eligibleRefreshSources()
+            if sources.isEmpty {
+                detail("Index a source to choose it for scheduled refresh.")
+            } else {
+                detail("Relay checks whether indexed files are still current. Choose which sources to reindex on schedule. Selected folders can add new supported files.")
+            }
+            ForEach(sources) { source in
+                Toggle(isOn: Binding(get: { scheduler.refreshGrantIDs.contains(source.id) },
+                                     set: { scheduler.setRefreshSource(source.id, enabled: $0) })) {
+                    Text(source.path).lineLimit(1).truncationMode(.middle)
+                }
+                .help(source.path)
+                .disabled(!suggestionsEnabled)
+            }
+        }
+    }
+
+    private func detail(_ value: String) -> some View {
+        Text(value).font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
     private var wakeDisclosure: some View {
         DisclosureGroup("Wake the Mac for the next brief", isExpanded: $showsWakeSetup) {
             VStack(alignment: .leading, spacing: 9) {
-                Text("Plan one wake from sleep on a supported Mac. Keep Relay open, stay logged in and leave your Mac connected to power. macOS controls whether the Mac wakes and when it returns to sleep.")
-                Text("Review the date below before running the command in Terminal with administrator authorization. Turning off preparation leaves any existing macOS wake request in place until you cancel it.")
+                detail("Plan one wake from sleep. Keep Relay open and the Mac connected to power. macOS manages waking and returning to sleep.")
+                detail("Review the date before running the command in Terminal with administrator authorization. Use the cancellation command to remove a pending wake.")
                 if let wakeSetup {
                     Text(wakeSetup.status)
                         .accessibilityIdentifier("preparation.wakeStatus")

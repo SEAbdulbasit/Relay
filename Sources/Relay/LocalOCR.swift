@@ -96,12 +96,23 @@ nonisolated enum LocalOCR {
         let request = VNRecognizeTextRequest()
     }
 
-    @concurrent static func recognize(image: CGImage, orientation: CGImagePropertyOrientation) async throws -> String {
+    @concurrent static func recognize(image: CGImage, orientation: CGImagePropertyOrientation, preferCPU: Bool = false) async throws -> String {
         try Task.checkCancellation()
         let box = RequestBox()
         let request = box.request
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
+        if preferCPU, let stages = try? request.supportedComputeStageDevices {
+            for (stage, devices) in stages {
+                let cpu = devices.first { device in
+                    guard case .cpu = device else { return false }
+                    return true
+                }
+                if let cpu {
+                    request.setComputeDevice(cpu, for: stage)
+                }
+            }
+        }
         request.automaticallyDetectsLanguage = true
         // Vision performs recognition locally. No model provider or network request is involved.
         let handler = VNImageRequestHandler(cgImage: image, orientation: orientation)

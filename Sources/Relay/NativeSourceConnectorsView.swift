@@ -50,10 +50,17 @@ struct NativeSourceConnectorsView: View {
                 .font(.relayCaption).foregroundStyle(RelayTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(items) { item in
-                Text(item.title)
-                    .font(.relayCaption).foregroundStyle(RelayTheme.ink)
-                    .lineLimit(1)
-                    .textSelection(.enabled)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.title)
+                        .foregroundStyle(RelayTheme.ink)
+                        .lineLimit(1)
+                    if let date = item.sentAt ?? item.receivedAt {
+                        Text((item.sentAt == nil ? "Received " : "Sent ") + date.formatted(date: .abbreviated, time: .shortened))
+                            .foregroundStyle(RelayTheme.muted)
+                    }
+                }
+                .font(.relayCaption)
+                .textSelection(.enabled)
             }
         }
     }

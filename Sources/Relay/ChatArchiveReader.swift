@@ -50,44 +50,10 @@ nonisolated enum ChatArchiveReader {
     }
 
     static func parseWhatsApp(_ text: String) throws -> [ChatArchiveEntry] {
-        let timestamp = #"[0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4},?\s+[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?(?:[\s\u00A0\u202F]+(?:AM|PM))?"#
-        let formats = [
-            try NSRegularExpression(pattern: #"^\[("# + timestamp + #")\]\s+(.+)$"#, options: .caseInsensitive),
-            try NSRegularExpression(pattern: #"^("# + timestamp + #")\s+[-–]\s+(.+)$"#, options: .caseInsensitive)
-        ]
-        var recent: [ChatArchiveEntry] = []
-        var entry: ChatArchiveEntry?
-        func finish() {
-            if let entry, !entry.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                recent.append(entry)
-                if recent.count > maximumEntries { recent.removeFirst() }
-            }
+        guard let parsed = try WhatsAppExportReader.parse(text) else {
+            throw RelayError.message("No supported WhatsApp message lines were found in this export.")
         }
-        for (index, raw) in text.components(separatedBy: .newlines).enumerated() {
-            if index.isMultiple(of: 128) { try Task.checkCancellation() }
-            // Ignore presentation direction marks at the start of WhatsApp lines.
-            let line = String(raw.drop(while: { $0 == "\u{200e}" || $0 == "\u{200f}" || $0 == "\u{feff}" }))
-            let range = NSRange(line.startIndex..., in: line)
-            if let match = formats.compactMap({ $0.firstMatch(in: line, range: range) }).first,
-               let date = Range(match.range(at: 1), in: line),
-               let payload = Range(match.range(at: 2), in: line) {
-                finish()
-                entry = nil
-                let content = line[payload]
-                // No sender field means a system notice; it cannot become a message continuation.
-                if let separator = content.range(of: ": "), separator.lowerBound > content.startIndex,
-                   content.distance(from: content.startIndex, to: separator.lowerBound) <= 100 {
-                    entry = ChatArchiveEntry(time: String(line[date]), sender: String(content[..<separator.lowerBound]),
-                                             body: String(content[separator.upperBound...].prefix(2_000)))
-                }
-            } else if let active = entry, active.body.count < 2_000 {
-                entry = ChatArchiveEntry(time: active.time, sender: active.sender,
-                                         body: String((active.body + "\n" + line).prefix(2_000)))
-            }
-        }
-        finish()
-        guard !recent.isEmpty else { throw RelayError.message("No supported WhatsApp message lines were found in this export.") }
-        return recent
+        return parsed.entries
     }
 
     @concurrent static func messagesConversations(_ url: URL) async throws -> [ChatArchiveConversation] {

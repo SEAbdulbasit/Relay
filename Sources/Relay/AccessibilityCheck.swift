@@ -22,6 +22,9 @@ enum AccessibilityCheckRunner {
         let result: String
         let clickCount: Int
         let launchToken: String
+        let secondaryInput: String?
+        let focusedWindow: String?
+        let secondaryScrollOffset: Double?
     }
 
     static func run(fixtureURL: URL) async throws -> AccessibilityCheckReport {
@@ -35,7 +38,8 @@ enum AccessibilityCheckRunner {
         let token = UUID().uuidString
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
-        config.environment = ["RELAY_FIXTURE_STATE_PATH": oracleURL.path, "RELAY_FIXTURE_TOKEN": token]
+        config.environment = ["RELAY_FIXTURE_STATE_PATH": oracleURL.path, "RELAY_FIXTURE_TOKEN": token,
+                              "RELAY_FIXTURE_INCLUDE_SECOND_WINDOW": "1"]
         let application = try await NSWorkspace.shared.openApplication(at: fixtureURL, configuration: config)
         defer { application.terminate() }
         for _ in 0..<30 {
@@ -47,7 +51,7 @@ enum AccessibilityCheckRunner {
         guard initial.clickCount == 0, initial.result == "Not applied" else { throw RelayError.message("The fixture was not in its clean initial state.") }
         let tools = MacTools()
         var report = AccessibilityCheckReport(cases: [])
-        let first = try await observe(tools)
+        let first = try await observe(tools, ["mode": .string(""), "window_id": .string("")])
         let field = try controlID("relay.fixture.input", in: first.summary)
         let oldButton = try controlID("relay.fixture.apply", in: first.summary)
         report.cases.append(.init(name: "Observe native controls", passed: true, evidence: "Found stable input/button identifiers in a separate process; independent launch token matched."))
@@ -67,6 +71,11 @@ enum AccessibilityCheckRunner {
         let fresh = try await observe(tools)
         let button = try controlID("relay.fixture.apply", in: fresh.summary)
         let click = call("press_control", button)
+        var undisplayedRejected = false
+        do { try tools.prepareReview(click) } catch is CancellationError { throw CancellationError() } catch { undisplayedRejected = true }
+        guard undisplayedRejected, tools.reviewReason(for: click)?.contains(expected) == true else {
+            throw RelayError.message("An ordinary native click did not require showing its current editable values before approval.")
+        }
         try tools.prepareReview(click)
         try tools.authorize(click)
         let dispatched = try await tools.execute(click)
@@ -81,7 +90,7 @@ enum AccessibilityCheckRunner {
         guard state.input == expected, state.result == expected, state.clickCount == 1, resultLine.contains(expected) else {
             throw RelayError.message("Click returned but the independent result did not match exactly once.")
         }
-        report.cases.append(.init(name: "Click and verify effect", passed: true, evidence: "Fresh AX result and separate fixture JSON both matched; clickCount=1."))
+        report.cases.append(.init(name: "Click and verify effect", passed: true, evidence: "Review required showing the exact fields. Fresh AX result and separate fixture JSON matched; clickCount=1."))
         guard try controlLine("relay.fixture.disabled", in: after.summary).contains("enabled=false") else { throw RelayError.message("The negative fixture control was not actually disabled.") }
         let disabled = try controlID("relay.fixture.disabled", in: after.summary)
         var disabledRejected = false
@@ -92,6 +101,7 @@ enum AccessibilityCheckRunner {
         // Freeze the visible review, then edit its payload. The pending click must be invalid.
         let beforeDrift = try await observe(tools)
         let pending = call("press_control", try controlID("relay.fixture.apply", in: beforeDrift.summary))
+        _ = tools.reviewReason(for: pending)
         try tools.prepareReview(pending)
         try mutateFixtureInputOutsideController(pid: application.processIdentifier, token: token, value: "Changed during review")
         var driftRejected = false
@@ -101,6 +111,7 @@ enum AccessibilityCheckRunner {
 
         let beforeStop = try await observe(tools)
         let stoppedClick = call("press_control", try controlID("relay.fixture.apply", in: beforeStop.summary))
+        _ = tools.reviewReason(for: stoppedClick)
         try tools.prepareReview(stoppedClick)
         try tools.authorize(stoppedClick)
         tools.invalidateApprovals()
@@ -108,6 +119,78 @@ enum AccessibilityCheckRunner {
         do { _ = try await tools.execute(stoppedClick) } catch is CancellationError { throw CancellationError() } catch { stoppedRejected = true }
         guard stoppedRejected, try oracle(oracleURL, token: token).clickCount == 1 else { throw RelayError.message("An invalidated click dispatched after Stop.") }
         report.cases.append(.init(name: "Invalidation blocks queued click", passed: true, evidence: "Invalidating approvals/observations prevented dispatch; clickCount stayed 1."))
+
+        let mainTitle = "Relay Accessibility Fixture"
+        let secondTitle = "Relay Fixture Second Window"
+        let listed = try await observe(tools, ["mode": .string("windows")])
+        let oldMainID = try windowID(mainTitle, in: listed.summary)
+        let secondID = try windowID(secondTitle, in: listed.summary)
+        guard !listed.summary.contains("identifier=relay.fixture.input ") else {
+            throw RelayError.message("The window list unexpectedly included a form control.")
+        }
+        let scoped = try await observe(tools, ["window_id": .string(secondID)])
+        guard !scoped.summary.contains(mainTitle), !scoped.summary.contains("identifier=relay.fixture.input ") else {
+            throw RelayError.message("A scoped observation returned a control from the other window.")
+        }
+        let multiline = "First line — café 🌍\nSecond line\tkept\n" + (1...60).map { "Scroll line \($0)" }.joined(separator: "\n")
+        let multilineID = try controlID("relay.fixture.secondary.input", in: scoped.summary)
+        let typed = try await tools.execute(call("set_value", multilineID, ["value": .string(multiline)]))
+        for _ in 0..<12 {
+            if let observed = try oracle(oracleURL, token: token).secondaryInput,
+               observed.utf8.elementsEqual(multiline.utf8) { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let scopedOracle = try oracle(oracleURL, token: token)
+        guard typed.verified, scopedOracle.secondaryInput?.utf8.elementsEqual(multiline.utf8) == true,
+              scopedOracle.input == "Changed during review", scopedOracle.clickCount == 1 else {
+            throw RelayError.message("The scoped multiline value did not match exactly, or the other window changed.")
+        }
+        report.cases.append(.init(name: "Scope entry to one window", passed: true, evidence: "Only the chosen window was observed. The independent fixture matched multiline text byte for byte, and the original window stayed unchanged."))
+
+        let windowsToScroll = try await observe(tools, ["mode": .string("windows")])
+        let scrollWindow = try await observe(tools, ["window_id": .string(try windowID(secondTitle, in: windowsToScroll.summary))])
+        let scrollID = try controlID("relay.fixture.secondary.scroll", in: scrollWindow.summary)
+        guard let before = try oracle(oracleURL, token: token).secondaryScrollOffset else {
+            throw RelayError.message("The fixture did not report a starting scroll position.")
+        }
+        let direction = before > 0 ? "up" : "down"
+        let scroll = try await tools.execute(call("scroll_control", scrollID, ["direction": .string(direction)]))
+        var moved = false
+        for _ in 0..<12 {
+            if let after = try oracle(oracleURL, token: token).secondaryScrollOffset,
+               direction == "up" ? after < before : after > before {
+                moved = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        guard scroll.verified, moved else { throw RelayError.message("The linked scrollbar and independent scroll offset did not confirm movement.") }
+        report.cases.append(.init(name: "Scroll the scoped window", passed: true, evidence: "The same scrollbar and independent fixture bounds showed movement in the requested direction."))
+
+        let windowsToFocus = try await observe(tools, ["mode": .string("windows")])
+        let focus = try await tools.execute(call("press_control", try windowID(secondTitle, in: windowsToFocus.summary), ["action": .string("focus")]))
+        guard focus.verified, try oracle(oracleURL, token: token).focusedWindow == secondTitle else {
+            throw RelayError.message("The fixture did not independently confirm focus on the second window.")
+        }
+        var oldWindowRejected = false
+        do { _ = try await tools.execute(call("press_control", oldMainID, ["action": .string("focus")])) }
+        catch is CancellationError { throw CancellationError() }
+        catch { oldWindowRejected = true }
+        guard oldWindowRejected, try oracle(oracleURL, token: token).focusedWindow == secondTitle else {
+            throw RelayError.message("A stale window ID changed window focus.")
+        }
+        report.cases.append(.init(name: "Focus the exact window", passed: true, evidence: "The frontmost process, AX focused window and fixture oracle agreed. An expired window ID did not change focus."))
+
+        let final = try await observe(tools)
+        let finalButton = try controlID("relay.fixture.apply", in: final.summary)
+        var wrongActionRejected = false
+        do { try tools.prepareReview(call("press_control", finalButton, ["action": .string("toggle")])) }
+        catch is CancellationError { throw CancellationError() }
+        catch { wrongActionRejected = true }
+        guard wrongActionRejected, try oracle(oracleURL, token: token).clickCount == 1 else {
+            throw RelayError.message("An unsupported toggle could be treated as a button click.")
+        }
+        report.cases.append(.init(name: "Reject an unsupported native action", passed: true, evidence: "An unsupported toggle request did not press the button."))
         try Task.checkCancellation()
         return report
     }
@@ -150,15 +233,22 @@ enum AccessibilityCheckRunner {
         return String(lines[0])
     }
     static func controlID(_ identifier: String, in snapshot: String) throws -> String {
-        let line = try controlLine(identifier, in: snapshot)
+        try elementID(in: controlLine(identifier, in: snapshot))
+    }
+    private static func windowID(_ title: String, in snapshot: String) throws -> String {
+        let windows = snapshot.split(separator: "\n").filter { $0.contains(" role=AXWindow title=\(title) description=") }
+        guard windows.count == 1, let line = windows.first else { throw RelayError.message("The fixture did not expose exactly one window named \(title).") }
+        return try elementID(in: String(line))
+    }
+    private static func elementID(in line: String) throws -> String {
         guard let first = line.split(separator: " ").first, first.hasPrefix("element_id=") else { throw RelayError.message("Observation did not include an element token.") }
         return String(first.dropFirst("element_id=".count))
     }
     private static func call(_ name: String, _ id: String, _ extras: [String: JSONValue] = [:]) -> ToolCall {
         ToolCall(name: name, arguments: ["bundle_id": .string(fixtureBundleID), "element_id": .string(id)].merging(extras) { _, new in new })
     }
-    private static func observe(_ tools: MacTools) async throws -> ToolResult {
-        try await tools.execute(ToolCall(name: "observe_app", arguments: ["bundle_id": .string(fixtureBundleID)]))
+    private static func observe(_ tools: MacTools, _ extras: [String: JSONValue] = [:]) async throws -> ToolResult {
+        try await tools.execute(ToolCall(name: "observe_app", arguments: ["bundle_id": .string(fixtureBundleID)].merging(extras) { _, new in new }))
     }
     private static func oracle(_ url: URL, token: String) throws -> Oracle {
         let state = try JSONDecoder().decode(Oracle.self, from: Data(contentsOf: url))

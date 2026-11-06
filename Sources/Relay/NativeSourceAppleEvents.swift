@@ -8,9 +8,13 @@ nonisolated enum NativeSourceAppleEvents {
     static let maximumSelection = 8
     private static let maximumItemBytes = 8_192
     private static let maximumReplyBytes = 1_048_576
+    private static let requiredEventTimeout: TimeInterval = 2
+    private static let optionalDateTimeout: TimeInterval = 0.25
 
     enum Property: Equatable {
-        case selection, title, sender, body, protected
+        case selection, title, sender, body, protected, sentAt, receivedAt
+
+        var isOptionalDate: Bool { self == .sentAt || self == .receivedAt }
 
         func code(for kind: NativePersonalSourceKind) -> AEKeyword {
             switch self {
@@ -19,6 +23,8 @@ nonisolated enum NativeSourceAppleEvents {
             case .sender: fourCC("sndr")
             case .body: fourCC(kind == .notes ? "text" : "ctnt")
             case .protected: fourCC("pwpr")
+            case .sentAt: fourCC("drcv")
+            case .receivedAt: fourCC("rdrc")
             }
         }
     }
@@ -76,18 +82,21 @@ nonisolated enum NativeSourceAppleEvents {
             let time = clock.now.duration(to: deadline).components
             let seconds = Double(time.seconds) + Double(time.attoseconds) / 1e18
             guard seconds > 0 else { throw Failure.expired }
+            // A missing date should not take the remaining budget from the final selection check.
+            if property.isOptionalDate, seconds < requiredEventTimeout + optionalDateTimeout { throw Failure.unavailableProperty }
             let subject = try propertySpecifier(property.code(for: kind), container: item)
             let event = NSAppleEventDescriptor(eventClass: AEEventClass(kAECoreSuite), eventID: AEEventID(kAEGetData),
                 targetDescriptor: address, returnID: AEReturnID(kAutoGenerateReturnID), transactionID: AETransactionID(kAnyTransactionID))
             event.setParam(subject, forKeyword: AEKeyword(keyDirectObject))
             let options: NSAppleEventDescriptor.SendOptions = [.waitForReply, .neverInteract, .dontRecord,
                 .init(rawValue: UInt(kAEDoNotPromptForUserConsent))]
+            let timeout = min(seconds, property.isOptionalDate ? optionalDateTimeout : requiredEventTimeout)
             let reply: NSAppleEventDescriptor
-            do { reply = try event.sendEvent(options: options, timeout: min(seconds, 2)) }
-            catch { throw failure(for: OSStatus((error as NSError).code)) }
+            do { reply = try event.sendEvent(options: options, timeout: timeout) }
+            catch { throw failure(for: OSStatus((error as NSError).code), property: property) }
             try Task.checkCancellation()
             if let number = reply.paramDescriptor(forKeyword: AEKeyword(keyErrorNumber)), number.int32Value != 0 {
-                throw failure(for: number.int32Value)
+                throw failure(for: number.int32Value, property: property)
             }
             guard let result = reply.paramDescriptor(forKeyword: AEKeyword(keyDirectObject)), result.data.count <= maximumReplyBytes else {
                 throw Failure.unavailableProperty
@@ -102,12 +111,12 @@ nonisolated enum NativeSourceAppleEvents {
               app.bundleURL?.standardizedFileURL.path == kind.bundlePath else { throw Failure.appUnavailable }
     }
 
-    private static func failure(for status: OSStatus) -> Failure {
+    private static func failure(for status: OSStatus, property: Property? = nil) -> Failure {
         switch status {
         case OSStatus(errAEEventWouldRequireUserConsent): .permissionNeeded
         case OSStatus(errAEEventNotPermitted): .permissionDenied
         case OSStatus(procNotFound): .appUnavailable
-        case OSStatus(errAETimeout): .expired
+        case OSStatus(errAETimeout): property?.isOptionalDate == true ? .unavailableProperty : .expired
         case OSStatus(errAENoSuchObject), OSStatus(errAECoercionFail): .unavailableProperty
         default: .eventFailed(status)
         }
@@ -145,8 +154,10 @@ nonisolated enum NativeSourceAppleEvents {
                 guard raw.data.count <= maximumReplyBytes,
                       let text = plainText(raw)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { skipped += 1; continue }
                 let bounded = NativePersonalSources.bounded(text, maximumBytes: maximumItemBytes)
+                let sentAt = kind == .mail ? try optionalDate(read(.sentAt, reference)) : nil
+                let receivedAt = kind == .mail ? try optionalDate(read(.receivedAt, reference)) : nil
                 items.append(NativePersonalSourceItem(id: UUID().uuidString, title: title, sender: sender,
-                                                       text: bounded, textLimited: bounded.utf8.count < text.utf8.count))
+                    text: bounded, textLimited: bounded.utf8.count < text.utf8.count, sentAt: sentAt, receivedAt: receivedAt))
             } catch Failure.unavailableProperty {
                 skipped += 1
             }
@@ -154,6 +165,17 @@ nonisolated enum NativeSourceAppleEvents {
         let current = try selectedReferences(read(.selection, nil), kind: kind)
         guard current.map(\.data) == references.map(\.data) else { throw Failure.selectionChanged }
         return NativePersonalSourceBatch(items: items, skipped: skipped)
+    }
+
+    private static func optionalDate(_ read: @autoclosure () throws -> NSAppleEventDescriptor) throws -> Date? {
+        do {
+            let reply = try read()
+            guard reply.descriptorType == DescType(typeLongDateTime), let date = reply.dateValue,
+                  (Date.distantPast...Date.distantFuture).contains(date) else { return nil }
+            return date
+        } catch Failure.unavailableProperty {
+            return nil
+        }
     }
 
     private static func selectedReferences(_ reply: NSAppleEventDescriptor, kind: NativePersonalSourceKind) throws -> [NSAppleEventDescriptor] {

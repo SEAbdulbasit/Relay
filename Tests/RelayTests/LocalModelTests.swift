@@ -94,7 +94,8 @@ struct LocalModelTests {
     }
 
     @Test func nativeSchemasMatchExecutorNamesFieldsAndRequiredArguments() throws {
-        let definitions = MacTools.definitions
+        let definitions = MacTools.definitions + [SidekickWindowText.definition]
+        #expect(Set(definitions.map(\.name) + ["capability_probe"]) == LiteRTLM.RelayNativeTools.supportedNames)
         let manager = LiteRTLM.ToolManager(tools: try LiteRTLM.RelayNativeTools.makeTools(named: definitions.map(\.name)))
         let json = try JSONDecoder().decode(JSONValue.self, from: Data(manager.toolsJsonDescription.utf8))
         guard case .array(let native) = json else { Issue.record("Invalid native tool schema list"); return }
@@ -111,6 +112,18 @@ struct LocalModelTests {
             #expect(Set(left.compactMap(\.string)) == Set(right.compactMap(\.string)))
             for key in expectedProperties.keys { #expect(nativeProperties[key]?.object?["type"] == expectedProperties[key]?.object?["type"]) }
         }
+    }
+
+    @Test func nativeSidekickOCRRequiresThePerRunToolDefinition() throws {
+        let visualRead = SidekickWindowText.definition.name
+        let response = LiteRTLM.Message(contents: [], role: .model, toolCalls: [
+            LiteRTLM.ToolCall(name: visualRead, id: "visual-read", arguments: [:])
+        ])
+        #expect(throws: (any Error).self) {
+            try LocalModelClient.parseReply(response, availableTools: Set(MacTools.definitions.map(\.name)))
+        }
+        let parsed = try LocalModelClient.parseReply(response, availableTools: [visualRead])
+        #expect(parsed.toolCalls.map(\.name) == [visualRead])
     }
 
     @Test func advertisesConcreteNativeActionSchemas() throws {

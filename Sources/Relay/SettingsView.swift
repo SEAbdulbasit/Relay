@@ -7,6 +7,7 @@ struct SettingsView: View {
     var onOpenSetup: (() -> Void)? = nil
     var initialSection = "Model"
     @Environment(\.dismiss) private var dismiss
+    @AppStorage(SidekickTaskContext.instructionsPreference) private var sidekickInstructions = ""
     @State private var tab = SettingsTab.model
     @State private var memoryText = ""
     @State private var accessibilityGranted = AXIsProcessTrusted()
@@ -16,10 +17,19 @@ struct SettingsView: View {
     @State private var agentDesktopUpdateMessage: String?
 
     private enum SettingsTab: String, CaseIterable {
-        case model = "Model", access = "Access", sources = "Sources", knowledge = "Knowledge", memory = "Memory", voice = "Voice"
+        case model = "Model", sidekick = "Sidekick", access = "Access", sources = "Sources", knowledge = "Knowledge", memory = "Memory", voice = "Voice"
+        var title: String {
+            switch self {
+            case .model: "Models"
+            case .access: "Permissions"
+            default: rawValue
+            }
+        }
+
         var icon: String {
             switch self {
             case .model: "cpu"
+            case .sidekick: "sparkle"
             case .access: "lock.shield"
             case .sources: "tray.full"
             case .knowledge: "books.vertical"
@@ -27,51 +37,29 @@ struct SettingsView: View {
             case .voice: "speaker.wave.2"
             }
         }
-        var accent: Color {
-            switch self {
-            case .model: RelayColors.accentEmerald
-            case .access: RelayColors.accentBlue
-            case .sources: RelayColors.accentEmerald
-            case .knowledge: RelayColors.accentGold
-            case .memory: RelayColors.accentAmethyst
-            case .voice: RelayColors.accentCoral
-            }
-        }
     }
 
     var body: some View {
         ZStack {
             RelayTheme.background.ignoresSafeArea()
-            RelayAtmosphere(focused: false)
-                .opacity(0.45)
-                .ignoresSafeArea()
-
             HStack(spacing: 0) {
                 navigation
                 Rectangle().fill(RelayTheme.line).frame(width: 1)
                 VStack(spacing: 0) {
-                    HStack(spacing: 10) {
-                        RelayIconBadge(icon: tab.icon, color: tab.accent, size: 28, iconSize: 13)
-                        Text(tab.rawValue)
-                            .font(.system(size: 16, weight: .semibold, design: .default))
+                    HStack {
                         Spacer()
-                        RelayIconButton(
-                            icon: "xmark",
-                            label: "Close settings",
-                            size: 32
-                        ) {
-                            dismiss()
-                        }
-                        .keyboardShortcut(.cancelAction)
+                        RelayIconButton(icon: "xmark", label: "Close settings", size: 36) { dismiss() }
+                            .keyboardShortcut(.cancelAction)
                     }
-                    .padding(.horizontal, 28)
+                    .padding(.horizontal, 26)
                     .frame(height: 56)
-                    Rectangle().fill(RelayTheme.line).frame(height: 1)
+                    Divider().overlay(RelayTheme.line)
 
                     ScrollView {
                         VStack(alignment: .leading, spacing: 26) {
                             switch tab {
                             case .model: modelSettings
+                            case .sidekick: sidekickSettings
                             case .access: accessSettings
                             case .sources:
                                 sectionTitle("Personal sources", detail: "Choose the exact items Relay can read. Captured content stays on this Mac.")
@@ -83,10 +71,13 @@ struct SettingsView: View {
                                     ReviewedSourceQuestionView(store: store, source: response)
                                 }
                             case .knowledge:
+                                sectionTitle("Knowledge", detail: "Choose how Relay indexes and shares the sources you select.")
                                 KnowledgeView(store: store, isSettingsPane: true)
                                 LocalKnowledgeMCPSettingsView(server: store.knowledgeSharing)
                                 PortableKnowledgeSharingView()
-                            case .voice: SpeechOutputView(speech: store.speech, diagnostic: store.speechDiagnostic, taskBusy: store.isRunning || store.voice.isBusy || store.isClearingConversation || store.accessibilityCheckRunning)
+                            case .voice:
+                                sectionTitle("Voice", detail: "Set up speech and listen to Relay's responses.")
+                                SpeechOutputView(speech: store.speech, diagnostic: store.speechDiagnostic, taskBusy: store.isRunning || store.voice.isBusy || store.isClearingConversation || store.accessibilityCheckRunning)
                             case .memory:
                                 memorySettings
                                 Divider().overlay(RelayTheme.line)
@@ -95,8 +86,10 @@ struct SettingsView: View {
                                 DiagnosticsView(store: store)
                             }
                         }
+                        .frame(maxWidth: 720, alignment: .leading)
+                        .padding(.horizontal, 28)
+                        .padding(.vertical, 24)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(28)
                     }
                     .id(tab)
                     .scrollIndicators(.visible)
@@ -110,7 +103,7 @@ struct SettingsView: View {
         .tint(RelayTheme.accent)
         .environment(\.colorScheme, .dark)
         .preferredColorScheme(.dark)
-        .disclosureGroupStyle(RelayDisclosureGroupStyle(accent: tab.accent))
+        .disclosureGroupStyle(RelayDisclosureGroupStyle())
         .onAppear {
             if let requested = SettingsTab(rawValue: initialSection) { tab = requested }
         }
@@ -119,81 +112,65 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Navigation Sidebar (Aligned 56pt Header Bar + Continuous Hairline)
     private var navigation: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
-                SpinningLogo(size: 20)
-                Text("Settings")
-                    .font(.system(size: 16, weight: .semibold, design: .default))
+                RelayMark(size: 20)
+                Text("Settings").font(.system(size: 17, weight: .semibold))
                 Spacer()
             }
             .padding(.horizontal, 18)
             .frame(height: 56)
 
-            Rectangle().fill(RelayTheme.line).frame(height: 1)
+            Divider().overlay(RelayTheme.line)
 
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(spacing: 5) {
-                    ForEach(SettingsTab.allCases, id: \.self) { item in
-                        SettingsSidebarTabButton(
-                            title: item.rawValue,
-                            icon: item.icon,
-                            accent: item.accent,
-                            isSelected: tab == item
-                        ) {
-                            withAnimation(.easeInOut(duration: 0.16)) {
-                                tab = item
-                            }
-                        }
-                    }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    navigationGroup("Workspace", tabs: [.model, .sidekick, .voice])
+                    navigationGroup("Your data", tabs: [.sources, .knowledge, .memory])
+                    navigationGroup("Mac", tabs: [.access])
                 }
-                .padding(.top, 14)
-
-                Spacer(minLength: 20)
-
-                // Setup Assistant Re-entry Button
-                if let onOpenSetup {
-                    Button { dismiss(); onOpenSetup() } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: "sparkles")
-                                .foregroundStyle(RelayColors.accentGold)
-                                .frame(width: 20)
-                            Text("Setup Assistant")
-                                .font(.system(size: 13, weight: .medium))
-                            Spacer(minLength: 0)
-                            Image(systemName: "arrow.up.right")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(RelayColors.textMuted)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 9)
-                        .background(RelayColors.accentGold.opacity(0.08), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(RelayColors.accentGold.opacity(0.24), lineWidth: 1))
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(RelayPressStyle())
-                    .accessibilityLabel("Run setup assistant")
-                }
-
-                HStack(spacing: 7) {
-                    Circle()
-                        .fill(RelayColors.accentEmerald)
-                        .frame(width: 6, height: 6)
-                        .shadow(color: RelayColors.accentEmerald.opacity(0.6), radius: 4)
-                    Text(store.workspaceUsesCodex ? "Workspace uses ChatGPT" : "Local inference · Runs on your Mac")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(RelayTheme.muted)
-                }
-                .padding(.horizontal, 6)
-                .padding(.bottom, 6)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 20)
             }
-            .padding(12)
+            .scrollIndicators(.hidden)
+
+            if let onOpenSetup {
+                Divider().overlay(RelayTheme.line)
+                Button {
+                    dismiss()
+                    onOpenSetup()
+                } label: {
+                    Label("Setup assistant", systemImage: "wand.and.stars")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 18)
+                        .frame(height: 48)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(RelayPressStyle())
+                .foregroundStyle(RelayColors.textSecondary)
+                .accessibilityLabel("Run setup assistant")
+            }
         }
-        .frame(width: 208)
+        .frame(width: 190)
         .frame(maxHeight: .infinity)
-        .background(RelayTheme.sidebar.opacity(0.88))
+        .background(RelayTheme.sidebar)
+    }
+
+    private func navigationGroup(_ title: String, tabs: [SettingsTab]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.relayCaption.weight(.semibold))
+                .foregroundStyle(RelayColors.textSecondary)
+                .padding(.leading, 10)
+                .padding(.bottom, 4)
+                .accessibilityAddTraits(.isHeader)
+            ForEach(tabs, id: \.self) { item in
+                SettingsSidebarTabButton(title: item.title, icon: item.icon, isSelected: tab == item) {
+                    tab = item
+                }
+            }
+        }
     }
 
     // MARK: - Model Settings
@@ -441,11 +418,7 @@ struct SettingsView: View {
     // MARK: - Access Settings
     private var accessSettings: some View {
         VStack(alignment: .leading, spacing: 24) {
-            sectionTitle("Access & Permissions", detail: "Choose app controls and file access for your tasks.")
-
-
-            quickAccessSettings
-            focusedDraftSettings
+            sectionTitle("Permissions", detail: "Manage what Relay can access on this Mac.")
 
             VStack(alignment: .leading, spacing: 10) {
                 Toggle(isOn: Binding(get: { store.globalStop.enabled }, set: { store.setGlobalStopEnabled($0) })) {
@@ -576,41 +549,132 @@ struct SettingsView: View {
         }
     }
 
-    private var focusedDraftSettings: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Toggle(isOn: Binding(get: { store.focusedDraft.sidekickEnabled }, set: { store.setRightCommandSidekickEnabled($0) })) {
-                Text("Sidekick · Right Command once")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .toggleStyle(.switch)
-            .accessibilityIdentifier("settings.rightCommandSidekick")
-            Text(store.focusedDraft.sidekickStatus).font(.relayMono).foregroundStyle(RelayTheme.muted)
-            Divider()
-            Toggle(isOn: Binding(get: { store.focusedDraft.enabled }, set: { store.setFocusedDraftEnabled($0) })) {
-                Text("Double Tap · Right Command twice")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .toggleStyle(.switch)
-            .accessibilityIdentifier("settings.focusedDraft")
-
-            Text("Put the caret at the end of a supported multiline reply field, then tap Right Command twice. Relay drafts locally from nearby visible text and the reply you started. It leaves the draft in place for you to review.")
-                .font(.relayCaption).foregroundStyle(RelayTheme.muted).lineSpacing(3)
-            Text("Requires Accessibility and a loaded model. Only modifier events are monitored. Turn off other apps’ Right Command drafting shortcuts before enabling.")
-                .font(.relayCaption).foregroundStyle(RelayTheme.muted).lineSpacing(3)
-            Text(store.focusedDraft.status).font(.relayMono).foregroundStyle(RelayTheme.muted)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("settings.focusedDraftStatus")
-            if store.focusedDraft.isBusy {
-                Button("Stop drafting") { store.stop() }.buttonStyle(RelaySecondaryButtonStyle())
-            }
-            Divider()
-            DraftModelSettingsView(preferences: store.draftModel, busy: store.isRunning)
+    private var sidekickSettings: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            sectionTitle("Sidekick", detail: "Choose how to open Sidekick and draft replies from another app.")
+            focusedDraftSettings
+            sidekickInstructionsSettings
+            quickAccessSettings
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
-        .relayLitCard(accent: RelayColors.accentBlue, cornerRadius: RelayTheme.radius)
+    }
+
+    private var focusedDraftSettings: some View {
+        let shortcuts = store.focusedDraft
+        let sidekick = NotchOverlayController.shared
+        return VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Activation and notch").font(.relayHeadline).accessibilityAddTraits(.isHeader)
+                VStack(spacing: 0) {
+                    settingRow("Shared shortcut key", detail: "Use the same key to open Sidekick, dictate, and draft a reply.") {
+                        Picker("Shared shortcut key", selection: Binding(
+                            get: { shortcuts.shortcutKey }, set: { sidekick.setShortcutKey($0) }
+                        )) {
+                            ForEach(SidekickModifierKey.allCases) { key in Text(key.title).tag(key) }
+                        }
+                        .labelsHidden()
+                        .accessibilityIdentifier("settings.sidekickKey")
+                        .disabled(shortcuts.isBusy || store.voice.isBusy)
+                    }
+                    Divider()
+                    sidekickToggle("Open Sidekick from the notch", detail: "On displays without a notch, open it from the top edge.",
+                                   identifier: "settings.pinSidekick", value: Binding(
+                                    get: { sidekick.pinnedToNotch }, set: { sidekick.setPinned($0) }))
+                    Divider()
+                    sidekickToggle("Show status beside the camera", detail: "Show a short status while the notch is collapsed.",
+                                   identifier: "settings.compactSidekick", value: Binding(
+                                    get: { sidekick.compactStatusEnabled }, set: { sidekick.setCompactStatusEnabled($0) }))
+                        .disabled(!sidekick.pinnedToNotch)
+                    Divider()
+                    sidekickToggle("Open Sidekick with one tap", detail: shortcuts.sidekickStatus,
+                                   identifier: "settings.rightCommandSidekick", value: Binding(
+                                    get: { shortcuts.sidekickEnabled }, set: { store.setRightCommandSidekickEnabled($0) }))
+                    Divider()
+                    sidekickToggle("Hold to dictate", detail: shortcuts.holdForVoiceEnabled ? shortcuts.voiceHoldStatus : "Dictate on this Mac and review the transcript before sending.",
+                                   identifier: "settings.sidekickHold", value: Binding(
+                                    get: { shortcuts.holdForVoiceEnabled }, set: { sidekick.setHoldForVoiceEnabled($0) }))
+                }
+                .padding(.horizontal, 16)
+                .relayGlassCard(cornerRadius: RelayTheme.radius)
+                Button("Open Sidekick") { sidekick.open() }.buttonStyle(RelaySecondaryButtonStyle())
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Double Tap").font(.relayHeadline).accessibilityAddTraits(.isHeader)
+                VStack(alignment: .leading, spacing: 0) {
+                    sidekickToggle("Double Tap to draft a reply",
+                                   detail: "Put the caret at the end of a supported reply field, then tap \(shortcuts.shortcutKey.title) twice. Relay leaves the draft there for your review.",
+                                   identifier: "settings.focusedDraft", value: Binding(
+                                    get: { shortcuts.enabled }, set: { store.setFocusedDraftEnabled($0) }))
+                    if shortcuts.enabled {
+                        Text(shortcuts.status)
+                            .font(.relayCaption)
+                            .foregroundStyle(RelayColors.textSecondary)
+                            .padding(.bottom, 12)
+                            .accessibilityIdentifier("settings.focusedDraftStatus")
+                    }
+                    if shortcuts.isBusy {
+                        Button("Stop drafting") { store.stop() }
+                            .buttonStyle(RelaySecondaryButtonStyle())
+                            .padding(.bottom, 12)
+                    }
+                    Divider()
+                    DraftModelSettingsView(preferences: store.draftModel, busy: store.isRunning)
+                        .padding(.vertical, 14)
+                }
+                .padding(.horizontal, 16)
+                .relayGlassCard(cornerRadius: RelayTheme.radius)
+            }
+        }
+    }
+
+    private func sidekickToggle(_ title: String, detail: String, identifier: String, value: Binding<Bool>) -> some View {
+        settingRow(title, detail: detail) {
+            Toggle(title, isOn: value)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .tint(RelayColors.accentBlue)
+                .accessibilityIdentifier(identifier)
+        }
+    }
+
+    private func settingRow<Control: View>(_ title: String, detail: String, @ViewBuilder control: () -> Control) -> some View {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.relayBody.weight(.semibold))
+                Text(detail).font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            control()
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .padding(.vertical, 13)
+    }
+
+    private var sidekickInstructionsSettings: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Custom instructions").font(.relayHeadline).accessibilityAddTraits(.isHeader)
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Tell Sidekick how you like to work. These preferences apply to tasks using your local model.")
+                    .font(.relayCaption)
+                    .foregroundStyle(RelayColors.textSecondary)
+                TextEditor(text: $sidekickInstructions)
+                    .font(.relayBody)
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+                    .frame(minHeight: 86)
+                    .background(RelayColors.canvas, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(RelayColors.borderDefault) }
+                    .accessibilityLabel("Sidekick custom instructions")
+                    .accessibilityIdentifier("settings.sidekickInstructions")
+                    .onChange(of: sidekickInstructions) { _, value in
+                        if value.utf8.count > SidekickTaskContext.instructionByteLimit {
+                            sidekickInstructions = NativePersonalSources.bounded(value, maximumBytes: SidekickTaskContext.instructionByteLimit)
+                        }
+                    }
+            }
+            .padding(16)
+            .relayGlassCard(cornerRadius: RelayTheme.radius)
+        }
     }
 
     private var quickAccessSettings: some View {
@@ -727,10 +791,10 @@ struct SettingsView: View {
     // MARK: - Helpers
     private func sectionTitle(_ title: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            OnboardingWhisper(tab.rawValue + " CONFIGURATION")
             Text(title)
-                .display(26)
-                .foregroundStyle(.white)
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(RelayColors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
             Text(detail)
                 .font(.system(size: 14, weight: .regular, design: .default))
                 .foregroundStyle(RelayColors.textSecondary)
@@ -767,7 +831,6 @@ struct SettingsView: View {
 private struct SettingsSidebarTabButton: View {
     let title: String
     let icon: String
-    let accent: Color
     let isSelected: Bool
     let action: () -> Void
     @State private var isHovered = false
@@ -777,7 +840,7 @@ private struct SettingsSidebarTabButton: View {
             HStack(spacing: 10) {
                 Image(systemName: icon)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(isSelected ? accent : (isHovered ? .white : RelayTheme.muted))
+                    .foregroundStyle(isSelected || isHovered ? RelayColors.textPrimary : RelayColors.textSecondary)
                     .frame(width: 20)
                 Text(title)
                     .font(.system(size: 14.5, weight: isSelected ? .medium : .regular))
@@ -788,10 +851,10 @@ private struct SettingsSidebarTabButton: View {
             .frame(height: 40)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                Capsule()
-                    .fill(Color.white.opacity(isSelected ? 0.10 : (isHovered ? 0.045 : 0)))
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? RelayColors.surfaceElevated : isHovered ? RelayColors.surface : .clear)
             )
-            .contentShape(Capsule())
+            .contentShape(Rectangle())
         }
         .buttonStyle(RelayPressStyle())
         .onHover { isHovered = $0 }

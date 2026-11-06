@@ -3,23 +3,23 @@ import AppKit
 
 // MARK: - Color Palette Tokens (ChatGPT macOS & Antigravity Matte Graphite Palette)
 enum RelayColors {
-    static let pitch = Color(red: 23/255, green: 23/255, blue: 25/255)              // #171719 Primary Matte Graphite Canvas
-    static let canvas = Color(red: 19/255, green: 19/255, blue: 21/255)             // #131315 Deep Inset / Sidebar Surface
-    static let background = Color(red: 23/255, green: 23/255, blue: 25/255)         // #171719 Primary Window Background
+    static let pitch = Color(red: 18/255, green: 19/255, blue: 23/255)              // #121317 Window canvas
+    static let canvas = Color(red: 15/255, green: 16/255, blue: 20/255)             // #0F1014 Sidebar
+    static let background = pitch         // Window background
     static let cardBG = Color(red: 29/255, green: 29/255, blue: 32/255)             // #1D1D20 Elevated Matte Card Surface
     static let surface = Color(red: 34/255, green: 34/255, blue: 38/255)            // #222226 Composer & Control Surface
     static let surfaceElevated = Color(red: 43/255, green: 43/255, blue: 48/255)    // #2B2B30 User Message Pill & Hover Surface
     static let glassBackdrop = Color(red: 29/255, green: 29/255, blue: 32/255).opacity(0.88)
 
     static let borderSubtle = Color.white.opacity(0.07)
-    static let borderDefault = Color.white.opacity(0.12)
-    static let borderFocus = Color.white.opacity(0.22)
+    static let borderDefault = Color.white.opacity(0.16)
+    static let borderFocus = Color(red: 133/255, green: 181/255, blue: 238/255)
 
     static let textPrimary = Color(red: 244/255, green: 244/255, blue: 246/255)     // #F4F4F6 Crisp Warm White Ink
     static let textBright = Color(red: 228/255, green: 228/255, blue: 231/255)      // #E4E4E7 Zinc 200
     static let textStatus = Color(red: 212/255, green: 212/255, blue: 216/255)      // #D4D4D8 Zinc 300
     static let textSecondary = Color(red: 161/255, green: 161/255, blue: 170/255)   // #A1A1AA Zinc 400
-    static let textMuted = Color(red: 113/255, green: 113/255, blue: 122/255)       // #71717A Zinc 500
+    static let textMuted = Color(red: 145/255, green: 147/255, blue: 158/255)       // Secondary control labels
     static let textDim = Color(red: 82/255, green: 82/255, blue: 91/255)            // #52525B Zinc 600
     static let textFaint = Color.white.opacity(0.28)
 
@@ -241,16 +241,38 @@ extension View {
 
 // MARK: - Relay Brand
 
+struct RelaySignalGlyph: Shape {
+    // The same two paths form the app icon in Resources/Relay-icon.svg.
+    nonisolated func path(in rect: CGRect) -> Path {
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + rect.width * x / 100, y: rect.minY + rect.height * y / 100)
+        }
+
+        var path = Path()
+        path.move(to: point(17, 78))
+        path.addLine(to: point(35, 36))
+        path.addCurve(to: point(49, 24), control1: point(39, 27), control2: point(42, 24))
+        path.addLine(to: point(64, 24))
+        path.move(to: point(83, 22))
+        path.addLine(to: point(65, 64))
+        path.addCurve(to: point(51, 76), control1: point(61, 73), control2: point(58, 76))
+        path.addLine(to: point(36, 76))
+        return path
+    }
+}
+
 struct RelayMark: View {
     var size: CGFloat = 20
     var illuminated: Bool = true
 
     var body: some View {
-        Image(systemName: "circle.hexagongrid.fill")
-            .font(.system(size: size * 0.84, weight: .medium))
-            .foregroundStyle(illuminated ? RelayColors.textPrimary : RelayColors.textSecondary)
+        RelaySignalGlyph()
+            .stroke(LinearGradient(
+                colors: illuminated ? [RelayColors.textPrimary, RelayColors.accentCyan] : [RelayColors.textSecondary, RelayColors.textSecondary],
+                startPoint: .topTrailing, endPoint: .bottomLeading
+            ), style: StrokeStyle(lineWidth: size * 0.12, lineCap: .round, lineJoin: .round))
             .frame(width: size, height: size)
-            .shadow(color: illuminated ? RelayColors.accentBlue.opacity(0.40) : .clear, radius: 5)
+            .shadow(color: illuminated ? RelayColors.accentBlue.opacity(0.27) : .clear, radius: 4)
             .accessibilityHidden(true)
     }
 }
@@ -644,6 +666,45 @@ struct RelayLitCardModifier: ViewModifier {
 extension View {
     func relayLitCard(accent: Color = RelayColors.textBright, isHovered: Bool = false, cornerRadius: CGFloat = 16) -> some View {
         modifier(RelayLitCardModifier(accent: accent, isHovered: isHovered, cornerRadius: cornerRadius))
+    }
+}
+
+nonisolated struct RelayResponseText {
+    let body: String
+    let evidence: String?
+
+    init(_ text: String) {
+        let separator = "\n\nChecked by Relay:\n"
+        let noActions = "\n\nNo computer actions were executed in this response."
+        if let marker = text.range(of: separator, options: .backwards) {
+            body = String(text[..<marker.lowerBound])
+            evidence = String(text[marker.upperBound...])
+        } else {
+            body = text.hasSuffix(noActions) ? String(text.dropLast(noActions.count)) : text
+            evidence = nil
+        }
+    }
+}
+
+struct RelayActionEvidence: View {
+    let text: String
+
+    var body: some View {
+        DisclosureGroup {
+            Text(text)
+                .font(.relayCaption)
+                .foregroundStyle(RelayColors.textSecondary)
+                .lineSpacing(3)
+                .textSelection(.enabled)
+                .padding(.top, 4)
+        } label: {
+            Label("Action evidence", systemImage: "checkmark.shield")
+                .font(.relayCaption.weight(.medium))
+                .foregroundStyle(RelayColors.textBright)
+        }
+        .disclosureGroupStyle(RelayDisclosureGroupStyle(
+            accent: RelayColors.textBright, verticalPadding: 5, horizontalPadding: 8, cornerRadius: 8
+        ))
     }
 }
 

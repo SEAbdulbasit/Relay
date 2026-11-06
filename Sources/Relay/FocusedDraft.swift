@@ -5,6 +5,18 @@ import CoreGraphics
 import Foundation
 import Observation
 
+nonisolated enum SidekickModifierKey: String, CaseIterable, Identifiable, Sendable {
+    case rightCommand, rightOption
+
+    var id: Self { self }
+    var title: String { self == .rightCommand ? "Right Command" : "Right Option" }
+    var keyCode: UInt16 { UInt16(self == .rightCommand ? kVK_RightCommand : kVK_RightOption) }
+    var flag: NSEvent.ModifierFlags { self == .rightCommand ? .command : .option }
+    // Device-specific masks from IOKit/hidsystem/ev_keymap.h.
+    var rightMask: UInt { self == .rightCommand ? 0x10 : 0x40 }
+    var leftMask: UInt { self == .rightCommand ? 0x08 : 0x20 }
+}
+
 /// Recognizes two deliberate taps of Right Command. An ordinary Command shortcut
 /// or another modifier between the taps invalidates the gesture.
 nonisolated struct RightCommandDoubleTap {
@@ -106,7 +118,8 @@ private struct FocusedDraftTarget {
         guard AXIsProcessTrusted() else {
             throw RelayError.message("Focused drafting needs Relay's macOS Accessibility permission.")
         }
-        guard let app = NSWorkspace.shared.frontmostApplication,
+        guard !NotchOverlayController.shared.hasKeyboardFocus,
+              let app = NSWorkspace.shared.frontmostApplication,
               let identifier = app.bundleIdentifier, identifier != Bundle.main.bundleIdentifier,
               !["com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable",
                 "com.apple.systempreferences", "com.apple.Passwords", "com.apple.keychainaccess",
@@ -174,7 +187,7 @@ private struct FocusedDraftTarget {
     }
 
     func validateStillCurrent() throws {
-        guard AXIsProcessTrusted(), !app.isTerminated,
+        guard AXIsProcessTrusted(), !NotchOverlayController.shared.hasKeyboardFocus, !app.isTerminated,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier,
               let currentWindow = Self.element(root, kAXFocusedWindowAttribute), CFEqual(window, currentWindow),
               let currentEditor = Self.element(root, kAXFocusedUIElementAttribute), CFEqual(editor, currentEditor),
@@ -270,10 +283,15 @@ final class FocusedDraftController {
     private(set) var isBusy = false
     private(set) var status = "Double Tap is off."
     private(set) var sidekickStatus = "Right Command Sidekick is off."
+    private(set) var shortcutKey: SidekickModifierKey = .rightCommand
+    private(set) var holdForVoiceEnabled = false
+    private(set) var voiceHoldStatus = "Hold to dictate is off."
     @ObservationIgnored var availability: () -> String? = { "Load a local model first." }
     @ObservationIgnored var generate: ([ModelMessage]) async throws -> ModelReply = { _ in throw CancellationError() }
     @ObservationIgnored var style: () -> String = { "" }
     @ObservationIgnored var showSidekick: () -> Void = {}
+    @ObservationIgnored var beginVoiceHold: () -> Bool = { false }
+    @ObservationIgnored var endVoiceHold: () -> Void = {}
     @ObservationIgnored private var monitor: Any?
     @ObservationIgnored private var localMonitor: Any?
     @ObservationIgnored private var focusObserver: (any NSObjectProtocol)?
@@ -281,6 +299,37 @@ final class FocusedDraftController {
     @ObservationIgnored private var gesture = RightCommandDoubleTap()
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var pendingSingleTap: Task<Void, Never>?
+    @ObservationIgnored private var holdTimer: Task<Void, Never>?
+    @ObservationIgnored private var holdingForVoice = false
+    private static let voiceHoldDelay: TimeInterval = 0.55
+
+    func setShortcutKey(_ value: SidekickModifierKey) {
+        guard value != shortcutKey else { return }
+        pendingSingleTap?.cancel()
+        stopVoiceHold()
+        gesture = RightCommandDoubleTap()
+        shortcutKey = value
+        if enabled { status = "Double Tap on · tap \(value.title) twice in a reply editor." }
+        sidekickStatus = sidekickEnabled ? "Tap \(value.title) once to open or close Sidekick." : "\(value.title) Sidekick is off."
+        if holdForVoiceEnabled { voiceHoldStatus = "Hold \(value.title) to dictate and release to review the transcript." }
+    }
+
+    func setHoldForVoiceEnabled(_ value: Bool) {
+        guard value != holdForVoiceEnabled else { return }
+        if value {
+            guard installMonitors() else {
+                voiceHoldStatus = "Enable Relay’s macOS Accessibility permission to use hold to dictate."
+                return
+            }
+            holdForVoiceEnabled = true
+            voiceHoldStatus = "Hold \(shortcutKey.title) to dictate and release to review the transcript."
+        } else {
+            holdForVoiceEnabled = false
+            stopVoiceHold()
+            if !enabled && !sidekickEnabled { removeMonitors() }
+            voiceHoldStatus = "Hold to dictate is off."
+        }
+    }
 
     func setEnabled(_ value: Bool) {
         guard value != enabled else { return }
@@ -290,11 +339,11 @@ final class FocusedDraftController {
                 return
             }
             enabled = true
-            status = "Double Tap on · tap Right Command twice in a reply editor."
+            status = "Double Tap on · tap \(shortcutKey.title) twice in a reply editor."
         } else {
             enabled = false
             stop()
-            if !sidekickEnabled { removeMonitors() }
+            if !sidekickEnabled && !holdForVoiceEnabled { removeMonitors() }
             status = "Double Tap is off."
         }
     }
@@ -303,16 +352,16 @@ final class FocusedDraftController {
         guard value != sidekickEnabled else { return }
         if value {
             guard installMonitors() else {
-                sidekickStatus = "Enable Relay’s macOS Accessibility permission to use Right Command Sidekick."
+                sidekickStatus = "Enable Relay’s macOS Accessibility permission to use the Sidekick shortcut."
                 return
             }
             sidekickEnabled = true
-            sidekickStatus = "Tap Right Command once to open or close the Sidekick panel."
+            sidekickStatus = "Tap \(shortcutKey.title) once to open or close Sidekick."
         } else {
             sidekickEnabled = false
             pendingSingleTap?.cancel()
-            if !enabled { removeMonitors() }
-            sidekickStatus = "Right Command Sidekick is off."
+            if !enabled && !holdForVoiceEnabled { removeMonitors() }
+            sidekickStatus = "\(shortcutKey.title) Sidekick is off."
         }
     }
 
@@ -334,16 +383,22 @@ final class FocusedDraftController {
         if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
         if let localMonitor { NSEvent.removeMonitor(localMonitor); self.localMonitor = nil }
         pendingSingleTap?.cancel()
+        stopVoiceHold()
         gesture = RightCommandDoubleTap()
     }
 
     private func consume(_ event: NSEvent) {
-        guard (enabled || sidekickEnabled), !isBusy else { return }
+        guard (enabled || sidekickEnabled || holdForVoiceEnabled), !isBusy else { return }
         let flags = event.modifierFlags.intersection([.command, .option, .control, .shift, .function])
-        let right = event.keyCode == UInt16(kVK_RightCommand)
+        let right = event.keyCode == shortcutKey.keyCode
         let raw = event.modifierFlags.rawValue
-        let commandOnly = (flags.isEmpty || flags == .command) && raw & 0x08 == 0 // NX_DEVICELCMDKEYMASK
-        let rightDown = raw & 0x10 != 0 || (right && flags == .command && raw & 0x08 == 0) // NX_DEVICERCMDKEYMASK
+        let commandOnly = (flags.isEmpty || flags == shortcutKey.flag) && raw & shortcutKey.leftMask == 0
+        let rightDown = raw & shortcutKey.rightMask != 0 || (right && flags == shortcutKey.flag && raw & shortcutKey.leftMask == 0)
+        if right, commandOnly, rightDown, holdForVoiceEnabled {
+            scheduleVoiceHold(pressedAt: event.timestamp)
+        } else {
+            stopVoiceHold()
+        }
         let ordinaryInput = Self.secondsSinceOrdinaryInput()
         let recognized = gesture.recognize(rightCommand: right, commandOnly: commandOnly, down: rightDown,
                                            at: event.timestamp, secondsSinceOrdinaryInput: ordinaryInput)
@@ -359,6 +414,29 @@ final class FocusedDraftController {
                   NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
                   Self.secondsSinceOrdinaryInput() > ProcessInfo.processInfo.systemUptime - releasedAt else { return }
             self.showSidekick()
+        }
+    }
+
+    private func scheduleVoiceHold(pressedAt: TimeInterval) {
+        guard holdTimer == nil, !holdingForVoice else { return }
+        let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        holdTimer = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(Self.voiceHoldDelay)) } catch { return }
+            guard let self else { return }
+            self.holdTimer = nil
+            guard self.holdForVoiceEnabled, !self.isBusy, AXIsProcessTrusted(),
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+                  Self.secondsSinceOrdinaryInput() > ProcessInfo.processInfo.systemUptime - pressedAt else { return }
+            self.holdingForVoice = self.beginVoiceHold()
+        }
+    }
+
+    private func stopVoiceHold() {
+        holdTimer?.cancel()
+        holdTimer = nil
+        if holdingForVoice {
+            holdingForVoice = false
+            endVoiceHold()
         }
     }
 

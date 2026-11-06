@@ -26,12 +26,14 @@ struct SkyEdge: Equatable {
 }
 
 struct SkyGraph {
+    private static let maximumRelationships = 64
     let nodes: [SkyNode]
     let edges: [SkyEdge]
     let adjacency: [[Int]]
     let domains: [String]
     let rootIndex: Int?
     let maxDegree: Int
+    private let wikiTargets: [String: Int]
 
     fileprivate struct EdgePair: Hashable { let a: Int; let b: Int }
 
@@ -39,6 +41,27 @@ struct SkyGraph {
         var h: UInt64 = 0xcbf29ce484222325
         for b in s.utf8 { h = (h ^ UInt64(b)) &* 0x100000001b3 }
         return h
+    }
+
+    func linkedNodes(from url: URL) -> [SkyNode] {
+        guard let index = nodes.firstIndex(where: { $0.url == url }) else { return [] }
+        return adjacency[index].map { nodes[$0] }
+    }
+
+    func linkedNode(for link: KnowledgeWikiLink, among neighbors: [SkyNode]) -> SkyNode? {
+        if let relationship = link.relationship {
+            return neighbors.first { $0.url == relationship.url }
+        }
+        guard let index = wikiTargets[Self.wikiKey(link.target)] else { return nil }
+        return neighbors.first { $0.url == nodes[index].url }
+    }
+
+    private static func wikiKey(_ title: String) -> String {
+        title.hasSuffix(".md") ? String(title.dropLast(3)) : title
+    }
+
+    private static func isNamedDocument(_ node: SkyNode) -> Bool {
+        !node.isRoot && node.url.host != "group" && KnowledgeRelationship.Kind.from(node.url) == nil
     }
 
     /// Group links describe membership. Other links come from explicit wikilinks or source provenance.
@@ -62,6 +85,7 @@ struct SkyGraph {
         var pairs = Set<EdgePair>()
         var indices: [String: [Int]] = [:]
         var sourceIndices: [String: Int] = [:]
+        var documentText: [Int: (body: String, allowsRelationships: Bool)] = [:]
 
         func add(_ title: String, _ preview: String, _ body: String, domain: Int, root: Bool = false, url: URL) -> Int {
             let index = nodes.count
@@ -70,17 +94,17 @@ struct SkyGraph {
                                  recentlyChanged: false, preview: preview, markdownBody: body,
                                  twinklePhase: Double(hash % 6283) / 1000.0,
                                  twinkleSpeed: 1.1 + Double((hash >> 16) % 1000) / 1000.0 * 2.1))
-            if !root, url.host != "group" {
-                let key = title.hasSuffix(".md") ? String(title.dropLast(3)) : title
-                indices[key, default: []].append(index)
-            }
+            if isNamedDocument(nodes[index]) { indices[wikiKey(title), default: []].append(index) }
             return index
         }
         func link(_ a: Int, _ b: Int) {
             if a != b { pairs.insert(EdgePair(a: min(a, b), b: max(a, b))) }
         }
+        let indexed = "\(records.count) indexed \(records.count == 1 ? "source" : "sources")"
+        let generated = "\(currentGenerated.count) generated \(currentGenerated.count == 1 ? "note" : "notes")"
+        let editable = "\(customNotes.count) editable \(customNotes.count == 1 ? "note" : "notes")"
         let root = add("Overview", "Current selected sources and notes.",
-                       "# Your knowledge\n\n\(records.count) indexed sources, \(currentGenerated.count) generated notes and \(customNotes.count) editable notes.\n\nChoose a source to read its indexed excerpt. Connections show source groups and explicit links between notes.",
+                       "# Your knowledge\n\n\(indexed), \(generated) and \(editable).\n\nChoose a source to read it. To connect a person or project, use Add link when editing a note. The graph shows up to \(maximumRelationships) people and projects.",
                        domain: -1, root: true, url: URL(string: "relay-vault://overview")!)
         for (domain, name) in domains.enumerated() {
             let displayName = LocalMarkdownFolder.displayName(for: name)
@@ -97,6 +121,7 @@ struct SkyGraph {
                     let index = add(record.title, String(preview.prefix(140)), body, domain: domain,
                                     url: URL(fileURLWithPath: record.sourcePath))
                     sourceIndices[record.sourcePath] = index
+                    documentText[index] = (record.text, URL(fileURLWithPath: record.sourcePath).pathExtension.lowercased() == "md")
                     link(hub, index)
                 }
             } else if name == GeneratedKnowledgeNote.domain {
@@ -114,51 +139,51 @@ struct SkyGraph {
                         .map { $0.trimmingCharacters(in: .whitespaces) }
                         .first { !$0.isEmpty && !$0.hasPrefix("#") } ?? "Your local note."
                     let index = add(note.title, String(preview.prefix(140)), note.body, domain: domain, url: url)
+                    documentText[index] = (note.body, true)
                     link(hub, index)
                 }
             }
         }
-        if let expression = try? NSRegularExpression(pattern: #"\[\[([^\]\n]+)\]\]"#) {
-            for (index, node) in nodes.enumerated() where !node.isRoot && node.url.host != "generated" {
-                let linkable = linkableMarkdown(node.markdownBody)
-                let range = NSRange(linkable.startIndex..., in: linkable)
-                for match in expression.matches(in: linkable, range: range) {
-                    guard let targetRange = Range(match.range(at: 1), in: linkable) else { continue }
-                    let raw = String(linkable[targetRange]).components(separatedBy: "|")[0]
-                    let target = raw.hasSuffix(".md") ? String(raw.dropLast(3)) : raw
-                    if let candidates = indices[target], candidates.count == 1, let targetIndex = candidates.first {
+        var relationships: [URL: (relationship: KnowledgeRelationship, documents: Set<Int>)] = [:]
+        let wikiTargets = indices.compactMapValues { $0.count == 1 ? $0.first : nil }
+        for index in documentText.keys.sorted() {
+            guard let document = documentText[index] else { continue }
+            for line in KnowledgeWikiLink.lines(in: document.body) where line.allowsLinks {
+                for wikiLink in KnowledgeWikiLink.inLine(line.text) {
+                    if let relationship = wikiLink.relationship {
+                        guard document.allowsRelationships else { continue }
+                        let url = relationship.url
+                        if relationships[url] != nil {
+                            relationships[url]?.documents.insert(index)
+                        } else if relationships.count < maximumRelationships {
+                            relationships[url] = (relationship, [index])
+                        }
+                    } else if let targetIndex = wikiTargets[wikiKey(wikiLink.target)] {
                         link(index, targetIndex)
                     }
                 }
             }
         }
-        return finish(nodes: nodes, pairs: pairs, domains: domains)
+        for kind in KnowledgeRelationship.Kind.allCases {
+            let entries = relationships.filter { $0.value.relationship.kind == kind }
+                .sorted { $0.value.relationship.name.localizedStandardCompare($1.value.relationship.name) == .orderedAscending }
+            guard !entries.isEmpty else { continue }
+            let domain = domains.count
+            domains.append(kind.domain)
+            let hub = add(kind.domain, "Browse linked \(kind.domain.lowercased()).", "", domain: domain,
+                          url: URL(string: "relay-vault://group")!.appendingPathComponent(kind.domain))
+            link(root, hub)
+            for (url, entry) in entries {
+                let count = entry.documents.count
+                let index = add(entry.relationship.name, "Linked in \(count) \(count == 1 ? "document" : "documents").", "", domain: domain, url: url)
+                link(hub, index)
+                for document in entry.documents { link(index, document) }
+            }
+        }
+        return finish(nodes: nodes, pairs: pairs, domains: domains, wikiTargets: wikiTargets)
     }
 
-    private static func linkableMarkdown(_ body: String) -> String {
-        guard body.contains("~~~") || body.contains("```") else { return body }
-        var fence: (character: Character, length: Int)?
-        return body.split(whereSeparator: \.isNewline).compactMap { line in
-            let trimmed = line.drop(while: \.isWhitespace)
-            if let current = fence {
-                let close = trimmed.prefix(while: { $0 == current.character })
-                if close.count >= current.length, trimmed.dropFirst(close.count).allSatisfy(\.isWhitespace) {
-                    fence = nil
-                }
-                return nil
-            }
-            if let marker = trimmed.first, marker == "~" || marker == "`" {
-                let length = trimmed.prefix(while: { $0 == marker }).count
-                if length >= 3 {
-                    fence = (marker, length)
-                    return nil
-                }
-            }
-            return String(line)
-        }.joined(separator: "\n")
-    }
-
-    private static func finish(nodes: [SkyNode], pairs: Set<EdgePair>, domains: [String]) -> SkyGraph {
+    private static func finish(nodes: [SkyNode], pairs: Set<EdgePair>, domains: [String], wikiTargets: [String: Int] = [:]) -> SkyGraph {
         var nodes = nodes
         var adjacency = [[Int]](repeating: [], count: nodes.count)
         let edges = pairs.sorted { ($0.a, $0.b) < ($1.a, $1.b) }.map { p in
@@ -178,7 +203,8 @@ struct SkyGraph {
             adjacency: adjacency,
             domains: domains,
             rootIndex: nodes.firstIndex(where: \.isRoot),
-            maxDegree: max(nodes.map(\.degree).max() ?? 1, 1)
+            maxDegree: max(nodes.map(\.degree).max() ?? 1, 1),
+            wikiTargets: wikiTargets
         )
     }
 }

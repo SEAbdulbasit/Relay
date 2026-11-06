@@ -22,13 +22,16 @@ struct MainView: View {
     @State private var showVoiceInput = false
     @State private var showAttachPopover = false
     @State private var showComposerModelPopover = false
+    @State private var showMorningBrief = false
+    @State private var showConversationSearch = false
+    @State private var conversationJump: ChatMessage.ID?
     @State private var settingsDestination: SettingsDestination?
     @State private var atLatest = true
     @State private var userScrollInProgress = false
     @State private var latestGeometryNearBottom = true
     @FocusState private var composerFocused: Bool
 
-    private let workspaceColumnWidth: CGFloat = 720
+    private let workspaceColumnWidth = RelayTheme.contentWidth
 
     private var isUserTaskActive: Bool {
         [.thinking, .acting, .awaitingReview].contains(store.phase) || store.accessibilityCheckRunning || store.isAuxiliaryBusy
@@ -36,7 +39,7 @@ struct MainView: View {
 
     var body: some View {
         ZStack {
-            RelayAtmosphere(focused: composerFocused)
+            RelayAtmosphere()
 
             VStack(spacing: 0) {
                 header
@@ -44,7 +47,7 @@ struct MainView: View {
                         computerAccessReady = AXIsProcessTrusted()
                     }
                     .onChange(of: settingsDestination) { _, _ in computerAccessReady = AXIsProcessTrusted() }
-                Divider().overlay(RelayTheme.line)
+                Rectangle().fill(RelayTheme.line).frame(height: 1)
                 if !computerAccessReady {
                     HStack(spacing: 12) {
                         Label("Mac control needs permission", systemImage: "cursorarrow.motionlines")
@@ -86,29 +89,26 @@ struct MainView: View {
 
                 if workspacePage == .knowledge {
                     KnowledgeView(store: store, startInConstellation: false)
-                        .padding(24)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     HStack(spacing: 0) {
                         VStack(spacing: 0) {
                             if store.messages.isEmpty {
-                                GeometryReader { geo in
+                                GeometryReader { geometry in
                                     ScrollView {
-                                        VStack(spacing: 24) {
-                                            Spacer(minLength: 16)
+                                        VStack(spacing: 22) {
+                                            Spacer(minLength: 24)
                                             welcome
-                                            conversationDock
                                             welcomeSuggestions
                                             Spacer(minLength: 24)
                                         }
-                                        .frame(maxWidth: .infinity, minHeight: geo.size.height)
+                                        .frame(maxWidth: .infinity, minHeight: geometry.size.height)
                                     }
                                 }
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
                             } else {
                                 conversation
-                                conversationDock
                             }
+                            conversationDock
                         }
                         if store.showActivity && viewportWidth >= 1200 {
                             Divider().overlay(RelayTheme.line)
@@ -131,20 +131,38 @@ struct MainView: View {
             SettingsView(store: store, onOpenSetup: onOpenSetup, initialSection: destination.rawValue)
         }
         .sheet(isPresented: $showVoiceInput) { VoiceInputView(store: store) }
+        .sheet(isPresented: $showMorningBrief) {
+            MorningBriefView(store: store) { workspacePage = .workspace }
+        }
+        .sheet(isPresented: $showConversationSearch) {
+            ConversationSearchView(messages: store.messages) { message in
+                atLatest = false
+                conversationJump = message.id
+                showConversationSearch = false
+            }
+            .preferredColorScheme(.dark)
+        }
         .sheet(isPresented: $store.showImageInspection) {
             ImageInspectionView(inspection: store.imageInspection, configuration: store.configuration,
                 textModelIsLoaded: store.textModelIsLoaded,
-                otherWorkInProgress: (store.isRunning && !store.imageInspection.isBusy) || store.voice.isBusy)
+                otherWorkInProgress: (store.isRunning && !store.imageInspection.isBusy) || store.voice.isBusy,
+                canStartTask: store.actionsReady) { request, description in
+                    try store.startWindowTask(request: request, reviewedDescription: description)
+                    workspacePage = .workspace
+                }
         }
         .onAppear {
             if store.messages.isEmpty && !isUserTaskActive {
                 store.showActivity = false
             }
         }
-        .onDisappear { store.stop() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in store.stop() }
+        .onDisappear {
+            if !store.preparation.isPreparing { store.stop(cancelScheduledPreparation: false) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in store.stopForTermination() }
         .task {
-            guard !store.workspaceActionsReady else { return }
+            await store.preparation.waitForCurrentPreparation()
+            guard !Task.isCancelled, !store.workspaceActionsReady else { return }
             if store.configuration.modelPath.isEmpty,
                let installed = ModelManifest.catalog.first(where: { ModelManifest.resolveInstalledURL(for: $0) != nil }) {
                 await store.selectCatalogModel(installed)
@@ -169,170 +187,122 @@ struct MainView: View {
     // MARK: - Minimal Matte Graphite Header (ChatGPT macOS & Antigravity Style)
 
     private var header: some View {
-        ZStack {
-            // Center Zone: Workspace | Knowledge Segmented Switcher
-            HStack(spacing: 2) {
-                HeaderWorkspaceTabButton(
-                    title: "Workspace",
-                    icon: "bubble.left.and.text.bubble.right",
-                    accent: RelayColors.textPrimary,
-                    active: workspacePage == .workspace
-                ) {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        workspacePage = .workspace
-                    }
+        HStack(spacing: 8) {
+            Button {
+                workspacePage = .workspace
+            } label: {
+                HStack(spacing: 9) {
+                    RelayMark(size: 23)
+                    Text("Relay").font(.system(size: 16, weight: .semibold))
                 }
-                HeaderWorkspaceTabButton(
-                    title: "Knowledge",
-                    icon: "books.vertical",
-                    accent: RelayColors.textPrimary,
-                    active: workspacePage == .knowledge
-                ) {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        workspacePage = .knowledge
-                    }
-                }
-                .disabled(store.pendingReview != nil)
+                .frame(height: 36)
+                .contentShape(Rectangle())
             }
-            .padding(3)
-            .frame(height: 32)
-            .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Color.white.opacity(0.07), lineWidth: 1))
+            .buttonStyle(RelayPressStyle())
+            .accessibilityLabel("Relay Home")
+            .accessibilityAddTraits(workspacePage == .workspace ? .isSelected : [])
 
-            // Leading & Trailing Zones
-            HStack(spacing: 8) {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        workspacePage = .workspace
-                    }
-                } label: {
-                    HStack(spacing: 8) {
-                        SpinningLogo(size: 18, fast: isUserTaskActive)
-                        Text("Relay")
-                            .font(.system(size: 14.5, weight: .semibold))
-                            .foregroundStyle(RelayColors.textPrimary)
-                    }
-                    .frame(height: 32)
-                    .padding(.horizontal, 4)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(RelayPressStyle())
+            Spacer(minLength: 12)
 
-                if viewportWidth >= 980 {
-                    HeaderModelSelectorMenu(
-                        store: store,
-                        modelName: activeModelDisplayName,
-                        actionsReady: store.workspaceActionsReady,
-                        isPreparing: store.isPreparingModel
-                    ) {
-                        settingsDestination = .model
-                    }
-                }
-
-                Spacer()
-
-                if isUserTaskActive || store.pendingReview != nil || store.voice.isBusy || store.speech.isActive || store.knowledgeSearch.isBusy || store.speechDiagnostic.isBusy {
-                    Button { store.stop() } label: {
-                        Label("Stop", systemImage: "stop.fill")
-                            .font(.system(size: 12.5, weight: .medium))
-                    }
-                    .buttonStyle(RelaySecondaryButtonStyle())
+            if isUserTaskActive || store.pendingReview != nil || store.voice.isBusy || store.speech.isActive || store.knowledgeSearch.isBusy || store.speechDiagnostic.isBusy {
+                WorkspaceHeaderButton(title: "Stop", icon: "stop.fill") { store.stop() }
                     .help("Stop current actions (⌘.)")
-                }
+            }
 
-                if !store.messages.isEmpty && workspacePage == .workspace {
-                    Button {
-                        store.clearConversation()
-                    } label: {
-                        Label("New Chat", systemImage: "square.and.pencil")
-                            .font(.system(size: 12.5, weight: .medium))
-                    }
-                    .buttonStyle(RelaySecondaryButtonStyle())
-                    .disabled(store.isRunning || store.isClearingConversation)
-                    .help("Clear this conversation and start a new chat")
-                }
+            WorkspaceHeaderButton(title: "Morning Brief", icon: "sun.horizon") { showMorningBrief = true }
+                .disabled(store.isRunning || store.pendingReview != nil)
+                .accessibilityIdentifier("workspace.morningBrief")
 
-                if workspacePage == .workspace {
-                    HeaderActivityToggleButton(isOpen: store.showActivity, compact: viewportWidth < 1040) {
-                        withAnimation(.easeInOut(duration: 0.18)) {
-                            store.showActivity.toggle()
+            WorkspaceHeaderButton(title: "Knowledge", icon: "books.vertical", selected: workspacePage == .knowledge) {
+                workspacePage = .knowledge
+            }
+            .disabled(store.pendingReview != nil)
+
+            if workspacePage == .workspace {
+                if !store.messages.isEmpty {
+                    Menu {
+                        Button("Find in conversation…", systemImage: "magnifyingglass") {
+                            Task { @MainActor in
+                                await Task.yield()
+                                composerFocused = false
+                                showConversationSearch = true
+                            }
                         }
+                        .keyboardShortcut("f", modifiers: .command)
+                        Button("New chat", systemImage: "square.and.pencil") { store.clearConversation() }
+                            .disabled(store.isRunning || store.isClearingConversation)
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 15, weight: .semibold))
+                            .frame(width: 34, height: 34)
                     }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .accessibilityLabel("Conversation actions")
                 }
 
-                RelayIconButton(icon: "gearshape", label: "Open settings", size: 32, iconSize: 13) {
-                    settingsDestination = .model
+                WorkspaceHeaderButton(title: store.showActivity ? "Hide activity" : "Show activity",
+                                      icon: "sidebar.right", selected: store.showActivity, iconOnly: true) {
+                    store.showActivity.toggle()
                 }
+                .accessibilityValue(store.showActivity ? "Shown" : "Hidden")
+            }
+
+            WorkspaceHeaderButton(title: "Open settings", icon: "gearshape", iconOnly: true) {
+                settingsDestination = .model
             }
         }
-        .padding(.horizontal, 20)
-        .frame(height: 48)
+        .padding(.horizontal, RelayTheme.inset)
+        .frame(height: 56)
         .background(RelayColors.pitch)
     }
 
-    // MARK: - Centered ChatGPT / Antigravity Empty State (`welcome` + `welcomeSuggestions`)
-
     private var welcome: some View {
         VStack(spacing: 12) {
-            RelayMark(size: 32, illuminated: false)
-                .padding(.bottom, 4)
+            RelayMark(size: 48, illuminated: false)
+                .padding(.bottom, 6)
 
-            Text("What can I help with?")
-                .font(.system(size: 28, weight: .medium, design: .default))
-                .foregroundStyle(RelayColors.textPrimary)
+            Text("What can I help you with?")
+                .font(.system(size: 30, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
 
-            Text(store.workspaceUsesCodex ? "Plan with ChatGPT and run actions through Relay on this Mac." : "Work across your Mac apps, find local files, and inspect pages privately on this Mac.")
-                .font(.system(size: 14, weight: .regular, design: .default))
+            Text(store.workspaceUsesCodex ? "Use ChatGPT to plan tasks you ask Relay to run." : "Ask Relay to work across your apps, find a file, or prepare a draft.")
+                .font(.relayBody)
                 .foregroundStyle(RelayColors.textSecondary)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: 480)
+                .frame(maxWidth: 460)
         }
-        .padding(.horizontal, 32)
+        .padding(.horizontal, RelayTheme.inset)
     }
 
     private var welcomeSuggestions: some View {
-        VStack(spacing: 14) {
-            RelayChipFlow(spacing: 8) {
-                WelcomeTaskChip(title: "Open Calculator", icon: "plus.forwardslash.minus") {
-                    store.draft = "Open Calculator"
-                    composerFocused = true
-                }
+        HStack(spacing: 8) {
+            WelcomeTaskChip(title: "Open Calculator", icon: "plus.forwardslash.minus") {
+                fillExample("Open Calculator")
+            }
+            if store.workspaceActionsReady {
                 WelcomeTaskChip(title: "Read Safari page", icon: "safari") {
-                    store.draft = "Read the active page in Safari and summarize its key takeaways."
-                    composerFocused = true
-                }
-                if store.workspaceUsesCodex {
-                    WelcomeTaskChip(title: "Check a calculation", icon: "equal") {
-                        store.draft = "What is 48 × 37?"
-                        composerFocused = true
-                    }
-                } else {
-                    WelcomeTaskChip(title: "Find local files", icon: "folder") {
-                        store.draft = "What files are available in my connected folders?"
-                        composerFocused = true
-                    }
-                    WelcomeTaskChip(title: "Prep next meeting", icon: "calendar") {
-                        store.draft = "Read my upcoming calendar for the next 7 days and search my knowledge base for relevant notes."
-                        composerFocused = true
-                    }
-                    WelcomeTaskChip(title: "Catch follow-ups", icon: "tray.full") {
-                        store.draft = "Search my connected files and notes for open TODOs or pending follow-ups."
-                        composerFocused = true
-                    }
-                    WelcomeTaskChip(title: "Create PDF brief", icon: "doc.richtext") {
-                        store.draft = "Create a PDF summary document in my connected folder from my recent notes."
-                        composerFocused = true
-                    }
-                }
-                WelcomeTaskChip(title: "Explore capabilities", icon: "sparkles") {
-                    store.draft = "What can you help me do?"
-                    composerFocused = true
+                    fillExample("Read the active page in Safari and summarize its key takeaways.")
                 }
             }
-            .frame(maxWidth: workspaceColumnWidth - 48)
-            .disabled(!store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            if store.workspaceUsesCodex || !store.workspaceActionsReady {
+                WelcomeTaskChip(title: "Check a calculation", icon: "equal") {
+                    fillExample("What is 48 × 37?")
+                }
+            } else {
+                WelcomeTaskChip(title: "Find local files", icon: "folder") {
+                    fillExample("What files are available in my connected folders?")
+                }
+            }
         }
-        .padding(.horizontal, 32)
+        .padding(.horizontal, RelayTheme.inset)
+        .disabled(!store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    private func fillExample(_ prompt: String) {
+        store.draft = prompt
+        composerFocused = true
     }
 
     // MARK: - Conversation Stream
@@ -365,7 +335,7 @@ struct MainView: View {
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(atLatest ? .bottom : nil, for: .sizeChanges)
             .overlay(alignment: .bottom) {
-                if !atLatest && !store.messages.isEmpty {
+                if !atLatest && !latestGeometryNearBottom && !store.messages.isEmpty {
                     Button {
                         proxy.scrollTo("bottom", anchor: .bottom)
                         atLatest = true
@@ -393,6 +363,11 @@ struct MainView: View {
                     atLatest = latestGeometryNearBottom
                     userScrollInProgress = false
                 }
+            }
+            .onChange(of: conversationJump) { _, target in
+                guard let target else { return }
+                proxy.scrollTo(target, anchor: .center)
+                conversationJump = nil
             }
             .onChange(of: store.messages.count) { _, _ in
                 if atLatest || store.messages.last?.role == "user" { proxy.scrollTo("bottom", anchor: .bottom) }
@@ -492,42 +467,17 @@ struct MainView: View {
                     }
                     .foregroundStyle(RelayTheme.muted)
 
-                    let parts = parsed.cleanText.components(separatedBy: "\n\nChecked by Relay:\n")
-                    let primaryProse = parts[0].replacingOccurrences(of: "\n\nNo computer actions were executed in this response.", with: "")
-
-                    if parts.count > 1 {
-                        DisclosureGroup {
-                            Text(parts.dropFirst().joined(separator: "\n\nChecked by Relay:\n"))
-                                .font(.system(size: 12, design: .monospaced))
-                                .lineSpacing(3)
-                                .textSelection(.enabled)
-                                .foregroundStyle(RelayColors.textSecondary)
-                                .padding(.top, 4)
-                                .padding(.leading, 8)
-                                .overlay(alignment: .leading) {
-                                    Rectangle()
-                                        .fill(Color.white.opacity(0.12))
-                                        .frame(width: 1.5)
-                                }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "checkmark.shield.fill")
-                                    .font(.system(size: 11.5, weight: .medium))
-                                    .foregroundStyle(RelayColors.accentEmerald)
-                                Text("Action evidence")
-                                    .font(.system(size: 12.5, weight: .medium))
-                                    .foregroundStyle(RelayColors.textSecondary)
-                            }
-                        }
-                        .disclosureGroupStyle(RelayDisclosureGroupStyle(accent: RelayColors.textBright, verticalPadding: 5, horizontalPadding: 9, cornerRadius: 8))
-                    }
-
-                    Text(.init(primaryProse))
-                        .font(.system(size: 15, weight: .regular, design: .default))
+                    let response = RelayResponseText(parsed.cleanText)
+                    Text(.init(response.body))
+                        .font(.system(size: 15))
                         .foregroundStyle(RelayColors.textPrimary)
                         .lineSpacing(5)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    if let evidence = response.evidence {
+                        RelayActionEvidence(text: evidence)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -577,7 +527,7 @@ struct MainView: View {
         return (nil, text)
     }
 
-    // MARK: - Conversation Dock & Elevated Two-Row Composer (ChatGPT macOS & Antigravity Style)
+    // MARK: - Conversation dock
 
     private var conversationDock: some View {
         VStack(spacing: 8) {
@@ -612,161 +562,70 @@ struct MainView: View {
             }
 
             composer
-
-            if !store.messages.isEmpty || store.workspaceUsesCodex {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(store.workspaceUsesCodex ? RelayColors.accentBlue : store.actionsReady ? RelayColors.accentEmerald : RelayColors.textMuted)
-                        .frame(width: 4.5, height: 4.5)
-                        .accessibilityHidden(true)
-                    Text(store.workspaceUsesCodex ? "ChatGPT receives messages you send here" : "\(activeModelDisplayName) · Local inference on this Mac")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(RelayColors.textSecondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
         }
         .frame(maxWidth: workspaceColumnWidth)
-        .padding(.horizontal, 24)
-        .padding(.bottom, store.messages.isEmpty ? 4 : 16)
-        .padding(.top, 4)
+        .padding(.horizontal, RelayTheme.inset)
+        .padding(.vertical, 16)
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Two-Row Elevated Composer Card (ChatGPT macOS / Antigravity Style)
-
     private var composer: some View {
         let hasText = !store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return VStack(alignment: .leading, spacing: 12) {
-            // Top Row: Multiline Prompt Field
-            TextField("", text: $store.draft, axis: .vertical)
-                .font(.system(size: 15, weight: .regular))
-                .foregroundStyle(RelayColors.textPrimary)
-                .textFieldStyle(.plain)
-                .lineLimit(1...(store.pendingReview == nil ? 5 : 2))
-                .overlay(alignment: .leading) {
-                    if store.draft.isEmpty {
-                        if store.phase == .thinking || store.phase == .acting {
-                            Text("Add a constraint or steer current task…")
-                                .foregroundStyle(RelayColors.textSecondary)
-                                .font(.system(size: 15))
-                                .allowsHitTesting(false)
-                                .accessibilityHidden(true)
-                        } else {
-                            Text(store.workspaceUsesCodex ? "Message Relay with ChatGPT…" : "Message Relay or ask it to work across your Mac…")
-                                .foregroundStyle(RelayColors.textSecondary)
-                                .font(.system(size: 15))
-                                .allowsHitTesting(false)
-                                .accessibilityHidden(true)
-                        }
-                    }
-                }
-                .focused($composerFocused)
-                .onSubmit { submitMessage() }
-                .accessibilityLabel("Message Relay or steer current task")
-                .padding(.horizontal, 4)
-                .padding(.top, 2)
+        let isSteering = store.phase == .thinking || store.phase == .acting
+        return VStack(spacing: 8) {
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField("Message Relay", text: $store.draft,
+                          prompt: Text(isSteering ? "Steer the current task…" : "Ask Relay…").foregroundStyle(RelayColors.textSecondary),
+                          axis: .vertical)
+                    .font(.system(size: 16))
+                    .textFieldStyle(.plain)
+                    .lineLimit(1...(store.pendingReview == nil ? 5 : 2))
+                    .focused($composerFocused)
+                    .onSubmit { submitMessage() }
+                    .accessibilityLabel("Message Relay or steer current task")
+                    .padding(.leading, 4)
+                    .padding(.vertical, 9)
 
-            // Bottom Row: Utility Controls (+ Attach, Model Picker, Folder Scope, Voice Mic, Send Button)
-            HStack(alignment: .center, spacing: 8) {
-                Button {
-                    showAttachPopover.toggle()
-                } label: {
-                    Image(systemName: store.workspaceUsesCodex ? "ellipsis" : "plus")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(RelayColors.textSecondary)
-                        .frame(width: 28, height: 28)
-                        .background(Color.white.opacity(0.06), in: Circle())
-                        .overlay(Circle().strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
-                        .contentShape(Circle())
+                RelayIconButton(icon: "mic", label: "Open local voice input", size: 36, iconSize: 14) {
+                    store.speech.stop()
+                    showVoiceInput = true
+                }
+                .disabled(store.isRunning || store.isClearingConversation)
+
+                Button { submitMessage() } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(hasText ? RelayColors.buttonInk : RelayColors.textSecondary)
+                        .frame(width: 36, height: 36)
+                        .background(hasText ? RelayColors.buttonFace : RelayColors.surfaceElevated, in: Circle())
                 }
                 .buttonStyle(RelayPressStyle())
-                .help(store.workspaceUsesCodex ? "Workspace tools" : "Attach files or folders")
+                .disabled(store.isPreparingModel || store.checkingCodex || store.isClearingConversation || store.isAuxiliaryBusy || !hasText)
+                .accessibilityLabel(store.isPreparingModel ? "Model preparing" : store.isRunning ? "Send steering message" : "Send message")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: RelayTheme.radius))
+            .overlay {
+                RoundedRectangle(cornerRadius: RelayTheme.radius)
+                    .strokeBorder(composerFocused ? RelayColors.borderFocus : RelayColors.borderDefault)
+            }
+
+            HStack(spacing: 4) {
+                WorkspaceHeaderButton(title: store.workspaceUsesCodex ? "Tools" : "Add context",
+                                      icon: store.workspaceUsesCodex ? "ellipsis" : "plus") {
+                    showAttachPopover.toggle()
+                }
                 .accessibilityLabel(store.workspaceUsesCodex ? "Workspace tools" : "Add task context")
                 .popover(isPresented: $showAttachPopover, arrowEdge: .top) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        if !store.workspaceUsesCodex {
-                            Button {
-                                showAttachPopover = false
-                                store.chooseFiles()
-                            } label: {
-                                Label("Attach Files…", systemImage: "doc.badge.plus")
-                                    .font(.system(size: 12.5, weight: .medium))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                            }
-                            .buttonStyle(.plain)
-                            Button {
-                                showAttachPopover = false
-                                store.chooseFolder()
-                            } label: {
-                                Label("Add Folder…", systemImage: "folder.badge.plus")
-                                    .font(.system(size: 12.5, weight: .medium))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                            }
-                            .buttonStyle(.plain)
-                            Divider()
-                        }
-                        Button {
-                            showAttachPopover = false
-                            store.showImageInspection = true
-                        } label: {
-                            Label(store.workspaceUsesCodex ? "Inspect Image or Window Locally…" : "Inspect Image or Window…", systemImage: "photo")
-                                .font(.system(size: 12.5, weight: .medium))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(store.isRunning)
-                        Button {
-                            showAttachPopover = false
-                            store.showActivity.toggle()
-                        } label: {
-                            Label(store.showActivity ? "Hide Activity Log" : "Show Activity Log", systemImage: "waveform.path")
-                                .font(.system(size: 12.5, weight: .medium))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(8)
-                    .frame(width: store.workspaceUsesCodex ? 244 : 196)
+                    composerContext
                 }
-
-                // Inline Model Picker Pill (like ChatGPT / Antigravity)
-                Button {
+                Spacer(minLength: 8)
+                WorkspaceHeaderButton(title: store.isPreparingModel ? "Preparing model…" : store.workspaceActionsReady ? activeModelDisplayName : "Set up model",
+                                      icon: store.workspaceUsesCodex ? "cloud" : "desktopcomputer") {
                     showComposerModelPopover.toggle()
-                } label: {
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(store.workspaceUsesCodex ? RelayColors.accentBlue : store.workspaceActionsReady ? RelayColors.accentEmerald : RelayColors.accentAmber)
-                            .frame(width: 5.5, height: 5.5)
-                            .accessibilityHidden(true)
-                        Text(activeModelDisplayName)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(RelayColors.textSecondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .frame(maxWidth: 170)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8.5, weight: .semibold))
-                            .foregroundStyle(RelayColors.textMuted)
-                            .accessibilityHidden(true)
-                    }
-                    .padding(.horizontal, 10)
-                    .frame(height: 28)
-                    .background(Color.white.opacity(0.045), in: Capsule())
-                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.07), lineWidth: 1))
-                    .contentShape(Capsule())
                 }
-                .buttonStyle(RelayPressStyle())
-                .help("Switch workspace model")
+                .help(store.workspaceUsesCodex ? "ChatGPT receives the messages you send here." : "Choose a model that runs on this Mac.")
                 .popover(isPresented: $showComposerModelPopover, arrowEdge: .top) {
                     WorkspaceModelOptions(store: store, modelName: activeModelDisplayName, close: {
                         showComposerModelPopover = false
@@ -774,72 +633,35 @@ struct MainView: View {
                         settingsDestination = .model
                     }
                 }
-
-                // Folder Scope Pill
-                if !store.workspaceUsesCodex {
-                    Button {
-                        store.chooseFolder()
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: store.grants.isEmpty ? "folder.badge.plus" : "folder")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(RelayColors.textSecondary)
-                            Text(store.grants.isEmpty ? "Connect folder" : "\(store.grants.count) folder\(store.grants.count == 1 ? "" : "s")")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(RelayColors.textSecondary)
-                        }
-                        .padding(.horizontal, 10)
-                        .frame(height: 28)
-                        .background(Color.white.opacity(0.045), in: Capsule())
-                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.07), lineWidth: 1))
-                        .contentShape(Capsule())
-                    }
-                    .buttonStyle(RelayPressStyle())
-                    .help("Connect a local folder for file search")
-                }
-
-                Spacer()
-
-                RelayIconButton(icon: "mic", label: "Open local voice input", size: 30, iconSize: 12.5) {
-                    store.speech.stop()
-                    showVoiceInput = true
-                }
-                .disabled(store.isRunning || store.isClearingConversation)
-                .help("Local voice dictation")
-
-                Button { submitMessage() } label: {
-                    ZStack {
-                        Circle()
-                            .fill(hasText ? Color.white : Color.white.opacity(0.08))
-                            .frame(width: 32, height: 32)
-                        Image(systemName: store.workspaceActionsReady || store.isRunning ? "arrow.up" : "gearshape")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(hasText ? RelayColors.buttonInk : RelayColors.textMuted)
-                    }
-                    .frame(width: 32, height: 32)
-                    .contentShape(Circle())
-                }
-                .buttonStyle(RelayPressStyle())
-                .disabled(store.isPreparingModel || store.checkingCodex || store.isClearingConversation || store.isAuxiliaryBusy || !hasText)
-                .accessibilityLabel(store.isPreparingModel ? "Model preparing" : !store.workspaceActionsReady && !store.isRunning ? "Setup model" : store.isRunning ? "Send steering message" : "Send message")
             }
+            .padding(.horizontal, 4)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(
-                    Color.white.opacity(composerFocused ? 0.18 : 0.09),
-                    lineWidth: 1
-                )
-        )
-        .shadow(color: .black.opacity(0.32), radius: 18, y: 6)
+    }
+
+    private var composerContext: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if !store.workspaceUsesCodex {
+                WorkspaceHeaderButton(title: "Attach files…", icon: "doc.badge.plus") {
+                    showAttachPopover = false
+                    store.chooseFiles()
+                }
+                WorkspaceHeaderButton(title: "Add folder…", icon: "folder.badge.plus") {
+                    showAttachPopover = false
+                    store.chooseFolder()
+                }
+            }
+            WorkspaceHeaderButton(title: "Inspect image or window…", icon: "macwindow") {
+                showAttachPopover = false
+                store.showImageInspection = true
+            }
+            .disabled(store.isRunning)
+        }
+        .padding(8)
     }
 
     private func submitMessage() {
         guard !store.isClearingConversation, !store.isPreparingModel, !store.checkingCodex, !store.isAuxiliaryBusy else { return }
-        guard store.workspaceActionsReady || store.isRunning else {
+        guard store.workspaceActionsReady || store.isRunning || store.canRunWithoutModel(store.draft) else {
             settingsDestination = .model
             return
         }
@@ -959,51 +781,6 @@ struct MainView: View {
 
 // MARK: - Header & Suggestion Subcomponents (ChatGPT macOS & Antigravity Style)
 
-private struct HeaderModelSelectorMenu: View {
-    let store: AssistantStore
-    let modelName: String
-    let actionsReady: Bool
-    var isPreparing: Bool = false
-    let openSettings: () -> Void
-    @State private var hovered = false
-    @State private var showPopover = false
-
-    var body: some View {
-        let dotColor = store.workspaceUsesCodex ? RelayColors.accentBlue : actionsReady ? RelayColors.accentEmerald : RelayColors.accentAmber
-        Button {
-            showPopover.toggle()
-        } label: {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(dotColor)
-                    .frame(width: 6, height: 6)
-                    .accessibilityHidden(true)
-                Text(isPreparing ? "Preparing model…" : (actionsReady ? modelName : "Set up model"))
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(hovered ? RelayColors.textPrimary : RelayColors.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: 170)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(RelayColors.textMuted)
-                    .accessibilityHidden(true)
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 30)
-            .background(Color.white.opacity(hovered ? 0.07 : 0.035), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(hovered ? 0.14 : 0.07), lineWidth: 1))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(RelayPressStyle())
-        .help("Switch workspace model")
-        .onHover { hovered = $0 }
-        .popover(isPresented: $showPopover, arrowEdge: .bottom) {
-            WorkspaceModelOptions(store: store, modelName: modelName, close: { showPopover = false }, openSettings: openSettings)
-        }
-    }
-}
-
 private struct WorkspaceModelOptions: View {
     let store: AssistantStore
     let modelName: String
@@ -1078,67 +855,108 @@ private struct WorkspaceModelOptions: View {
     }
 }
 
-private struct HeaderWorkspaceTabButton: View {
+private struct WorkspaceHeaderButton: View {
     let title: String
     let icon: String
-    let accent: Color
-    let active: Bool
+    var selected = false
+    var iconOnly = false
     let action: () -> Void
     @State private var hovered = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(active ? RelayColors.textPrimary : (hovered ? RelayColors.textBright : RelayColors.textSecondary))
-                Text(title)
-                    .font(.system(size: 12.5, weight: active ? .medium : .regular))
-                    .foregroundStyle(active || hovered ? RelayColors.textPrimary : RelayColors.textSecondary)
+            HStack(spacing: 7) {
+                Image(systemName: icon).font(.system(size: 13, weight: .medium))
+                if !iconOnly {
+                    Text(title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                }
             }
-            .padding(.horizontal, 12)
-            .frame(height: 26)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(active ? RelayColors.surfaceElevated : (hovered ? Color.white.opacity(0.04) : Color.clear))
-            )
+            .padding(.horizontal, iconOnly ? 0 : 10)
+            .frame(minWidth: 36, minHeight: 36)
+            .foregroundStyle(hovered || selected ? RelayColors.textPrimary : RelayColors.textBright)
+            .background(selected ? RelayColors.surfaceElevated : hovered ? RelayColors.surface : .clear,
+                        in: RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
         }
         .buttonStyle(RelayPressStyle())
         .onHover { hovered = $0 }
-        .accessibilityAddTraits(active ? .isSelected : [])
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .help(title)
     }
 }
 
-private struct HeaderActivityToggleButton: View {
-    let isOpen: Bool
-    var compact = false
-    let action: () -> Void
-    @State private var hovered = false
+private struct ConversationSearchView: View {
+    let messages: [ChatMessage]
+    let select: (ChatMessage) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+    @FocusState private var focused: Bool
+
+    private var matches: [ChatMessage] {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return [] }
+        return Array(messages.reversed().lazy.filter { searchableText($0).localizedStandardContains(term) }.prefix(20))
+    }
+
+    private func searchableText(_ message: ChatMessage) -> String {
+        message.role == "assistant" ? RelayResponseText(message.text).body : message.text
+    }
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: "sidebar.right")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(isOpen ? RelayColors.textPrimary : RelayColors.textSecondary)
-                if !compact {
-                    Text(isOpen ? "Hide Activity" : "Activity")
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(isOpen || hovered ? RelayColors.textPrimary : RelayColors.textSecondary)
-                }
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Find in conversation")
+                    .font(.relayHeadline.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                Spacer()
+                RelayIconButton(icon: "xmark", label: "Close conversation search", size: 32) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
             }
-            .padding(.horizontal, 11)
-            .frame(height: 32)
-            .background(Color.white.opacity(isOpen ? 0.09 : (hovered ? 0.06 : 0.035)), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(hovered || isOpen ? 0.14 : 0.07), lineWidth: 1))
-            .contentShape(Rectangle())
+            TextField("Search messages", text: $query)
+                .font(.relayBody)
+                .focused($focused)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("conversation.search")
+                .onSubmit { if let match = matches.first { select(match) } }
+            if matches.isEmpty {
+                Text(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Search messages in this chat." : "No matching messages.")
+                    .font(.relayCaption)
+                    .foregroundStyle(RelayColors.textSecondary)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(matches) { message in
+                            Button { select(message) } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(message.role == "user" ? "You" : "Relay")
+                                        .font(.relayCaption.weight(.semibold))
+                                    Text(searchableText(message))
+                                        .font(.relayBody)
+                                        .foregroundStyle(RelayColors.textSecondary)
+                                        .lineLimit(2)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(8)
+                                .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 8))
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(RelayPressStyle())
+                        }
+                    }
+                }
+                .frame(maxHeight: 280)
+            }
         }
-        .buttonStyle(RelayPressStyle())
-        .onHover { hovered = $0 }
-        .accessibilityLabel(isOpen ? "Hide activity" : "Show activity")
-        .help(isOpen ? "Hide activity" : "Show activity")
-        .accessibilityValue(isOpen ? "Shown" : "Hidden")
+        .padding(20)
+        .frame(minHeight: 210, alignment: .topLeading)
+        .frame(width: 430)
+        .background(RelayColors.pitch)
+        .task {
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            focused = true
+        }
     }
 }
 

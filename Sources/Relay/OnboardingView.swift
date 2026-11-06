@@ -14,7 +14,6 @@ struct OnboardingView: View {
 
     @State private var chosenTask = "Open Calculator"
     @State private var modelTab: ModelSetupTab = .managed
-    @State private var demoScenarioIndex: Int = 0
     @Environment(\.scenePhase) private var scenePhase
 
     // Retained for accessibility labels and E2E lifecycle verification; never rendered as a "1/5" counter.
@@ -59,7 +58,7 @@ struct OnboardingView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(RelayColors.pitch)
         .foregroundStyle(RelayTheme.ink)
-        .tint(RelayColors.accentEmerald)
+        .tint(RelayColors.accentBlue)
         .onAppear {
             coordinator.refreshPermissions()
         }
@@ -148,264 +147,70 @@ struct OnboardingView: View {
         .foregroundStyle(RelayColors.textSecondary)
     }
 
-    // MARK: - Step 0: Welcome (Living 3D Keplerian Orb Hero)
-
     private var welcomeStep: some View {
-        VStack(spacing: 28) {
-            RelayPrismOrb(
-                mode: coordinator.hardware.supported ? .idle : .attention,
-                size: 108
-            )
-
-            VStack(spacing: 14) {
-                OnboardingWhisper("YOUR LOCAL MAC ASSISTANT")
-
-                Text("An AI that knows your Mac, and acts on it.")
-                    .display(32)
-                    .foregroundStyle(.white)
-                    .multilineTextAlignment(.center)
-
-                Text("Ask Relay to find files, open apps, and help with tasks. Gemma runs on your Mac. Downloads and requested browser tasks can use the internet.")
-                    .font(.system(size: 15, weight: .regular))
-                    .foregroundStyle(RelayColors.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(4)
-                    .frame(maxWidth: 520)
-            }
-
-            // Quiet Sentient-style hardware & architecture pills
-            HStack(spacing: 10) {
-                welcomeFeaturePill(
-                    icon: "cpu",
-                    label: "Apple Silicon · \(coordinator.hardware.memoryGB) GB",
-                    accent: RelayColors.accentAmethyst
-                )
-                welcomeFeaturePill(
-                    icon: "sparkles",
-                    label: "Local models · Mac controls",
-                    accent: RelayColors.accentGold
-                )
-                welcomeFeaturePill(
-                    icon: "folder.badge.person.crop",
-                    label: coordinator.hardware.freeDiskGB > 0 ? "\(coordinator.hardware.freeDiskGB) GB available" : "Check available storage",
-                    accent: RelayColors.accentEmerald
-                )
-            }
-
+        VStack(spacing: 20) {
+            RelayMark(size: 60)
+                .padding(.vertical, 12)
+            setupHeading("Get started with Relay", detail: "Ask Relay to open apps, find files, or prepare work on this Mac.")
             if !coordinator.hardware.supported {
                 inlineError(coordinator.hardware.summary)
+            } else {
+                Text("No Relay account needed.")
+                    .font(.relayCaption)
+                    .foregroundStyle(RelayColors.textSecondary)
             }
-
-            RelayGlowButton(
-                title: "Get Started",
-                icon: "arrow.right",
-                enabled: coordinator.hardware.supported,
-                glowOpacity: 0.45
-            ) {
-                withAnimation(.easeInOut(duration: 0.24)) {
-                    coordinator.step = 1
-                }
-            }
-            .padding(.top, 4)
+            Button("Get Started", systemImage: "arrow.right") { coordinator.step = 1 }
+                .buttonStyle(RelayPrimaryButtonStyle())
+                .disabled(!coordinator.hardware.supported)
         }
-    }
-
-    private func welcomeFeaturePill(icon: String, label: String, accent: Color) -> some View {
-        HStack(spacing: 7) {
-            Image(systemName: icon)
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(accent)
-            Text(label)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(RelayColors.textBright)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 13)
-        .padding(.vertical, 8)
-        .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
-    }
-
-    // MARK: - Step 1: Offline Privacy & Interactive Multi-Agent Stage
-
-    private struct DemoScenario {
-        let title: String
-        let prompt: String
-        let targetApp: String
-        let targetIcon: String
-        let steps: [(AgentRole, String)]
-    }
-
-    private var demoScenarios: [DemoScenario] {
-        [
-            DemoScenario(
-                title: "Open Calculator",
-                prompt: "Open Calculator and check it is running",
-                targetApp: "Calculator.app",
-                targetIcon: "plus.forwardslash.minus",
-                steps: [
-                    (.planner, "Identify the requested app"),
-                    (.navigator, "Check which app is available"),
-                    (.executor, "Open Calculator"),
-                    (.critic, "Check that the Calculator process is running")
-                ]
-            ),
-            DemoScenario(
-                title: "Search Local Notes",
-                prompt: "Summarize Q3 roadmap notes from my Documents folder",
-                targetApp: "Scoped Folder Index",
-                targetIcon: "doc.text.magnifyingglass",
-                steps: [
-                    (.planner, "Find roadmap notes in your connected folders"),
-                    (.navigator, "Choose the most relevant passages"),
-                    (.executor, "Write a summary with source citations"),
-                    (.critic, "Check source citations before returning the summary")
-                ]
-            )
-        ]
+        .padding(.vertical, 40)
     }
 
     private var privacyStep: some View {
-        let currentDemo = demoScenarios[demoScenarioIndex % demoScenarios.count]
-        return VStack(spacing: 24) {
-            VStack(spacing: 12) {
-                OnboardingWhisper("PRIVATE BY DESIGN")
-
-                Text("Acts in the open. Stops on command.")
-                    .display(28)
-                    .foregroundStyle(.white)
-                    .multilineTextAlignment(.center)
-
-                Text("Relay uses a local model by default. You choose file and app access. Browser tasks can contact the sites you request. This example shows how a task is planned and checked.")
-                    .font(.system(size: 14.5, weight: .regular))
-                    .foregroundStyle(RelayColors.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(4)
-                    .frame(maxWidth: 540)
-            }
-
-            // Interactive macOS Stage Window (Sentient OS Sidekick / Double Tap lesson style)
+        VStack(spacing: 24) {
+            setupHeading("You choose what Relay can use", detail: "Local models run on this Mac. Browser tasks can contact the sites you request.")
             VStack(spacing: 0) {
-                // Example label and scenario picker use separate rows to avoid compression.
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Example workflow · \(currentDemo.targetApp)")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(RelayColors.textSecondary)
-
-                    // Interactive scenario toggle pills
-                    HStack(spacing: 6) {
-                        ForEach(0..<demoScenarios.count, id: \.self) { idx in
-                            let selected = demoScenarioIndex == idx
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    demoScenarioIndex = idx
-                                }
-                            } label: {
-                                Text(demoScenarios[idx].title)
-                                    .font(.system(size: 11, weight: selected ? .medium : .regular))
-                                    .foregroundStyle(selected ? .white : RelayColors.textSecondary)
-                                    .padding(.horizontal, 9)
-                                    .padding(.vertical, 4)
-                                    .background(Color.white.opacity(selected ? 0.12 : 0.03), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.white.opacity(selected ? 0.24 : 0.08), lineWidth: 1))
-                                    .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            }
-                            .buttonStyle(RelayPressStyle())
-                        }
-                    }
-                }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 12)
-                .background(Color.white.opacity(0.02))
-
-                Rectangle().fill(Color.white.opacity(0.07)).frame(height: 1)
-
-                // Example task steps and optional global Stop shortcut
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Label(currentDemo.prompt, systemImage: currentDemo.targetIcon)
-                            .font(.system(size: 13.5, weight: .medium))
-                            .foregroundStyle(.white)
-                        Spacer()
-                        Text("EXAMPLE")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .tracking(1.2)
-                            .foregroundStyle(RelayColors.accentEmerald)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(RelayColors.accentEmerald.opacity(0.12), in: Capsule())
-                    }
-
-                    VStack(spacing: 8) {
-                        ForEach(Array(currentDemo.steps.enumerated()), id: \.offset) { _, item in
-                            let (role, description) = item
-                            HStack(spacing: 12) {
-                                RelayRoleBadge(role: role)
-                                    .frame(width: 96, alignment: .leading)
-                                Text(description)
-                                    .font(.system(size: 13, weight: .regular))
-                                    .foregroundStyle(RelayColors.textBright)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                Spacer()
-                                Image(systemName: "circle")
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(RelayColors.accentEmerald.opacity(0.85))
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(Color.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                        }
-                    }
-
-                    Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
-
-                    // Hardware Keycap Lesson Footer (like Sentient OS Double Tap keycap)
-                    HStack(spacing: 14) {
-                        HStack(spacing: 4) {
-                            keycapView("⌘")
-                            keycapView("⇧")
-                            keycapView("Esc")
-                        }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(store.globalStop.enabled ? "Global Stop is on · ⌘⇧Esc" : "Global Stop is off")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(.white)
-                            Text("Enable ⌘⇧Esc in Settings → Access. In Relay, use ⌘. to stop. Pending work is cancelled; an action already sent may finish.")
-                                .font(.system(size: 12))
-                                .foregroundStyle(RelayColors.textSecondary)
-                        }
-                        Spacer()
-                        Text("You stay in control")
-                            .font(.system(size: 11.5, weight: .medium))
-                            .foregroundStyle(RelayColors.accentGold)
-                    }
-                }
-                .padding(18)
+                privacyRow("You choose the files", detail: "Relay reads and indexes only sources you select.", icon: "folder")
+                Divider()
+                privacyRow("Review sensitive actions", detail: "Relay shows the target and details when a step needs your approval.", icon: "checkmark.shield")
+                Divider()
+                privacyRow("Stop from the workspace", detail: "Use ⌘. to stop new actions. An action already sent may finish.", icon: "stop.circle")
             }
-            .relayGlassCard(cornerRadius: 16, strokeColor: Color.white.opacity(0.11))
-
-            RelayGlowButton(title: "Continue", icon: "arrow.right", glowOpacity: 0.35) {
-                withAnimation(.easeInOut(duration: 0.24)) {
-                    coordinator.step = 2
-                }
-            }
+            .padding(.horizontal, 18)
+            .relayGlassCard(cornerRadius: RelayTheme.radius)
+            Button("Continue", systemImage: "arrow.right") { coordinator.step = 2 }
+                .buttonStyle(RelayPrimaryButtonStyle())
         }
     }
 
-    private func keycapView(_ symbol: String) -> some View {
-        Text(symbol)
-            .font(.system(size: 13, weight: .medium, design: .rounded))
-            .foregroundStyle(.white)
-            .frame(width: 28, height: 28)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Color(white: 0.14))
-                    .shadow(color: .black.opacity(0.55), radius: 2, y: 2)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
-            )
+    private func setupHeading(_ title: String, detail: String) -> some View {
+        VStack(spacing: 10) {
+            Text(title)
+                .font(.system(size: 30, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
+            Text(detail)
+                .font(.relayBody)
+                .foregroundStyle(RelayColors.textSecondary)
+                .lineSpacing(3)
+                .frame(maxWidth: 470)
+        }
+        .multilineTextAlignment(.center)
+    }
+
+    private func privacyRow(_ title: String, detail: String, icon: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 15))
+                .foregroundStyle(RelayColors.accentBlue)
+                .frame(width: 22)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.relayBody.weight(.semibold))
+                Text(detail).font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 14)
     }
 
     // MARK: - Step 2: Local Model Engine (Sentient OS FrontierEnginePicker + GlowProgressBar)
@@ -626,8 +431,6 @@ struct OnboardingView: View {
     private var accessStep: some View {
         VStack(spacing: 22) {
             VStack(spacing: 12) {
-                OnboardingWhisper("PERMISSIONS & PERSONAL CONTEXT")
-
                 Text("Connect your Mac")
                     .display(28)
                     .foregroundStyle(.white)
@@ -752,8 +555,6 @@ struct OnboardingView: View {
     private var readyStep: some View {
         VStack(spacing: 24) {
             VStack(spacing: 12) {
-                OnboardingWhisper("LAUNCHPAD · READY TO BEGIN")
-
                 Text("Where should we start?")
                     .display(28)
                     .foregroundStyle(.white)
@@ -802,13 +603,14 @@ struct OnboardingView: View {
                 }
             }
 
-            RelayGlowButton(title: "Open Relay", icon: "arrow.right", glowOpacity: 0.55) {
+            Button("Open Relay", systemImage: "arrow.right") {
                 if chosenTask != "Start with an empty workspace" &&
                     store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     store.draft = chosenTask
                 }
                 coordinator.finish()
             }
+            .buttonStyle(RelayPrimaryButtonStyle())
             .padding(.top, 2)
         }
     }

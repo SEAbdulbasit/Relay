@@ -50,16 +50,9 @@ enum ScreenCaptureCheck {
 
         let window = try await locateWindow(title: title, application: application, bundleID: bundleID)
         try Task.checkCancellation()
-        // This filter has exactly one source. It cannot include another app or the desktop.
-        let filter = SCContentFilter(desktopIndependentWindow: window)
-        let capture = SCStreamConfiguration()
-        capture.width = 1_120
-        capture.height = 660
-        capture.showsCursor = false
-        capture.ignoreShadowsSingleWindow = true
-        let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: capture)
+        let text = try await SidekickWindowText.recognize(window)
         try Task.checkCancellation()
-        guard try await markerIsVisible(in: image, nonce: nonce) else {
+        guard markerIsVisible(in: text, nonce: nonce) else {
             throw RelayError.message("The screenshot did not contain the test window’s unique marker.")
         }
         return AccessibilityCheckReport(cases: [
@@ -68,7 +61,11 @@ enum ScreenCaptureCheck {
     }
 
     static func markerIsVisible(in image: CGImage, nonce: String) async throws -> Bool {
-        let text = try await LocalOCR.recognize(image: image, orientation: .up)
+        let text = try await LocalOCR.recognize(image: image, orientation: .up, preferCPU: true)
+        return markerIsVisible(in: text, nonce: nonce)
+    }
+
+    private static func markerIsVisible(in text: String, nonce: String) -> Bool {
         let expected = normalized(markerPrefix + nonce)
         return text.split(whereSeparator: \.isNewline).contains { normalized(String($0)) == expected }
     }

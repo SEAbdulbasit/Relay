@@ -3,8 +3,11 @@ import Foundation
 
 /// Deliberately inert AX target. Only the test host's explicit temporary oracle path is written.
 @MainActor
-final class FixtureDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
+final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFieldDelegate {
     private var window: NSWindow!
+    private var secondaryWindow: NSWindow?
+    private var secondaryInput: NSTextView?
+    private var secondaryScroll: NSScrollView?
     private let input = NSTextField(string: "")
     private let result = NSTextField(labelWithString: "Not applied")
     private var clickCount = 0
@@ -24,6 +27,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegat
         window.title = screenMarker.map { "Relay Capture Fixture " + $0 } ?? "Relay Accessibility Fixture"
         window.identifier = NSUserInterfaceItemIdentifier("relay.fixture.window")
         window.isReleasedWhenClosed = false
+        window.delegate = self
         let content = NSView()
         window.contentView = content
 
@@ -99,19 +103,58 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegat
             ])
         }
         window.center()
+        if environment["RELAY_FIXTURE_INCLUDE_SECOND_WINDOW"] == "1" { makeSecondaryWindow() }
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
         if let draftInput {
             window.makeFirstResponder(draftInput)
             draftInput.setSelectedRange(NSRange(location: (draftInput.string as NSString).length, length: 0))
-            // Poll the fixture's own state independently of AX and keyboard notifications.
-            // Only write on a change, including when another control takes focus.
-            if environment["RELAY_FIXTURE_STATE_PATH"] != nil {
-                draftOracleTimer = Timer.scheduledTimer(timeInterval: 0.1, target: self,
-                                                         selector: #selector(writeOracle), userInfo: nil, repeats: true)
-            }
+        }
+        // Poll the fixture's own state independently of AX and keyboard notifications.
+        if (draftInput != nil || secondaryInput != nil), environment["RELAY_FIXTURE_STATE_PATH"] != nil {
+            draftOracleTimer = Timer.scheduledTimer(timeInterval: 0.1, target: self,
+                                                     selector: #selector(writeOracle), userInfo: nil, repeats: true)
         }
         writeOracle()
+        if let attachmentDirectory = environment["RELAY_FIXTURE_ATTACHMENT_DIRECTORY"] {
+            openAttachmentFixture(directory: attachmentDirectory)
+        }
+    }
+
+    private func openAttachmentFixture(directory: String) {
+        let panel = NSOpenPanel()
+        panel.directoryURL = URL(fileURLWithPath: directory, isDirectory: true)
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.beginSheetModal(for: window) { response in
+            if response == .OK {
+                let marker = URL(fileURLWithPath: directory).appendingPathComponent("file-was-chosen")
+                try? Data().write(to: marker)
+            }
+        }
+    }
+
+    private func makeSecondaryWindow() {
+        let frame = window.frame.offsetBy(dx: 80, dy: -60)
+        let secondary = NSWindow(contentRect: frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        secondary.title = "Relay Fixture Second Window"
+        secondary.delegate = self
+        secondary.isReleasedWhenClosed = false
+        let scroll = NSTextView.scrollableTextView()
+        scroll.setAccessibilityIdentifier("relay.fixture.secondary.scroll")
+        scroll.hasVerticalScroller = true
+        scroll.scrollerStyle = .legacy
+        scroll.autohidesScrollers = false
+        if let text = scroll.documentView as? NSTextView {
+            text.setAccessibilityIdentifier("relay.fixture.secondary.input")
+            text.setAccessibilityLabel("Secondary fixture multiline input")
+            text.isRichText = false
+            secondaryInput = text
+        }
+        secondary.contentView = scroll
+        secondaryWindow = secondary
+        secondaryScroll = scroll
+        secondary.orderFront(nil)
     }
 
     private func makeDraftControl() -> NSScrollView {
@@ -134,6 +177,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegat
     }
 
     func controlTextDidChange(_ notification: Notification) { writeOracle() }
+    func windowDidBecomeKey(_ notification: Notification) { writeOracle() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationWillTerminate(_ notification: Notification) { draftOracleTimer?.invalidate() }
 
@@ -144,12 +188,14 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegat
                        selectionLocation: $0.selectedRange().location, selectionLength: $0.selectedRange().length)
         }
         let state = OracleState(input: input.stringValue, result: result.stringValue,
-                                clickCount: clickCount, launchToken: launchToken, draft: draft)
-        if draft != nil, state == lastOracleState { return }
+                                clickCount: clickCount, launchToken: launchToken, draft: draft,
+                                secondaryInput: secondaryInput?.string, focusedWindow: NSApplication.shared.keyWindow?.title,
+                                secondaryScrollOffset: secondaryScroll.map { $0.contentView.bounds.minY })
+        if state == lastOracleState { return }
         do {
             let data = try JSONEncoder().encode(state)
             try data.write(to: URL(fileURLWithPath: path), options: .atomic)
-            if draft != nil { lastOracleState = state }
+            lastOracleState = state
         } catch {
             // Missing oracle is a test failure; never invent successful application state.
             fputs("Fixture oracle write failed: \(error.localizedDescription)\n", stderr)
@@ -169,6 +215,9 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegat
         let clickCount: Int
         let launchToken: String
         let draft: DraftState?
+        let secondaryInput: String?
+        let focusedWindow: String?
+        let secondaryScrollOffset: Double?
     }
 }
 

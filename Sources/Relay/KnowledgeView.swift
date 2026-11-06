@@ -10,7 +10,7 @@ struct KnowledgeView: View {
 
     @StateObject private var skyModel = NightSkyModel()
     @State private var fullGalaxyMode: Bool = false
-    @State private var expandedDomains: Set<String> = ["Indexed Sources", GeneratedKnowledgeNote.domain, "Your Notes"]
+    @State private var expandedDomains: Set<String> = ["Indexed Sources", GeneratedKnowledgeNote.domain, "Your Notes", "People", "Projects"]
     @State private var selectedNodeURL: URL? = nil
     @State private var vaultNotes: [LocalMarkdownNote] = []
     @State private var vaultFolders: [LocalMarkdownFolder] = []
@@ -104,123 +104,70 @@ struct KnowledgeView: View {
         }
     }
 
-    // MARK: - 1. Main Workspace Knowledge Vault (1:1 Match with Sentient OS `readme_knowledge.jpg`)
-
     private var workspaceKnowledgeVaultBody: some View {
-        VStack(spacing: 0) {
-            // Top Chrome Bar inside the Knowledge Vault Frame
+        let noteCount = vaultNotes.count
+        return VStack(spacing: 0) {
             HStack(spacing: 10) {
-                HStack(spacing: 9) {
-                    RelayIconBadge(icon: "books.vertical.fill", color: RelayColors.accentGold, size: 24, iconSize: 11)
-                    Text("Knowledge Vault")
-                        .font(.system(size: 13.5, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.94))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Your knowledge")
+                        .font(.relayHeadline.weight(.semibold))
+                        .accessibilityAddTraits(.isHeader)
+                    Text("\(store.knowledge.records.count) indexed · \(noteCount) \(noteCount == 1 ? "note" : "notes")")
+                        .font(.relayCaption)
+                        .foregroundStyle(RelayColors.textSecondary)
                 }
-
-                Spacer()
-
-                Text("\(store.knowledge.records.count) indexed · \(vaultNotes.count) notes")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(RelayColors.textSecondary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
-
-                Button("New note", systemImage: "square.and.pencil") {
-                    noteEditor = .init()
-                }
-                .buttonStyle(RelaySecondaryButtonStyle())
-                .accessibilityIdentifier("knowledge.newNote")
-
-                Button("New folder", systemImage: "folder.badge.plus") {
+                Spacer(minLength: 8)
+                Button("New note", systemImage: "square.and.pencil") { noteEditor = .init() }
+                    .buttonStyle(RelaySecondaryButtonStyle())
+                    .accessibilityIdentifier("knowledge.newNote")
+                RelayIconButton(icon: "folder.badge.plus", label: "New folder", size: 36) {
                     newFolderName = ""
                     showNewFolder = true
                 }
-                .labelStyle(.iconOnly)
-                .buttonStyle(RelaySecondaryButtonStyle())
-                .help("New folder")
                 .accessibilityIdentifier("knowledge.newFolder")
-
-                Button {
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        fullGalaxyMode.toggle()
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: fullGalaxyMode ? "sidebar.left" : "sparkles")
-                            .font(.system(size: 10.5, weight: .semibold))
-                        Text(fullGalaxyMode ? "Split View" : "Full Constellation")
-                            .font(.system(size: 11.5, weight: .medium))
-                    }
-                    .foregroundStyle(RelayColors.accentGold)
-                    .padding(.horizontal, 11)
-                    .padding(.vertical, 5)
-                    .background(RelayColors.accentGold.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(RelayColors.accentGold.opacity(0.28), lineWidth: 1))
-                    .contentShape(Rectangle())
+                Button(fullGalaxyMode ? "Reader" : "Constellation", systemImage: fullGalaxyMode ? "books.vertical" : "sparkles") {
+                    fullGalaxyMode.toggle()
                 }
-                .buttonStyle(RelayPressStyle())
+                .buttonStyle(RelaySecondaryButtonStyle())
                 .disabled(!hasVaultContent)
             }
-            .padding(.horizontal, 20)
-            .frame(height: 46)
-            .background(Color(red: 0.065, green: 0.068, blue: 0.082))
+            .padding(.horizontal, RelayTheme.inset)
+            .frame(height: 58)
+            .background(RelayColors.pitch)
 
-            Rectangle()
-                .fill(Color.white.opacity(0.07))
-                .frame(height: 1)
+            Rectangle().fill(RelayTheme.line).frame(height: 1)
 
             if !hasVaultContent {
                 emptyKnowledgeState
             } else if fullGalaxyMode {
                 NightSkyView(model: skyModel, showsHUD: true) { clickedNode in
                     selectVaultNode(clickedNode)
-                    withAnimation(.easeInOut(duration: 0.24)) {
-                        fullGalaxyMode = false
-                    }
+                    fullGalaxyMode = false
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                GeometryReader { geometry in
-                    HStack(spacing: 0) {
-                        vaultLeftSidebar
-                            .frame(width: geometry.size.width >= 900 ? 215 : 180)
-                            .frame(maxHeight: .infinity)
-                            .background(Color(red: 0.052, green: 0.054, blue: 0.068))
-                        Rectangle().fill(Color.white.opacity(0.06)).frame(width: 1)
-                        vaultMiddleMarkdownPane
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .background(Color(red: 0.042, green: 0.044, blue: 0.056))
-                        if geometry.size.width >= 900 {
-                            Rectangle().fill(Color.white.opacity(0.06)).frame(width: 1)
-                            NightSkyView(model: skyModel, showsHUD: false) { clickedNode in
-                                selectVaultNode(clickedNode)
-                            }
-                            .frame(width: max(260, geometry.size.width * 0.34))
-                            .frame(maxHeight: .infinity)
-                            .background(Color(red: 0.038, green: 0.040, blue: 0.052))
-                        }
-                    }
+                HStack(spacing: 0) {
+                    vaultLeftSidebar
+                        .frame(width: 228)
+                        .frame(maxHeight: .infinity)
+                        .background(RelayColors.canvas)
+                    Rectangle().fill(RelayTheme.line).frame(width: 1)
+                    vaultMiddleMarkdownPane
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(RelayColors.pitch)
                 }
             }
             if let vaultStatus = vaultLoadError ?? vaultStatus {
                 Text(vaultStatus)
-                    .font(.system(size: 12))
+                    .font(.relayCaption)
                     .foregroundStyle(RelayColors.textSecondary)
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, RelayTheme.inset)
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
             }
         }
-        .background(RelayColors.canvas)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.09), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.55), radius: 24, y: 10)
+        .background(RelayColors.pitch)
     }
 
     // MARK: - Left Column: `Your knowledge` + `◎ Overview` + Collapsible Domain Folders
@@ -255,6 +202,7 @@ struct KnowledgeView: View {
 
                     // Domain Folders (`› 📁 Indexed Sources`, etc.)
                     ForEach(Array(graph.domains.enumerated()), id: \.offset) { dIdx, domainName in
+                        let relationshipKind = KnowledgeRelationship.Kind.allCases.first { $0.domain == domainName }
                         let isExpanded = expandedDomains.contains(domainName)
                         let domainNodes = graph.nodes.filter {
                             !$0.isRoot && $0.domain == dIdx && $0.url.host != "group" &&
@@ -266,7 +214,8 @@ struct KnowledgeView: View {
                                 title: LocalMarkdownFolder.displayName(for: domainName),
                                 count: domainNodes.count,
                                 color: SkyRenderer.domainColor(dIdx),
-                                isExpanded: isExpanded
+                                isExpanded: isExpanded,
+                                relationshipKind: relationshipKind
                             ) {
                                 let willExpand = !expandedDomains.contains(domainName)
                                 withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
@@ -322,7 +271,24 @@ struct KnowledgeView: View {
     }
 
     private func selectVaultNode(_ node: SkyNode) {
-        if node.url.host == "generated" {
+        if KnowledgeRelationship.Kind.from(node.url) != nil {
+            let sourcePaths = Set((skyModel.graph?.linkedNodes(from: node.url) ?? []).filter(\.url.isFileURL).map(\.url.path))
+            let records = store.knowledge.records.filter { sourcePaths.contains($0.sourcePath) }
+            for record in records { _ = store.knowledge.revalidate(record, grants: store.grants) }
+            if records.contains(where: { !store.knowledge.records.contains($0) }) {
+                updateVaultGraph()
+                guard skyModel.graph?.nodes.contains(where: { $0.url == node.url }) == true else {
+                    vaultStatus = "The linked sources changed or access was removed."
+                    return
+                }
+            }
+        } else if node.url.isFileURL {
+            guard let record = store.knowledge.records.first(where: { $0.sourcePath == node.url.path }),
+                  store.knowledge.revalidate(record, grants: store.grants) else {
+                vaultStatus = "This source changed or access was removed."
+                return
+            }
+        } else if node.url.host == "generated" {
             guard let note = store.generatedKnowledge.notes.first(where: { $0.graphURL == node.url }),
                   let source = generatedSource(for: note) else {
                 vaultStatus = "The generated note’s source is no longer current."
@@ -372,57 +338,99 @@ struct KnowledgeView: View {
     private var vaultMiddleMarkdownPane: some View {
         if let node = activeNode, let graph = skyModel.graph {
             let generated = store.generatedKnowledge.notes.first(where: { $0.graphURL == node.url })
+            let source = node.url.isFileURL ? store.knowledge.records.first(where: { $0.sourcePath == node.url.path }) : nil
+            let relationshipKind = KnowledgeRelationship.Kind.from(node.url)
+            let neighbors = graph.linkedNodes(from: node.url)
             VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    Text(node.isRoot ? "Overview" : node.title)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(RelayColors.textMuted)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(alignment: .center, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let relationshipKind {
+                            Text(relationshipKind.title)
+                                .font(.relayCaption)
+                                .foregroundStyle(RelayColors.textSecondary)
+                        }
+                        Text(node.isRoot ? "Overview" : node.title)
+                            .font(.system(size: 26, weight: .semibold))
+                            .accessibilityAddTraits(.isHeader)
+                            .accessibilityIdentifier(relationshipKind.map { "knowledge.linked.\($0.rawValue)" } ?? "knowledge.readerTitle")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     if let generated {
                         Button("Make editable copy…") { copyGeneratedNote(generated) }
                             .accessibilityIdentifier("knowledge.copyGeneratedNote")
                     } else if let note = vaultNotes.first(where: { $0.graphURL == node.url }) {
                         Button("Edit note") { noteEditor = .init(note: note) }
                             .accessibilityIdentifier("knowledge.editNote")
-                    } else if node.url.isFileURL,
-                              let record = store.knowledge.records.first(where: { $0.sourcePath == node.url.path }) {
-                        Button("Export source note…") { exportSourceNote(record) }
+                    } else if let source {
+                        Button("Export source note…") { exportSourceNote(source) }
                             .accessibilityIdentifier("knowledge.exportSourceNote")
                     }
                 }
                 .buttonStyle(RelaySecondaryButtonStyle())
-                .padding(.horizontal, 28).padding(.top, 22).padding(.bottom, 10)
+                .padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 16)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
+                        if let coverage = source?.coverageNote {
+                            Text(coverage)
+                                .font(.relayCaption)
+                                .foregroundStyle(RelayColors.textSecondary)
+                                .textSelection(.enabled)
+                        }
                         if let generated {
                             generatedReader(generated)
+                        } else if relationshipKind != nil {
+                            relationshipReader(neighbors: neighbors)
                         } else {
-                            renderedMarkdownView(bodyText: node.markdownBody, isRoot: node.isRoot, graph: graph)
+                            renderedMarkdownView(node, graph: graph, neighbors: neighbors)
                         }
-                        if let nodeIdx = graph.nodes.firstIndex(where: { $0.url == node.url }) {
-                            let neighbors = graph.adjacency[nodeIdx].compactMap { idx in
-                                graph.nodes.indices.contains(idx) ? graph.nodes[idx] : nil
-                            }
-                            if !neighbors.isEmpty {
-                                Divider().overlay(Color.white.opacity(0.07)).padding(.top, 8)
-                                Text("Connected sources").font(.system(size: 14, weight: .medium))
-                                    .foregroundStyle(RelayColors.textMuted)
-                                FlowLayoutWikilinks(nodes: Array(neighbors.prefix(6))) { targetNode in
-                                    selectVaultNode(targetNode)
-                                }
+                        let related = neighbors.filter { $0.url.host != "group" }
+                        if relationshipKind == nil, !related.isEmpty {
+                            Divider().overlay(Color.white.opacity(0.07)).padding(.top, 8)
+                            Text("Linked notes and sources").font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(RelayColors.textMuted)
+                            FlowLayoutWikilinks(nodes: Array(related.prefix(6))) { targetNode in
+                                selectVaultNode(targetNode)
                             }
                         }
                     }
                     .padding(.horizontal, 28).padding(.bottom, 24)
+                    .frame(maxWidth: 720, alignment: .leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
     }
 
+    private func relationshipReader(neighbors: [SkyNode]) -> some View {
+        let documents = neighbors.filter { $0.url.host != "group" }
+            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        return VStack(alignment: .leading, spacing: 12) {
+            Text(documents.count == 1 ? "1 linked document" : "\(documents.count) linked documents")
+                .foregroundStyle(RelayColors.textSecondary)
+            ForEach(documents) { document in
+                Button {
+                    selectVaultNode(document)
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: document.url.isFileURL ? "doc" : "note.text")
+                            .foregroundStyle(RelayColors.textMuted)
+                        Text(document.title).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(RelayColors.textMuted)
+                    }
+                    .padding(.vertical, 7)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Divider()
+            }
+        }
+    }
+
     private func generatedReader(_ note: GeneratedKnowledgeNote) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Source highlights").display(26)
             Text("Relay’s local model selected verbatim excerpts from the indexed text.")
                 .foregroundStyle(RelayColors.textSecondary)
             if let source = skyModel.graph?.nodes.first(where: { $0.url == note.sourceURL }) {
@@ -452,102 +460,100 @@ struct KnowledgeView: View {
         }
     }
 
-    private func renderedMarkdownView(bodyText: String, isRoot: Bool, graph: SkyGraph) -> some View {
-        let lines = bodyText.components(separatedBy: "\n")
+    private func renderedMarkdownView(_ node: SkyNode, graph: SkyGraph, neighbors: [SkyNode]) -> some View {
+        let allLines = KnowledgeWikiLink.lines(in: node.markdownBody)
+        let header = node.isRoot ? "# Your knowledge" : "# \(node.title)"
+        let lines = allLines.first?.text == header
+            ? allLines.dropFirst().drop(while: { $0.text.trimmingCharacters(in: .whitespaces).isEmpty })
+            : allLines[...]
         return VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(lines.enumerated()), id: \.offset) { _, rawLine in
-                let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                let trimmed = line.text.trimmingCharacters(in: .whitespaces)
                 if trimmed.isEmpty {
                     Spacer().frame(height: 4)
-                } else if trimmed.hasPrefix("# ") {
-                    Text(String(trimmed.dropFirst(2)))
+                } else if line.allowsLinks, trimmed.hasPrefix("# ") {
+                    wikilinkHighlightedText(String(trimmed.dropFirst(2)), graph: graph, neighbors: neighbors)
                         .display(26)
                         .foregroundStyle(.white).padding(.bottom, 4)
-                } else if trimmed.hasPrefix("## ") {
-                    Text(String(trimmed.dropFirst(3)))
+                } else if line.allowsLinks, trimmed.hasPrefix("## ") {
+                    wikilinkHighlightedText(String(trimmed.dropFirst(3)), graph: graph, neighbors: neighbors)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(RelayColors.accentGold).padding(.top, 4)
-                } else if trimmed.hasPrefix("- ") {
+                } else if line.allowsLinks, trimmed.hasPrefix("- ") {
                     HStack(alignment: .top, spacing: 8) {
                         Text("•").foregroundStyle(RelayColors.accentAmethyst)
-                        wikilinkHighlightedText(String(trimmed.dropFirst(2)), graph: graph)
+                        wikilinkHighlightedText(String(trimmed.dropFirst(2)), graph: graph, neighbors: neighbors)
                     }
                 } else {
-                    wikilinkHighlightedText(trimmed, graph: graph)
+                    wikilinkHighlightedText(trimmed, graph: graph, neighbors: neighbors, allowsLinks: line.allowsLinks)
                 }
             }
         }
+        .environment(\.openURL, OpenURLAction { url in
+            guard let target = neighbors.first(where: { $0.url == url }) else { return .discarded }
+            selectVaultNode(target)
+            return .handled
+        })
     }
 
     private var emptyKnowledgeState: some View {
-        ZStack {
-            RelayAtmosphere(focused: false)
-                .opacity(0.65)
+        VStack(spacing: 16) {
+            Image(systemName: "books.vertical")
+                .font(.system(size: 30, weight: .light))
+                .foregroundStyle(RelayColors.textSecondary)
+                .accessibilityHidden(true)
 
-            VStack(spacing: 22) {
-                RelayPrismOrb(size: 84)
+            Text("No notes yet")
+                .font(.system(size: 27, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
+            Text("Create a note, or add files and folders to make them searchable on this Mac.")
+                .font(.relayBody)
+                .foregroundStyle(RelayColors.textSecondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 385)
 
-                VStack(spacing: 12) {
-                    OnboardingWhisper("CONSTELLATION VAULT · LOCAL SOURCES")
-                    Text("Your knowledge starts here")
-                        .display(28)
-                        .foregroundStyle(.white)
-                    Text("Choose files or folders, then index them to read, search, and explore their connected graph. Only your selected sources appear here.")
-                        .font(.system(size: 14.5, weight: .regular, design: .default))
-                        .foregroundStyle(RelayColors.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .lineSpacing(3)
-                        .frame(maxWidth: 460)
-                }
-
-                HStack(spacing: 12) {
-                    Button {
-                        store.chooseFiles()
-                    } label: {
-                        HStack(spacing: 7) {
-                            Image(systemName: "doc.badge.plus")
-                                .font(.system(size: 12, weight: .semibold))
-                            Text("Choose files…")
-                        }
-                    }
-                    .buttonStyle(RelayPrimaryButtonStyle())
-
-                    Button {
-                        store.chooseFolder()
-                    } label: {
-                        HStack(spacing: 7) {
-                            Image(systemName: "folder.badge.plus")
-                                .font(.system(size: 12, weight: .semibold))
-                            Text("Choose folder…")
-                        }
-                    }
-                    .buttonStyle(RelaySecondaryButtonStyle())
-
+            HStack(spacing: 10) {
+                if store.grants.isEmpty {
+                    Button("Choose files…", systemImage: "doc.badge.plus") { store.chooseFiles() }
+                    Button("Choose folder…", systemImage: "folder.badge.plus") { store.chooseFolder() }
+                } else {
                     Button(store.knowledge.isIndexing ? "Indexing…" : "Index selected sources") {
                         Task { await store.knowledge.index(grants: store.grants); refreshSearch() }
                     }
-                    .buttonStyle(RelaySecondaryButtonStyle())
-                    .disabled(store.grants.isEmpty || store.knowledge.isIndexing)
+                    .disabled(store.knowledge.isIndexing)
                 }
-
+            }
+            .buttonStyle(RelaySecondaryButtonStyle())
+            if !store.grants.isEmpty {
                 Text(store.knowledge.status)
-                    .font(.system(size: 12, weight: .regular, design: .default))
-                    .foregroundStyle(RelayColors.textMuted)
+                    .font(.relayCaption)
+                    .foregroundStyle(RelayColors.textSecondary)
                     .multilineTextAlignment(.center)
                     .textSelection(.enabled)
             }
-            .padding(.horizontal, 36)
-            .padding(.vertical, 34)
-            .frame(width: 580)
-            .relayLitCard(accent: RelayColors.accentGold, cornerRadius: 20)
-            .padding(28)
         }
+        .padding(RelayTheme.inset)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func wikilinkHighlightedText(_ line: String, graph: SkyGraph) -> some View {
-        let clean = line.replacingOccurrences(of: "[[", with: "").replacingOccurrences(of: "]]", with: "")
-        return Text(clean)
+    private func wikilinkHighlightedText(_ line: String, graph: SkyGraph, neighbors: [SkyNode], allowsLinks: Bool = true) -> some View {
+        var text = AttributedString()
+        var start = line.startIndex
+        if allowsLinks {
+            for link in KnowledgeWikiLink.inLine(line) {
+                text.append(AttributedString(line[start..<link.range.lowerBound]))
+                var label = AttributedString(link.label)
+                if let target = graph.linkedNode(for: link, among: neighbors) {
+                    label.link = target.url
+                    label.foregroundColor = RelayColors.knowledgeLink
+                    label.underlineStyle = .single
+                }
+                text.append(label)
+                start = link.range.upperBound
+            }
+        }
+        text.append(AttributedString(line[start...]))
+        return Text(text)
             .font(.system(size: 15))
             .foregroundStyle(RelayColors.textSecondary)
             .lineSpacing(5)
@@ -579,13 +585,15 @@ struct KnowledgeView: View {
             .buttonStyle(RelaySecondaryButtonStyle())
 
             VStack(alignment: .leading, spacing: 14) {
+                let sourceCount = store.grants.count
+                let fileCount = store.knowledge.records.count
                 HStack {
-                    Label("\(store.grants.count) authorized sources · \(store.knowledge.records.count) indexed files", systemImage: "books.vertical")
+                    Label("\(sourceCount) authorized \(sourceCount == 1 ? "source" : "sources") · \(fileCount) indexed \(fileCount == 1 ? "file" : "files")", systemImage: "books.vertical")
                         .font(.system(size: 15, weight: .semibold))
                     Spacer()
                     RelayMonoCaps(text: "LOCAL INDEX", color: RelayColors.accentEmerald, size: 10)
                 }
-                Text("Indexes Markdown, text, CSV, JSON, PDF, and .eml mail exports locally (up to 200 files / 10 MB).")
+                Text("Indexes Markdown, text, CSV, JSON, PDF, and .eml mail exports locally (up to 200 files / 10 MB). Choose a WhatsApp text export directly to include recent messages with names and times.")
                     .font(.system(size: 13))
                     .foregroundStyle(RelayTheme.muted)
                     .lineSpacing(3)
@@ -675,15 +683,22 @@ struct KnowledgeView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .toggleStyle(.switch)
-            Text("Prepares local morning briefing cards with source citations. Runs only on your Mac.")
+            Text("Relay prepares suggestions on this Mac. Open Morning Brief from the workspace toolbar to review them and see their sources.")
                 .font(.system(size: 13)).foregroundStyle(RelayTheme.muted).lineSpacing(3)
+            Toggle("Draft up to two tasks for each scheduled brief",
+                   isOn: Binding(get: { store.suggestions.scheduledDraftsEnabled },
+                                 set: { store.suggestions.setScheduledDraftsEnabled($0) }))
+                .toggleStyle(.switch)
+                .disabled(!store.suggestions.enabled)
+            Text("Uses your local model and keeps up to two drafts on this Mac for 24 hours while their sources stay current.")
+                .font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
             HStack {
                 Button("Prepare brief now") {
                     store.knowledge.purgeStale(grants: store.grants)
                     store.suggestions.prepare(records: store.knowledge.records)
                 }
                 .buttonStyle(RelaySecondaryButtonStyle())
-                .disabled(!store.suggestions.enabled || store.knowledge.isIndexing)
+                .disabled(!store.suggestions.enabled || store.knowledge.isIndexing || store.preparation.isPreparing)
 
                 Spacer()
                 Text(store.suggestions.status).font(.system(size: 12.5)).foregroundStyle(RelayTheme.muted)
@@ -890,6 +905,7 @@ private struct KnowledgeSidebarFolderRow: View {
     let count: Int
     let color: Color
     let isExpanded: Bool
+    let relationshipKind: KnowledgeRelationship.Kind?
     let action: () -> Void
     @State private var isHovered = false
 
@@ -905,7 +921,7 @@ private struct KnowledgeSidebarFolderRow: View {
                         .foregroundStyle(isExpanded ? color : RelayColors.textSecondary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
-                Image(systemName: isExpanded ? "folder.fill" : "folder")
+                Image(systemName: relationshipKind?.icon ?? (isExpanded ? "folder.fill" : "folder"))
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(color.opacity(0.95))
                 Text(title)
@@ -935,7 +951,7 @@ private struct KnowledgeSidebarFolderRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-        .accessibilityLabel("\(title) folder, \(count) sources")
+        .accessibilityLabel(relationshipKind == nil ? "\(title) folder, \(count) \(count == 1 ? "item" : "items")" : "\(title), \(count)")
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
     }
 }

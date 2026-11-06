@@ -39,7 +39,7 @@ nonisolated struct AgentDesktopEnvelope: Sendable {
               disposition["delivery"] as? String == "delivered_verified",
               let state = payload["post_state"] as? [String: Any],
               let observedValue = state["value"] as? String else { return false }
-        return observedValue == expected
+        return observedValue.utf8.elementsEqual(expected.utf8)
     }
 }
 
@@ -417,7 +417,7 @@ nonisolated enum AgentDesktopBridge {
     /// Formats `snapshot` or `find` trees into a compact line-by-line summary of `@snapshot:eN` refs for `Gemma 4 E2B`.
     private static func formatSuccessPayload(command: String, payload: [String: Any], rawJSON: String) -> String {
         if command == "snapshot" {
-            let app = (payload["app"] as? String) ?? "App"
+            let app = observationField((payload["app"] as? String) ?? "App")
             let snapID = (payload["snapshot_id"] as? String) ?? ""
             let refCount = (payload["ref_count"] as? Int) ?? 0
             var lines: [String] = ["agent-desktop snapshot (\(app), snapshot_id=\(snapID), refs=\(refCount)):"]
@@ -428,15 +428,13 @@ nonisolated enum AgentDesktopBridge {
         } else if command == "find" {
             var lines: [String] = ["agent-desktop find matches:"]
             if let matches = payload["matches"] as? [[String: Any]] {
-                for match in matches.prefix(80) {
+                for match in matches.lazy.filter({ !isProtectedObservationNode($0) }).prefix(80) {
                     let ref = (match["ref_id"] as? String) ?? ""
-                    let role = (match["role"] as? String) ?? "element"
-                    let name = (match["name"] as? String) ?? ""
-                    let val = (match["value"] as? String) ?? ""
+                    let role = observationField((match["role"] as? String) ?? "element")
+                    let name = observationField((match["name"] as? String) ?? "")
+                    let val = observationField((match["value"] as? String) ?? "")
                     lines.append("element_id=\(ref) role=\(role) title=\(name) value=\(val)")
                 }
-            } else {
-                lines.append(rawJSON)
             }
             return lines.joined(separator: "\n")
         }
@@ -444,11 +442,11 @@ nonisolated enum AgentDesktopBridge {
     }
 
     private static func collectTreeLines(node: [String: Any], depth: Int, into lines: inout [String], limit: Int) {
-        guard lines.count < limit else { return }
+        guard lines.count < limit, !isProtectedObservationNode(node) else { return }
         let ref = (node["ref_id"] as? String) ?? ""
-        let role = (node["role"] as? String) ?? ""
-        let name = (node["name"] as? String) ?? ""
-        let value = (node["value"] as? String) ?? ""
+        let role = observationField((node["role"] as? String) ?? "")
+        let name = observationField((node["name"] as? String) ?? "")
+        let value = observationField((node["value"] as? String) ?? "")
         let actions = (node["available_actions"] as? [String])?.joined(separator: ",") ?? ""
         let states = (node["states"] as? [String]) ?? []
         let enabled = !states.contains("disabled")
@@ -461,9 +459,7 @@ nonisolated enum AgentDesktopBridge {
             parts.append("enabled=\(enabled)")
             lines.append(parts.joined(separator: " "))
         }
-        if ref.isEmpty, !name.isEmpty || !value.isEmpty,
-           !role.localizedCaseInsensitiveContains("secure"),
-           !role.localizedCaseInsensitiveContains("password") {
+        if ref.isEmpty, !name.isEmpty || !value.isEmpty {
             lines.append("observed role=\(role) text=\(String((name.isEmpty ? value : name).prefix(1200))) [untrusted]")
         }
         if let children = node["children"] as? [[String: Any]] {
@@ -471,5 +467,20 @@ nonisolated enum AgentDesktopBridge {
                 collectTreeLines(node: child, depth: depth + 1, into: &lines, limit: limit)
             }
         }
+    }
+
+    static func isProtectedObservationNode(_ node: [String: Any]) -> Bool {
+        let role = (node["role"] as? String ?? "").lowercased()
+        let subrole = (node["subrole"] as? String ?? "").lowercased()
+        let name = (node["name"] as? String ?? "").lowercased()
+        let states = (node["states"] as? [String] ?? []).map { $0.lowercased() }
+        let textRole = role.hasPrefix("ax") ? String(role.dropFirst(2)) : role
+        return [role, subrole].contains { $0.contains("secure") || $0.contains("password") }
+            || states.contains("protected") || states.contains("secure")
+            || (["textfield", "textarea", "combobox"].contains(textRole) && name.contains("password"))
+    }
+
+    private static func observationField(_ text: String) -> String {
+        String(text.prefix(1_200)).map { $0.isNewline ? "\\n" : String($0) }.joined()
     }
 }

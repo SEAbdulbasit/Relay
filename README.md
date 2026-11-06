@@ -81,25 +81,28 @@ Ordinary scoped observations, app opening, new-file creation, supported scrollin
 
 During execution you can send a follow-up instruction. Relay cancels old planning, waits for any in-flight tool to settle, invalidates approvals and resumes with the new constraint. **Stop** blocks new dispatch immediately; an in-progress operation may finish. Resume asks the model to refresh state; stale UI references cannot be reused. Crash recovery never replays unfinished mutations automatically.
 
-Knowledge lets you read selected indexed sources and create or edit local Markdown notes in folders. Relay can generate highlights with source provenance, refresh changed sources, and copy a generated note into an editable note. Settings → Knowledge lets you share selected authored notes with a local MCP client or export an encrypted portable archive.
+Knowledge lets you read selected indexed sources and create or edit local Markdown notes in folders. Use **Add link** in a note to connect people and projects to their source documents. Relay can generate highlights with source provenance, refresh changed sources, and index a WhatsApp text export you select. Settings → Knowledge lets you share selected authored notes with a local MCP client or export an encrypted portable archive.
 
 Settings → Sources can capture the selected items in Apple Notes or Mail, read a selected Messages backup conversation or WhatsApp text export, and connect to a user-supplied MCP endpoint for reviewed reads. You can ask about these results locally without adding them to saved chat. Notes and Mail capture require macOS Automation consent for those apps. Messages backups include supported plain-text rows only.
 
 In the workspace attachment menu, choose **Inspect Image or Window**. Select a still image or use the macOS picker to select one window, then ask a question. Relay shows a preview and runs local image analysis with no tools. The image and answer are cleared when the panel closes.
 
-Settings → Access offers two opt-in shortcuts. Tap Right Command once to open or close Sidekick, or twice at the end of a supported multiline reply field to draft there. Double Tap checks that the field and its content are still current before editing. You can select a separate local drafting model and approve editable style suggestions from examples in Settings → Memory.
+Settings → Sidekick controls the notch and its shortcuts. Tap the selected modifier once to open or close Sidekick, or twice at the end of a supported multiline reply field to draft there. Double Tap checks that the field and its content are still current before editing. You can select a separate local drafting model and approve editable style suggestions from examples in Settings → Memory.
 
 Activity shows actual tool evidence, errors and uncertain effects. The model response is accompanied by software-generated checked outcomes. A “finished” run is not a claim that an arbitrary user goal or an evaluation suite has passed.
 
 ## Boundaries
 
-- Gemma is the default and works without an account. For this session, opt in under **Settings → Model → ChatGPT via Codex CLI → Use ChatGPT**. Relay reuses an existing ChatGPT login from a compatible local Codex CLI. No Relay account, API key entry, or automatic hosted fallback is involved.
+- Gemma is the default and works without an account. For this session, opt in under **Settings → Models → ChatGPT via Codex CLI → Use ChatGPT**. Relay reuses an existing ChatGPT login from a compatible local Codex CLI. No Relay account, API key entry, or automatic hosted fallback is involved.
 - In ChatGPT mode, workspace requests and action status go to OpenAI. Relay asks before sending the displayed app list or excerpt from an app or page. Relay runs the actual Mac tools and applies its normal action reviews. Earlier conversations, saved memory, indexed sources, calendar, files, background drafts, and image analysis stay with the local model. Follow-up workspace requests in ChatGPT mode start with fresh context.
 - User-requested websites may be opened after destination review; the browser may use the internet and an existing session. Network dependence differs from local inference.
 - Files are limited to explicitly granted paths, resolved against symlink escape. No broad disk scan.
 - Text/PDF extraction and output are bounded. Selected images and the first three pages of a scanned PDF can use local OCR. Review the recognized text for errors.
-- AX control requires user-granted Accessibility. Canvas apps, inaccessible controls and unsupported scrolling report limitations; no screenshot-coordinate fallback is claimed.
-- Opt-in preparation can refresh a local source brief while Relay is running. Relay can show an exact one-time macOS wake command and verify its presence in the system queue. The command must be applied separately with macOS authorization, and actual wake depends on the hardware and power state. Purchases, account administration, automatic password entry, unrestricted shell access and a mobile companion are unavailable.
+- Exact requests such as **Open Calculator** and **What is 48 × 37?** can run locally without a model and return verified results. Multi-step requests use the selected planner. Accessibility control requires macOS permission. Relay can inspect or focus a specific window, enter multiline text, and verify supported scroll position changes.
+- Morning Brief can refresh explicitly selected local sources, include a session-only agenda from selected calendars, prepare up to two local drafts, and notify you when it is ready. Explicit deadlines affect ordering, and exact source copies share review decisions. Drafts can survive relaunch while the original evidence is current. Scheduled work can resume within its original time window after sleep, a quit, or a power interruption. Relay can show a one-time macOS wake command and verify its presence in the system queue. Applying it requires macOS authorization, and actual wake depends on the hardware and power state.
+- Sidekick opens from the Mac notch, Task menu, or menu bar. It shows the active workspace provider, progress, approvals, and results. Select the current app in the notch to include it in one local task. If macOS grants screen capture access, Relay can use local OCR on that exact window when accessible text is missing. Raw recognition output is available only during that task. You can also choose a window yourself with the image and window picker.
+- Relay can stage an approved local file path in a supported native attachment chooser and verify what it entered. Choose the file yourself to complete the handoff.
+- Purchases, account administration, automatic password entry, unrestricted shell access, and a mobile companion are unavailable.
 - No persistent screenshots or telemetry. Conversation, activity, explicit memory and grants are stored locally in `~/Library/Application Support/Relay/state.json` with user-only permissions. Clear Conversation removes conversation/activity; memory and context are removable separately. Selected originals stay in place. No task content becomes memory automatically.
 - File/model loading and native inference can fail or run slowly. Task loop and model inference have budgets; already-applied changes are not rolled back.
 
@@ -115,7 +118,7 @@ Tests cover action dispatch after Stop, false model narratives, interrupted-stat
 
 ## Accessibility interaction checks
 
-See [the test cases](planning/accessibility-test-plan.md). Settings → Access → **Run accessibility check** operates a bundled harmless native window: real text entry, a reviewed Apply click, AX readback plus an independent JSON oracle, stale/disabled control rejection, review drift and queued-click invalidation. It needs user-granted Accessibility. No model is used for this controller test.
+See [the test cases](planning/accessibility-test-plan.md). Settings → Permissions → **Run accessibility check** operates bundled synthetic windows. It checks text entry, exact window focus, scrolling, a reviewed Apply click, stale and disabled control rejection, review drift, and queued-click invalidation. The test needs macOS Accessibility permission and uses an independent fixture to verify effects.
 
 `search_finder` opens Finder and enters the requested query through its visible search field. The entered query and any visible exact filename evidence are reported separately. The desktop integration test checks the visible query; model planning is tested separately.
 

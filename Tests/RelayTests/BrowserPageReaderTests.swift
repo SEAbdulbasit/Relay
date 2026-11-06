@@ -57,6 +57,26 @@ struct BrowserPageReaderTests {
         #expect(!matches(afterTitle: "Other title"))
     }
 
+    @Test func gmailShellRetryCannotSwitchBetweenProfilesSharingAnInboxURL() throws {
+        let inbox = try BrowserAutomation.validatedURL("https://mail.google.com/mail/u/0/")
+        let shell = ["Using Gmail with screen readers", "Loading…"]
+        #expect(BrowserPageReader.isGmailLoadingShell(expected: inbox, chunks: shell))
+        let lookalike = try BrowserAutomation.validatedURL("https://mail.google.com.example.test/mail/u/0/")
+        #expect(!BrowserPageReader.isGmailLoadingShell(expected: lookalike, chunks: shell))
+        #expect(!BrowserPageReader.isGmailLoadingShell(expected: inbox, chunks: shell + Array(repeating: "Message", count: 25)))
+
+        func permits(process: Bool = true, window: Bool = true, tab: Bool = true,
+                     url: String = "https://mail.google.com/mail/u/0/") -> Bool {
+            BrowserPageReader.matchesRequestedTab(sameProcess: process, sameWindow: window, sameTab: tab,
+                beforeURL: inbox.absoluteString, afterURL: url, expected: inbox)
+        }
+        #expect(permits()) // The shell document may be replaced in this exact tab.
+        #expect(!permits(window: false)) // Chrome profiles may share the URL and process.
+        #expect(!permits(tab: false))
+        #expect(!permits(process: false))
+        #expect(!permits(url: "https://mail.google.com/mail/u/1/"))
+    }
+
     @Test func combinedTextLinksAndMetadataCannotExceedSnapshotBudget() {
         for (url, title) in [("https://example.com/", "Example"), ("https://example.com/" + String(repeating: "a", count: 4000), String(repeating: "🌍", count: 2000))] {
             let budgets = BrowserPageReader.snapshotBudgets(url: url, title: title)

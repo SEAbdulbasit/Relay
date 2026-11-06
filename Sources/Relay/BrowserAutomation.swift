@@ -87,13 +87,13 @@ enum BrowserAutomation {
             throw RelayError.message("\(browser.name) is not installed. Install it or explicitly choose another browser; Relay did not open a different browser.")
         }
         if !AXIsProcessTrusted() {
-            return try await openDirectly(url: url, browser: browser, applicationURL: applicationURL)
+            return try await openDirectly(url: url, browser: browser, applicationURL: applicationURL, deadline: deadline)
         }
         try checkNavigationDeadline(deadline)
         return try await withDirectOpenFallback(deadline: deadline) {
             try await navigateWithAXAddressBar(url: url, browser: browser, applicationURL: applicationURL, deadline: deadline)
         } open: {
-            try await openDirectly(url: url, browser: browser, applicationURL: applicationURL)
+            try await openDirectly(url: url, browser: browser, applicationURL: applicationURL, deadline: deadline)
         }
     }
 
@@ -106,29 +106,26 @@ enum BrowserAutomation {
         }
     }
 
-    private static func openDirectly(url: URL, browser: Browser, applicationURL: URL) async throws -> ToolResult {
-        try Task.checkCancellation()
+    private static func openDirectly(url: URL, browser: Browser, applicationURL: URL, deadline: Date) async throws -> ToolResult {
+        try checkNavigationDeadline(deadline)
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
         let app = try await NSWorkspace.shared.open([url], withApplicationAt: applicationURL, configuration: config)
-        if AXIsProcessTrusted() {
-            let root = AXUIElementCreateApplication(app.processIdentifier)
+        if AXIsProcessTrusted(), app.bundleIdentifier == browser.rawValue {
+            let pid = app.processIdentifier
+            let root = AXUIElementCreateApplication(pid)
             AXUIElementSetMessagingTimeout(root, 0.15)
-            var matched = false
-            for _ in 0..<18 {
+            let readbackDeadline = min(deadline, Date().addingTimeInterval(3))
+            while Date() < readbackDeadline {
                 try Task.checkCancellation()
-                if let window = elementAttribute(root, kAXFocusedWindowAttribute),
-                   let doc = firstWebDocument(in: window) {
-                    let currentURL = stringAttribute(doc, "AXURL")
-                    if matchesDestination(currentURL, expected: url) {
-                        matched = true
-                        break
-                    }
+                if !app.isTerminated, NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+                   BrowserPageReader.observesSelectedDestination(root: root, pid: pid, expected: url),
+                   NSWorkspace.shared.frontmostApplication?.processIdentifier == pid {
+                    return ToolResult(summary: "The selected page in \(browser.name) shows this URL.\n\(url.absoluteString)",
+                        evidence: "The visible selected document matched the reviewed URL after Launch Services accepted the request. Launch Services does not identify the tab that received it. If the user requested a read, read this exact URL and recheck the selected tab.",
+                        verified: false)
                 }
                 try await Task.sleep(for: .milliseconds(150))
-            }
-            if matched, url.host?.lowercased().contains("mail.google.com") == true {
-                try? await Task.sleep(for: .milliseconds(900))
             }
         }
         return ToolResult(
@@ -136,25 +133,6 @@ enum BrowserAutomation {
             evidence: "NSWorkspace accepted the URL in \(browser.name). Observe this browser to verify the loaded page and requested outcome.",
             verified: false
         )
-    }
-
-    private static func firstWebDocument(in window: AXUIElement) -> AXUIElement? {
-        var queue = [window]
-        var cursor = 0
-        var visited = Set<CFHashCode>()
-        let deadline = Date().addingTimeInterval(0.3)
-        while cursor < queue.count, cursor < 200, Date() < deadline {
-            let current = queue[cursor]; cursor += 1
-            guard visited.insert(CFHash(current)).inserted else { continue }
-            AXUIElementSetMessagingTimeout(current, 0.02)
-            if attribute(current, "AXHidden") as? Bool == true { continue }
-            let role = stringAttribute(current, kAXRoleAttribute)
-            if role == "AXWebArea" { return current }
-            if let children = attribute(current, kAXChildrenAttribute) as? [AXUIElement] {
-                queue.append(contentsOf: children.prefix(80))
-            }
-        }
-        return nil
     }
 
     private static func navigateWithAXAddressBar(url: URL, browser: Browser, applicationURL: URL, deadline: Date) async throws -> ToolResult {
@@ -246,6 +224,7 @@ enum BrowserAutomation {
         guard AXUIElementPerformAction(address, confirmation as CFString) == .success else {
             throw RelayError.message("Target-bound browser address confirmation did not report success. The effect is uncertain; inspect the new tab before retrying. No Return fallback was sent.")
         }
+        var previousLanding: (document: AXUIElement, readback: LandingReadback)?
         for _ in 0..<60 {
             try checkNavigationDeadline(deadline)
             try assertForeground(pid)
@@ -253,21 +232,29 @@ enum BrowserAutomation {
             try rejectSensitiveWindow(window)
             // Never certify an arbitrary cached/background web area. The page must own
             // keyboard focus in the original window and its exact newly-created tab.
+            var currentLanding: (document: AXUIElement, readback: LandingReadback)?
             if let document = focusedDocument(root: root, window: window) {
-                let title = stringAttribute(document, kAXTitleAttribute)
+                let title = BrowserPageReader.readableDocumentTitle(title: stringAttribute(document, kAXTitleAttribute),
+                    description: stringAttribute(document, kAXDescriptionAttribute))
                 let currentURL = stringAttribute(document, "AXURL")
-                if documentMatchesReviewedNavigation(pageURL: currentURL, title: title,
-                    addressURL: stringAttribute(address, kAXValueAttribute),
-                    sameWindow: true, sameNewTab: true, ownsFocus: true, expected: url) {
-                    return ToolResult(summary: "Navigated to \(url.host ?? destination) in \(browser.name).", evidence: "Focused page AXURL and browser address readback matched the reviewed destination: \(currentURL). The original window and newly-created selected tab remained identical. Document title: \(title). This verifies the active destination, not complete loading, search-result accuracy or any form submission.", verified: true)
-                }
                 if isSecurityInterruption(title) {
                     throw RelayError.message("The browser exposed a security or authentication interruption. Handle it directly; Relay will not bypass it.")
                 }
+                if let readback = landingReadback(pageURL: currentURL, title: title, addressURL: stringAttribute(address, kAXValueAttribute),
+                    sameWindow: true, sameNewTab: true, ownsFocus: true, expected: url) {
+                    if let previousLanding, CFEqual(previousLanding.document, document), previousLanding.readback == readback {
+                        try assertForeground(pid)
+                        try assertSelectedTab(root: root, window: window, tab: navigationTab)
+                        try checkNavigationDeadline(deadline)
+                        return readback.result(browser: browser)
+                    }
+                    currentLanding = (document, readback)
+                }
             }
+            previousLanding = currentLanding
             try await Task.sleep(for: .milliseconds(100))
         }
-        throw RelayError.message("Navigation was submitted in the reviewed browser address field, but a matching fresh page URL and title were not verified. The outcome is uncertain; inspect the new tab before retrying. Redirects and unsupported browser Accessibility views require manual inspection.")
+        throw RelayError.message("Navigation was submitted in the reviewed browser address field, but the new tab did not expose a stable matching page. Inspect it before retrying. Cross-origin redirects and unsupported browser views require manual inspection.")
     }
 
     static func checkNavigationDeadline(_ deadline: Date, now: Date = Date()) throws {
@@ -283,6 +270,43 @@ enum BrowserAutomation {
         sameWindow && sameNewTab && ownsFocus && !title.isEmpty && !isSecurityInterruption(title)
             && matchesDestination(pageURL, expected: expected)
             && addressMatchesReviewedDestination(addressURL, expected: expected)
+    }
+
+    struct LandingReadback: Equatable {
+        let url: String
+        let title: String
+        let matchedReview: Bool
+
+        func result(browser: Browser) -> ToolResult {
+            if matchedReview {
+                return ToolResult(summary: "Navigated to \(url) in \(browser.name).",
+                    evidence: "The browser address and focused document agreed on the reviewed URL in the newly created tab. Document title: \(title). Page content still requires a separate read.",
+                    verified: true)
+            }
+            return ToolResult(summary: "The new tab in \(browser.name) landed at this URL.\n\(url)",
+                evidence: "The browser address and focused document agreed on this same-origin URL after the request. The reviewed destination differs. Use the observed URL for a read only if it still matches the user’s requested scope. A new navigation requires review.",
+                verified: false)
+        }
+    }
+
+    static func landingReadback(pageURL: String, title: String, addressURL: String,
+        sameWindow: Bool, sameNewTab: Bool, ownsFocus: Bool, expected: URL) -> LandingReadback? {
+        let title = BrowserPageReader.boundedText([title], maximumBytes: 1024)
+        guard sameWindow, sameNewTab, ownsFocus, !title.isEmpty, !isSecurityInterruption(title) else { return nil }
+        if documentMatchesReviewedNavigation(pageURL: pageURL, title: title, addressURL: addressURL,
+            sameWindow: sameWindow, sameNewTab: sameNewTab, ownsFocus: ownsFocus, expected: expected) {
+            return LandingReadback(url: pageURL, title: title, matchedReview: true)
+        }
+        guard let current = try? validatedURL(pageURL), addressMatchesReviewedDestination(addressURL, expected: current),
+              let source = URLComponents(url: expected, resolvingAgainstBaseURL: false),
+              let target = URLComponents(url: current, resolvingAgainstBaseURL: false),
+              let scheme = source.scheme?.lowercased(), scheme == target.scheme?.lowercased(),
+              source.host?.lowercased() == target.host?.lowercased(),
+              source.host?.lowercased() != "mail.google.com",
+              (source.port ?? (scheme == "https" ? 443 : 80)) == (target.port ?? (scheme == "https" ? 443 : 80)),
+              target.percentEncodedQuery == nil || target.percentEncodedQuery == source.percentEncodedQuery,
+              target.percentEncodedFragment == nil || target.percentEncodedFragment == source.percentEncodedFragment else { return nil }
+        return LandingReadback(url: pageURL, title: title, matchedReview: false)
     }
 
     /// Chrome may omit the scheme from its displayed address after Return. This normalization
@@ -446,8 +470,9 @@ enum BrowserAutomation {
     }
 
     static func isSecurityInterruption(_ title: String) -> Bool {
-        let title = title.lowercased()
-        return ["privacy error", "your connection is not private", "not secure", "certificate", "authentication required", "sign in to", "log in to"].contains { title.contains($0) }
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return ["sign in", "log in", "login"].contains(title)
+            || ["privacy error", "your connection is not private", "not secure", "certificate", "authentication required", "sign in to", "log in to", "sign in -", "log in -"].contains { title.contains($0) }
     }
 
     private static func isAddressField(_ field: AXUIElement) -> Bool {

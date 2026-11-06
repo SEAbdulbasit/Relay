@@ -40,7 +40,9 @@ class TestF08SettingsReentry(RelayE2ETestBase):
         """Verifies close button supports keyboard cancel shortcut (Escape)."""
         self.assertIn(".keyboardShortcut(.cancelAction)", self.content)
 
-    def test_f08_06_offline_local_badge_in_settings(self):
-        """Verifies local-only indicator in settings navigation sidebar."""
-        has_offline = "100% Offline" in self.content or "Runs on your Mac" in self.content
-        self.assertTrue(has_offline, "Settings navigation must include local offline badge")
+    def test_f08_06_settings_explain_local_and_optional_hosted_models(self):
+        """Verifies the model page describes account-free local inference and the optional hosted provider."""
+        self.assertIn("Gemma and Relay’s private sources work on this Mac without an account.", self.content)
+        self.assertIn("WorkspaceCodexOption(store:", self.content)
+        provider = (self.sources_relay / "WorkspaceCodexOption.swift").read_text(encoding="utf-8")
+        self.assertIn("ChatGPT via Codex CLI", provider)

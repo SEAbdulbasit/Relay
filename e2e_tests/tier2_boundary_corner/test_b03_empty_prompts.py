@@ -37,6 +37,6 @@ class TestB03EmptyPrompts(RelayE2ETestBase):
         self.assertTrue(has_control_handling)
 
     def test_b03_05_composer_placeholder_rendered_when_empty(self):
-        """Verifies composer shows placeholder when store.draft.isEmpty."""
-        self.assertIn("store.draft.isEmpty", self.main_content)
-        self.assertIn("Message Relay", self.main_content)
+        """Verifies the draft text field has a visible prompt in its empty state."""
+        self.assertIn('TextField("Message Relay", text: $store.draft', self.main_content)
+        self.assertIn('prompt: Text(isSteering ? "Steer the current task…" : "Ask Relay…")', self.main_content)

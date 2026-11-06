@@ -49,11 +49,12 @@ struct NativePersonalSourcesTests {
         #expect(batch.items.first?.text == "ملاحظة خاصة بالمثال 🌍\nSecond line")
     }
 
-    @Test func mailReadsOnlySelectedBodyAndMetadataWithinItsBudget() throws {
+    @Test func mailReadsOnlySelectedBodyAndMetadataWithinItsBudget() async throws {
         let message = try reference(.mail, "fixture message")
         let selection = selection([message])
         var requested: [NativeSourceAppleEvents.Property] = []
         let text = String(repeating: "Café 🌍 ", count: 1200)
+        let sentAt = Date(timeIntervalSince1970: 1_794_000_000)
         let batch = try NativeSourceAppleEvents.readSelected(.mail) { property, reference in
             requested.append(property)
             switch property {
@@ -61,15 +62,27 @@ struct NativePersonalSourcesTests {
             case .title: return .init(string: "Synthetic subject")
             case .sender: return .init(string: "Fixture Sender <fixture@example.invalid>")
             case .body: return .init(string: text)
+            case .sentAt: return .init(date: sentAt)
+            case .receivedAt: throw NativeSourceAppleEvents.Failure.unavailableProperty
             default: throw NativeSourceAppleEvents.Failure.unavailableProperty
             }
         }
-        #expect(requested == [.selection, .title, .sender, .body, .selection])
+        #expect(requested == [.selection, .title, .sender, .body, .sentAt, .receivedAt, .selection])
+        #expect(NativeSourceAppleEvents.Property.sentAt.code(for: .mail) == NativeSourceAppleEvents.fourCC("drcv"))
+        #expect(NativeSourceAppleEvents.Property.receivedAt.code(for: .mail) == NativeSourceAppleEvents.fourCC("rdrc"))
         #expect(batch.items.first?.sender == "Fixture Sender <fixture@example.invalid>")
         let result = try #require(batch.items.first)
+        #expect(result.sentAt == sentAt)
+        #expect(result.receivedAt == nil)
         #expect(result.text.utf8.count <= 8192)
         #expect(result.textLimited)
         #expect(!result.text.contains("�"))
+
+        let sources = NativePersonalSources { _, _ in batch }
+        await sources.captureSelection(.mail, requestPermission: false)
+        let read = try sources.read(kind: .mail, query: String(sentAt.ISO8601Format().prefix(10)))
+        #expect(read.summary.contains("Sent: \(sentAt.ISO8601Format())"))
+        #expect(!read.summary.contains("Received:"))
     }
 
     @Test func selectionScopeRejectsOversizedForeignAndNonUniqueReferencesBeforeItemReads() throws {

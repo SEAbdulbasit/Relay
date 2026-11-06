@@ -31,7 +31,7 @@ class TestRealWorldScenarios(RelayE2ETestBase):
         app_content = relay_app.read_text(encoding="utf-8")
 
         # 1. Verify 5 steps present
-        steps = ["Welcome", "Offline Privacy", "Local Model", "Mac Access", "Launchpad"]
+        steps = ['"Welcome"', '"Privacy"', '"Model"', '"Mac Access"', '"Launchpad"']
         for s in steps:
             self.assertIn(s, view_content)
 

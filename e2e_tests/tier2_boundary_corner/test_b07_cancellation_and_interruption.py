@@ -23,8 +23,9 @@ class TestB07CancellationAndInterruption(RelayE2ETestBase):
 
     def test_b07_02_store_stop_cancels_running_task(self):
         """Verifies AssistantStore stop() transitions phase and cancels active tasks."""
-        self.assertIn("func stop()", self.store_content)
-        self.assertIn("phase = .stopped", self.store_content)
+        stop = self.store_content.split("func stop(", 1)[1].split("\n    func ", 1)[0]
+        self.assertIn("task?.cancel()", stop)
+        self.assertIn("phase = .stopped", stop)
 
     def test_b07_03_interrupted_phase_retains_completed_steps(self):
         """Verifies stopped task records state and allows inspect & resume."""

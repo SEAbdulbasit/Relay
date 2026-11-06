@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Testing
 @testable import Relay
 
@@ -12,6 +13,11 @@ struct ProactiveSuggestionsTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("relay-suggestions-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root.appendingPathComponent("state.json")
+    }
+
+    private func hashedRecord(_ text: String, path: String) -> KnowledgeRecord {
+        let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+        return record(text, path: path, hash: digest)
     }
 
     @Test func defaultOffDoesNotPrepareOrReadSourcesAndOptInDoesNotAutoRun() {
@@ -38,6 +44,102 @@ struct ProactiveSuggestionsTests {
         #expect(suggestions.suggestions.allSatisfy { !$0.reason.contains("Maya") && !$0.reason.contains("deadline") })
     }
 
+    @Test func deadlinesRankAcrossTheWholeBoundedScanWithoutInterpretingPlainDates() {
+        let first = record((0..<42).map { "TODO: Undated task \($0)" }.joined(separator: "\n"), path: "/synthetic/a.md")
+        let later = record("""
+            TODO: Review meeting notes for 2026-11-01
+            TODO: Check an invalid day due 2026-02-30
+            TODO: Check ambiguous timing due 2026-11-01 deadline: 2026-11-03
+            TODO: Check an incomplete tag [due: 2026-11-01
+            TODO: Confirm the launch [deadline: 2026-11-12]
+            TODO: Send the internal draft due 2026-11-08
+            TODO: Prepare test notes due:2026-11-08
+            """, path: "/synthetic/z.md")
+        let suggestions = ProactiveSuggestions(persistenceURL: nil)
+        suggestions.setEnabled(true)
+        suggestions.prepare(records: [first, later], now: now)
+        let cards = suggestions.suggestions
+        #expect(cards.count == 40)
+        #expect(cards.prefix(3).map(\.dueDay) == ["2026-11-08", "2026-11-08", "2026-11-12"])
+        #expect(cards.prefix(3).map(\.title) == [
+            "Send the internal draft due 2026-11-08", "Prepare test notes due:2026-11-08", "Confirm the launch [deadline: 2026-11-12]",
+        ])
+        #expect(cards.dropFirst(3).allSatisfy { $0.dueDay == nil })
+        let orderedIDs = cards.map(\.id)
+        suggestions.prepare(records: [later, first], now: now.addingTimeInterval(60))
+        #expect(suggestions.suggestions.map(\.id) == orderedIDs)
+    }
+
+    @Test func identicalCopiesRetainTheDraftsExactSourceWhileUnrelatedMatchingActionsStaySeparate() throws {
+        let url = try persistenceURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let text = "Launch project\nTODO: Review notes [due: 2026-11-08]"
+        let copy = hashedRecord(text, path: "/synthetic/a.md")
+        let original = hashedRecord(text, path: "/synthetic/z.md")
+        let unrelated = hashedRecord("Different project\nTODO: Review notes [due: 2026-11-08]", path: "/synthetic/b.md")
+        let first = ProactiveSuggestions(persistenceURL: url)
+        first.setEnabled(true)
+        first.setScheduledDraftsEnabled(true)
+        first.prepare(records: [original], now: now)
+        let id = try #require(first.suggestions.first?.id)
+        #expect(first.publishScheduledDraft("Review the launch notes.", for: id, now: now))
+
+        let restored = ProactiveSuggestions(persistenceURL: url)
+        restored.restorePreparedDrafts(records: [unrelated, copy, original], now: now.addingTimeInterval(60))
+        #expect(restored.suggestions.count == 2)
+        let matched = try #require(restored.suggestions.first(where: { $0.id == id }))
+        #expect(matched.sourcePaths == [original.sourcePath])
+        #expect(matched.matchingSourcePaths == [copy.sourcePath])
+        #expect(restored.preparedDrafts[id] == "Review the launch notes.")
+
+        restored.purge(records: [original, unrelated], now: now.addingTimeInterval(120))
+        #expect(restored.suggestions.first(where: { $0.id == id })?.matchingSourcePaths.isEmpty == true)
+        restored.prepare(records: [copy, unrelated], now: now.addingTimeInterval(180))
+        #expect(restored.suggestions.count == 2)
+        #expect(restored.preparedDrafts.isEmpty)
+    }
+
+    @Test func snoozeAndDismissFollowIdenticalEvidenceAcrossAuthorizedCopies() throws {
+        let url = try persistenceURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let text = "Current project\nTODO: Review notes"
+        let original = hashedRecord(text, path: "/synthetic/a.md")
+        let copy = hashedRecord(text, path: "/synthetic/b.md")
+        let updated = hashedRecord(text + "\nRevised project scope", path: "/synthetic/c.md")
+        let first = ProactiveSuggestions(persistenceURL: url)
+        first.setEnabled(true)
+        first.prepare(records: [original, copy], now: now)
+        let id = try #require(first.suggestions.first?.id)
+        #expect(first.snooze(id, days: 1, now: now))
+
+        let restored = ProactiveSuggestions(persistenceURL: url)
+        restored.prepare(records: [copy, updated], now: now.addingTimeInterval(60))
+        #expect(restored.snoozedCount == 1)
+        #expect(restored.suggestions.flatMap(\.sourcePaths) == [updated.sourcePath])
+        restored.dismiss(id)
+        let reopened = ProactiveSuggestions(persistenceURL: url)
+        reopened.prepare(records: [copy, updated], now: now.addingTimeInterval(86_400))
+        #expect(reopened.snoozedCount == 0)
+        #expect(reopened.suggestions.flatMap(\.sourcePaths) == [updated.sourcePath])
+    }
+
+    @Test func legacyPathDismissalStillHidesTheSameEvidenceWhenACopyIsIndexed() throws {
+        let url = try persistenceURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let source = hashedRecord("TODO: Review notes", path: "/synthetic/z.md")
+        let copy = hashedRecord(source.text, path: "/synthetic/a.md")
+        let original = ProactiveSuggestions(persistenceURL: nil)
+        original.setEnabled(true)
+        original.prepare(records: [source], now: now)
+        let id = try #require(original.suggestions.first?.id)
+        let previousPreferences: [String: Any] = ["version": 1, "enabled": true, "dismissedIDs": [id]]
+        try JSONSerialization.data(withJSONObject: previousPreferences).write(to: url)
+
+        let restored = ProactiveSuggestions(persistenceURL: url)
+        restored.prepare(records: [copy, source], now: now)
+        #expect(restored.suggestions.isEmpty)
+    }
+
     @Test func dedupAndDismissalsPersistButSourceTextDoesNot() throws {
         let url = try persistenceURL(); defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         let suggestions = ProactiveSuggestions(persistenceURL: url)
@@ -56,6 +158,50 @@ struct ProactiveSuggestionsTests {
         #expect(!(try String(contentsOf: url, encoding: .utf8)).contains("PRIVATE_SOURCE_MARKER"))
         restored.clear()
         restored.prepare(records: [source], now: now)
+        #expect(restored.suggestions.count == 1)
+    }
+
+    @Test func scheduledDraftRestoresOnlyAfterTheExactCurrentSourceIsRebuilt() throws {
+        let url = try persistenceURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let source = record("TODO: SOURCE_QUOTATION_MARKER")
+        let first = ProactiveSuggestions(persistenceURL: url)
+        first.setEnabled(true)
+        first.setScheduledDraftsEnabled(true)
+        first.prepare(records: [source], now: now)
+        let id = try #require(first.suggestions.first?.id)
+        #expect(first.publishScheduledDraft("Open the review document.", for: id, now: now))
+        #expect(!(try String(contentsOf: url, encoding: .utf8)).contains("SOURCE_QUOTATION_MARKER"))
+
+        let restored = ProactiveSuggestions(persistenceURL: url)
+        #expect(restored.preparedDrafts.isEmpty)
+        restored.restorePreparedDrafts(records: [source], now: now.addingTimeInterval(60))
+        #expect(restored.preparedDrafts[id] == "Open the review document.")
+        restored.purge(records: [record(source.text, hash: "new-version")], now: now.addingTimeInterval(120))
+        #expect(restored.preparedDrafts.isEmpty)
+        let reopened = ProactiveSuggestions(persistenceURL: url)
+        reopened.restorePreparedDrafts(records: [source], now: now.addingTimeInterval(180))
+        #expect(reopened.preparedDrafts.isEmpty)
+    }
+
+    @Test func restoredDraftExpiresFromItsOriginalCreationEvenAfterCardRebuild() throws {
+        let url = try persistenceURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let source = record("TODO: Check draft")
+        let first = ProactiveSuggestions(persistenceURL: url)
+        first.setEnabled(true)
+        first.setScheduledDraftsEnabled(true)
+        first.prepare(records: [source], now: now)
+        let id = try #require(first.suggestions.first?.id)
+        #expect(!first.publishScheduledDraft("  ", for: id, now: now))
+        #expect(!first.publishScheduledDraft(String(repeating: "a", count: 2_001), for: id, now: now))
+        #expect(first.publishScheduledDraft("Check the draft.", for: id, now: now))
+
+        let restored = ProactiveSuggestions(persistenceURL: url)
+        restored.restorePreparedDrafts(records: [source], now: now.addingTimeInterval(3_600))
+        #expect(restored.preparedDrafts[id] == "Check the draft.")
+        restored.purge(records: [source], now: now.addingTimeInterval(86_400))
+        #expect(restored.preparedDrafts.isEmpty)
         #expect(restored.suggestions.count == 1)
     }
 

@@ -17,6 +17,28 @@ nonisolated struct NativePersonalSourceItem: Identifiable, Sendable, Equatable {
     let sender: String?
     let text: String
     let textLimited: Bool
+    let sentAt: Date?
+    let receivedAt: Date?
+
+    init(id: String, title: String, sender: String?, text: String, textLimited: Bool,
+         sentAt: Date? = nil, receivedAt: Date? = nil) {
+        self.id = id
+        self.title = title
+        self.sender = sender
+        self.text = text
+        self.textLimited = textLimited
+        self.sentAt = sentAt
+        self.receivedAt = receivedAt
+    }
+
+    fileprivate var labels: [String] {
+        [sender.map { "Sender: \($0)" }, sentAt.map { "Sent: \($0.ISO8601Format())" },
+         receivedAt.map { "Received: \($0.ISO8601Format())" }].compactMap { $0 }
+    }
+
+    fileprivate var searchableFields: [String] {
+        [title, text] + [sender, sentAt?.ISO8601Format(), receivedAt?.ISO8601Format()].compactMap { $0 }
+    }
 }
 
 nonisolated struct NativePersonalSourceBatch: Sendable {
@@ -111,7 +133,7 @@ final class NativePersonalSources {
             throw RelayError.message("Search the captured selection using plain text up to 256 UTF-8 bytes.")
         }
         let matches = snapshot.items.filter { item in
-            term.isEmpty || [item.title, item.sender ?? "", item.text].contains { $0.localizedStandardContains(term) }
+            term.isEmpty || item.searchableFields.contains { $0.localizedStandardContains(term) }
         }
         let header = "\(kind.displayName) selection captured at \(snapshot.capturedAt.ISO8601Format()) (untrusted source text)."
         guard !matches.isEmpty else {
@@ -122,7 +144,7 @@ final class NativePersonalSources {
         var summary = header
         var limited = false
         for item in matches {
-            let heading = "\n\n\(item.title)" + (item.sender.map { "\nSender: \($0)" } ?? "") + "\n"
+            let heading = "\n\n" + ([item.title] + item.labels).joined(separator: "\n") + "\n"
             let remaining = 11_000 - summary.utf8.count - heading.utf8.count
             guard remaining > 0 else { limited = true; break }
             let body = Self.bounded(item.text, maximumBytes: remaining)

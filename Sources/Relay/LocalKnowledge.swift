@@ -41,6 +41,7 @@ final class LocalKnowledge {
         didSet { if records != oldValue { onRecordsChanged?(records) } }
     }
     @ObservationIgnored var onRecordsChanged: (([KnowledgeRecord]) -> Void)?
+    @ObservationIgnored var onExplicitForget: ((String?) -> Void)?
     private(set) var status = "No sources indexed. Choose files or folders, then index explicitly."
     private(set) var isIndexing = false
     @ObservationIgnored private let persistenceURL: URL?
@@ -74,38 +75,61 @@ final class LocalKnowledge {
     /// Atomically replaces the index only after a bounded, explicit scan completes.
     /// A canceled scan never publishes its partial work.
     func index(grants: [ScopeGrant]) async {
-        guard !isIndexing else { return }
+        _ = await scan(grants: grants, refreshing: false)
+    }
+
+    /// Refreshes the explicitly selected roots and keeps records outside those roots.
+    func refresh(grants: [ScopeGrant]) async throws {
+        guard !isIndexing else { throw RelayError.message("Wait for local indexing to finish before refreshing sources.") }
+        guard await scan(grants: grants, refreshing: true) else {
+            try Task.checkCancellation()
+            throw RelayError.message(status)
+        }
+    }
+
+    private func scan(grants: [ScopeGrant], refreshing: Bool) async -> Bool {
+        guard !isIndexing, !Task.isCancelled else { return false }
+        let roots = grants.compactMap { grant -> URL? in
+            guard let url = try? ToolPolicy.scopedURL(grant.path, grants: grants), Self.allowedSource(url),
+                  !refreshing || (Self.refreshPathMatches(grant.path, url: url) && Self.isLocalRefreshSource(url)) else { return nil }
+            return url
+        }.sorted { $0.path < $1.path }
+        if refreshing, roots.isEmpty {
+            status = "None of the selected refresh sources is available at its approved path."
+            return false
+        }
+        let explicitlySelected = Set(roots)
         generation += 1
         let run = generation
         isIndexing = true
         status = "Indexing selected sources on this Mac…"
         let manager = FileManager.default
-        var next: [KnowledgeRecord] = []
-        var seen = Set<String>()
+        let preserved = refreshing ? records.filter { record in
+            !roots.contains { root in record.sourcePath == root.path || record.sourcePath.hasPrefix(root.path + "/") }
+        } : []
+        var next = preserved
+        var seen = Set(next.map(\.sourcePath))
         var scanned = 0
-        var totalBytes = 0
-        var skipped = 0
+        var totalBytes = next.reduce(0) { $0 + $1.byteCount }
+        var skipped = refreshing ? grants.count - roots.count : 0
         var capped = false
-        let roots = grants.compactMap { grant -> URL? in
-            guard let url = try? ToolPolicy.scopedURL(grant.path, grants: grants), Self.allowedSource(url) else { return nil }
-            return url
-        }.sorted { $0.path < $1.path }
         let keys: [URLResourceKey] = [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .isPackageKey, .fileSizeKey, .contentModificationDateKey]
         for root in roots {
-            guard run == generation, !Task.isCancelled else { finishCancellation(run); return }
+            guard run == generation, !Task.isCancelled else { finishCancellation(run); return false }
             let isDirectory = (try? root.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
             let enumerator = isDirectory ? manager.enumerator(at: root, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles, .skipsPackageDescendants]) : nil
             var single: URL? = isDirectory ? nil : root
             while let candidate = single ?? (enumerator?.nextObject() as? URL) {
                 single = nil
                 await Task.yield()
-                guard run == generation, !Task.isCancelled else { finishCancellation(run); return }
+                guard run == generation, !Task.isCancelled else { finishCancellation(run); return false }
                 scanned += 1
                 guard scanned <= limits.maxScannedEntries, next.count < limits.maxFiles else { capped = true; break }
                 let inspected = try? candidate.resourceValues(forKeys: Set(keys))
                 guard Self.allowedSource(candidate), let values = inspected,
                       values.isSymbolicLink != true, values.isPackage != true,
-                      let url = try? ToolPolicy.scopedURL(candidate.path, grants: grants) else {
+                      let url = try? ToolPolicy.scopedURL(candidate.path, grants: grants),
+                      !refreshing || (Self.refreshPathMatches(candidate.path, url: url) && Self.isLocalRefreshSource(url)) else {
                     // Foundation may apply skipDescendants to the following real folder if
                     // called on a symlink/file leaf. Prune only an actual rejected directory.
                     if inspected?.isDirectory == true, inspected?.isSymbolicLink != true { enumerator?.skipDescendants() }
@@ -117,7 +141,7 @@ final class LocalKnowledge {
                 guard size >= 0, size <= limits.maxFileBytes, size <= limits.maxTotalBytes - totalBytes else { skipped += 1; capped = true; continue }
                 guard let data = Self.boundedData(url, maximum: limits.maxFileBytes), data.count == size,
                       data.count <= limits.maxTotalBytes - totalBytes,
-                      let extracted = extract(data, extension: url.pathExtension), !extracted.text.isEmpty,
+                      let extracted = extract(data, source: url, explicitlySelected: explicitlySelected.contains(url)), !extracted.text.isEmpty,
                       let currentURL = try? ToolPolicy.scopedURL(candidate.path, grants: grants), currentURL == url,
                       let after = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
                       after.contentModificationDate == values.contentModificationDate, after.fileSize == size else { skipped += 1; continue }
@@ -128,11 +152,24 @@ final class LocalKnowledge {
             }
             if capped && (scanned > limits.maxScannedEntries || next.count >= limits.maxFiles) { break }
         }
-        guard run == generation, !Task.isCancelled else { finishCancellation(run); return }
-        records = next.sorted { $0.sourcePath < $1.sourcePath }
+        guard run == generation, !Task.isCancelled else { finishCancellation(run); return false }
+        // Searches can discard a stale record during a yielded refresh. Keep that
+        // decision rather than restoring an unrelated snapshot from before the scan.
+        let kept = Set(preserved.map(\.sourcePath))
+        let current = Set(records.map(\.sourcePath))
+        let sorted = next.filter { !kept.contains($0.sourcePath) || current.contains($0.sourcePath) }
+            .sorted { $0.sourcePath < $1.sourcePath }
         isIndexing = false
-        status = "Indexed \(records.count) sources locally. \(skipped) skipped. \(records.filter { $0.coverageNote != nil }.count) sources have coverage notes." + (capped ? " Scan limits reached; select a smaller scope for complete coverage." : "")
-        persist()
+        if refreshing, !persist(records: sorted) { return false }
+        records = sorted
+        let count = records.count
+        let withCoverage = records.count { $0.coverageNote != nil }
+        status = "Indexed \(count) \(count == 1 ? "source" : "sources") locally. \(skipped) skipped."
+        if withCoverage > 0 {
+            status += withCoverage == 1 ? " 1 source has a coverage note." : " \(withCoverage) sources have coverage notes."
+        }
+        if capped { status += " Scan limits reached. Select a smaller scope for complete coverage." }
+        return refreshing || persist()
     }
 
     /// Revalidates scope and file content before returning source text. Changed, deleted or
@@ -156,6 +193,7 @@ final class LocalKnowledge {
     func removeSource(path: String) {
         cancelActiveScan()
         guard let url = try? ToolPolicy.canonicalURL(path) else { return }
+        onExplicitForget?(url.path)
         records.removeAll { $0.sourcePath == url.path || $0.sourcePath.hasPrefix(url.path + "/") }
         status = "Source forgotten from the local index. Original files are unchanged."
         persist()
@@ -163,6 +201,7 @@ final class LocalKnowledge {
 
     func clear() {
         cancelActiveScan()
+        onExplicitForget?(nil)
         records.removeAll()
         status = "Local index cleared. Original files and approved memory are unchanged."
         persist()
@@ -204,7 +243,7 @@ final class LocalKnowledge {
 
     /// Returns Markdown for a user-chosen local destination; never writes or transmits it itself.
     func exportMarkdown() -> String {
-        "# Relay local source index\n\nLexical source excerpts; not approved preference memory. Content reflects the last explicit indexing operation.\n\n" + records.map {
+        "# Relay local source index\n\nLexical source excerpts; not approved preference memory. Content reflects the last authorized indexing operation.\n\n" + records.map {
             "## \($0.title)\n\nSource: \($0.sourcePath)\n\nModified: \($0.modifiedAt.ISO8601Format())\n\nCoverage: \($0.coverageNote ?? "Complete extracted text within the declared index limits")\n\n\($0.text)\n"
         }.joined(separator: "\n")
     }
@@ -216,6 +255,16 @@ final class LocalKnowledge {
         if blocked.contains(path) { return false }
         if path.hasPrefix("/System/") || path.hasPrefix("/Library/") || path.hasPrefix(NSHomeDirectory() + "/Library/") { return false }
         return !url.pathComponents.dropFirst().contains(where: { $0.hasPrefix(".") })
+    }
+    private static func isLocalRefreshSource(_ url: URL) -> Bool {
+        guard let values = try? url.resourceValues(forKeys: [.volumeIsLocalKey, .isUbiquitousItemKey]) else { return false }
+        return values.volumeIsLocal == true && values.isUbiquitousItem != true
+    }
+    static func refreshPathMatches(_ selectedPath: String, url: URL) -> Bool {
+        // Foundation presents built-in macOS aliases such as /private/var as /var.
+        // Compare the resolved URL with both representations, without resolving the
+        // selected path anew on this side of the comparison.
+        url.path == selectedPath || url.resolvingSymlinksInPath().standardizedFileURL.path == selectedPath
     }
     private static func boundedData(_ url: URL, maximum: Int) -> Data? {
         guard maximum > 0 else { return nil }
@@ -231,14 +280,15 @@ final class LocalKnowledge {
         let upper = text.index(lower, offsetBy: 500, limitedBy: text.endIndex) ?? text.endIndex
         return (lower > text.startIndex ? "…" : "") + String(text[lower..<upper]) + (upper < text.endIndex ? "…" : "")
     }
-    private func extract(_ data: Data, extension ext: String) -> (text: String, coverageNote: String?)? {
+    private func extract(_ data: Data, source: URL, explicitlySelected: Bool) -> (text: String, coverageNote: String?)? {
         let raw: String
         var notes: [String] = []
-        if ext.lowercased() == "eml" {
+        let ext = source.pathExtension.lowercased()
+        if ext == "eml" {
             guard let mail = try? MailExportReader.parse(data) else { return nil }
             raw = mail.sourceText
             if let coverage = mail.coverageNote { notes.append(coverage) }
-        } else if ext.lowercased() == "pdf" {
+        } else if ext == "pdf" {
             guard let document = PDFDocument(data: data), !document.isLocked else { return nil }
             var pages: [String] = []
             var pagesRead = 0
@@ -252,6 +302,10 @@ final class LocalKnowledge {
             if pagesRead < document.pageCount { notes.append("Only the first \(pagesRead) of \(document.pageCount) PDF pages were extracted; remaining pages were not indexed.") }
         } else {
             guard let text = String(data: data, encoding: .utf8) else { return nil }
+            if ext == "txt", explicitlySelected,
+               let transcript = WhatsAppExportReader.excerpt(text: text, fileName: source.lastPathComponent, maximumBytes: limits.maxTextBytes) {
+                return (transcript.text, transcript.coverage)
+            }
             raw = text
         }
         guard limits.maxTextBytes > 0 else { return nil }
@@ -270,14 +324,15 @@ final class LocalKnowledge {
         if run == generation { isIndexing = false; status = "Indexing canceled. Previously indexed sources are unchanged." }
     }
     private struct SavedIndex: Codable { let version: Int; let records: [KnowledgeRecord] }
-    private func persist() {
-        guard let persistenceURL else { return }
+    @discardableResult private func persist(records snapshot: [KnowledgeRecord]? = nil) -> Bool {
+        guard let persistenceURL else { return true }
         do {
-            let data = try JSONEncoder().encode(SavedIndex(version: 2, records: records))
+            let data = try JSONEncoder().encode(SavedIndex(version: 2, records: snapshot ?? records))
             guard data.count <= 20_971_520 else { throw RelayError.message("The encoded index exceeded its storage limit. The previous saved index was preserved.") }
             try FileManager.default.createDirectory(at: persistenceURL.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             try LocalPrivateFileWriter.write(data: data, to: persistenceURL, maximumBytes: 20_971_520)
-        } catch { status = "Could not save the local index: \(error.localizedDescription)" }
+            return true
+        } catch { status = "Could not save the local index: \(error.localizedDescription)"; return false }
     }
     private func restore() {
         guard let persistenceURL, FileManager.default.fileExists(atPath: persistenceURL.path) else { return }

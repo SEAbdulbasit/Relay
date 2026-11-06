@@ -34,6 +34,46 @@ struct LocalKnowledgeTests {
         #expect(knowledge.exportMarkdown().contains("not approved preference memory"))
     }
 
+    @Test func indexesRecentAttributedWhatsAppMessagesFromAnExplicitExport() async throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let export = root.appending(path: "_chat.txt")
+        let chat = """
+        \u{200E}[1/11/26, 1:41:02\u{202F}PM] Messages use end-to-end encryption.
+        [1/11/26, 1:42:03\u{202F}PM] Mira: Earlier message outside the recent excerpt
+        [1/11/26, 1:43:04\u{202F}PM] Omar: Orchard handoff
+        Meet at the north gate.
+        """
+        try write(chat, to: export)
+        let grants = [ScopeGrant(path: root.path), ScopeGrant(path: export.path)]
+        let knowledge = LocalKnowledge(persistenceURL: nil, limits: .init(maxTextBytes: 90))
+        await knowledge.index(grants: grants)
+        let record = try #require(knowledge.records.first)
+        #expect(record.text == "[1/11/26, 1:43:04\u{202F}PM] Omar\nOrchard handoff\nMeet at the north gate.")
+        #expect(record.coverageNote?.contains("Indexed 1 of 2 attributed messages") == true)
+        #expect(record.coverageNote?.contains("Skipped 1 entry") == true)
+        #expect(knowledge.search(query: "Orchard", grants: grants).first?.sourcePath == record.sourcePath)
+        #expect(knowledge.search(query: "Earlier", grants: grants).isEmpty)
+
+        let folderOnly = LocalKnowledge(persistenceURL: nil)
+        await folderOnly.index(grants: [.init(path: root.path)])
+        #expect(folderOnly.records.first?.text == chat)
+        #expect(folderOnly.records.first?.coverageNote == nil)
+    }
+
+    @Test func preservesAndroidAttributionAndDeclinesUnknownTimestampSyntax() throws {
+        let chat = """
+        6/11/26, 13:55 - Asha: First message
+        6/11/26, 14:01 - Leila: Second message
+        """
+        let fileName = "WhatsApp Chat with Fixture.txt"
+        let result = try #require(WhatsAppExportReader.excerpt(text: chat, fileName: fileName, maximumBytes: 1_000))
+        #expect(result.text == "[6/11/26, 13:55] Asha\nFirst message\n\n[6/11/26, 14:01] Leila\nSecond message")
+        #expect(WhatsAppExportReader.excerpt(text: chat, fileName: "meeting.txt", maximumBytes: 1_000) == nil)
+        let changedFormat = chat + "\n6/11/26, 14:05 >> Juan: Do not assign this to Leila"
+        #expect(WhatsAppExportReader.excerpt(text: changedFormat, fileName: fileName, maximumBytes: 1_000) == nil)
+    }
+
     @Test func rejectedSymlinkLeafDoesNotHideTheFollowingAllowedNestedFolder() async throws {
         let root = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
         let selected = root.appendingPathComponent("selected", isDirectory: true)

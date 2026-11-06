@@ -19,8 +19,8 @@ class TestF05OnboardingLifecycle(RelayE2ETestBase):
 
     def test_f05_01_five_step_lifecycle_defined(self):
         """Verifies 5 steps defined in OnboardingView: Welcome, Privacy, Model, Access, Launchpad."""
-        for step_name in ["Welcome", "Offline Privacy", "Local Model", "Mac Access", "Launchpad"]:
-            self.assertIn(step_name, self.view_content)
+        for step_view in ["welcomeStep", "privacyStep", "modelStep", "accessStep", "readyStep"]:
+            self.assertIn(f"private var {step_view}: some View", self.view_content)
 
     def test_f05_02_step_clamping_between_0_and_4(self):
         """Verifies step index is clamped between 0 and 4 in OnboardingCoordinator."""

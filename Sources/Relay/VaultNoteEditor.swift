@@ -20,6 +20,9 @@ struct VaultNoteEditor: View {
     @State private var bodyText: String
     @State private var folderName = ""
     @State private var status: String?
+    @State private var linkKind: KnowledgeRelationship.Kind = .person
+    @State private var linkName = ""
+    @State private var showsLinkPrompt = false
 
     let request: Request
     let folders: [LocalMarkdownFolder]
@@ -50,6 +53,21 @@ struct VaultNoteEditor: View {
             } else if let folder = request.note?.folderName {
                 Label(folder, systemImage: "folder").foregroundStyle(.secondary)
             }
+            HStack {
+                Text("Markdown").font(.callout).foregroundStyle(.secondary)
+                Spacer()
+                Menu("Add link", systemImage: "link") {
+                    ForEach(KnowledgeRelationship.Kind.allCases, id: \.self) { kind in
+                        Button(kind.title, systemImage: kind.icon) {
+                            linkKind = kind
+                            linkName = ""
+                            showsLinkPrompt = true
+                        }
+                    }
+                }
+                .fixedSize()
+                .accessibilityIdentifier("knowledge.addNoteLink")
+            }
             TextEditor(text: $bodyText)
                 .font(.system(.body, design: .monospaced))
                 .frame(minHeight: 220)
@@ -75,6 +93,21 @@ struct VaultNoteEditor: View {
         .padding(20)
         .frame(minWidth: 440)
         .onAppear { titleFocused = true }
+        .alert("Link a \(linkKind.rawValue)", isPresented: $showsLinkPrompt) {
+            TextField("Name", text: $linkName)
+            Button("Add link") { addLink() }
+                .disabled(KnowledgeRelationship(kind: linkKind, name: linkName) == nil)
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private func addLink() {
+        guard let relationship = KnowledgeRelationship(kind: linkKind, name: linkName) else { return }
+        let existing = KnowledgeWikiLink.lines(in: bodyText).lazy.filter(\.allowsLinks).contains { line in
+            KnowledgeWikiLink.inLine(line.text).contains { $0.relationship?.url == relationship.url }
+        }
+        guard !existing else { return }
+        bodyText = relationship.markdown + (bodyText.isEmpty ? "" : "\n\n" + bodyText)
     }
 
     private func save() {

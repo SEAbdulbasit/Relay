@@ -140,12 +140,19 @@ enum BrowserPageReader {
 
         var before = initialBefore
         var pass = try await capturePass(startingFrom: before)
-        if expected.host?.lowercased().contains("mail.google.com") == true,
-           pass.chunks.count < 25,
-           pass.chunks.joined(separator: "\n").contains("Using Gmail with screen readers") {
+        if isGmailLoadingShell(expected: expected, chunks: pass.chunks) {
             try Task.checkCancellation()
             try await Task.sleep(for: .milliseconds(800))
-            before = try identity(root: root, pid: application.processIdentifier, expected: expected)
+            let refreshed = try identity(root: root, pid: application.processIdentifier, expected: expected)
+            guard matchesRequestedTab(sameProcess: before.pid == refreshed.pid && !application.isTerminated,
+                                      sameWindow: CFEqual(before.window, refreshed.window),
+                                      sameTab: CFEqual(before.tab, refreshed.tab), beforeURL: before.url,
+                                      afterURL: refreshed.url, expected: expected) else {
+                throw RelayError.message("The selected browser window or tab changed while the page loaded. The snapshot was discarded. Select the requested page and try reading again.")
+            }
+            // The loading shell may replace its document within this exact tab. Bind the
+            // second pass to that new document and recheck it before returning any text.
+            before = refreshed
             pass = try await capturePass(startingFrom: before)
         }
         let budgets = snapshotBudgets(url: before.url, title: before.title)
@@ -167,6 +174,26 @@ enum BrowserPageReader {
             throw RelayError.message("The selected page exposed no readable static text or HTTP/HTTPS links. Canvas content, PDFs and unsupported browser Accessibility views need another explicit inspection method.")
         }
         return Snapshot(url: after.url, title: boundedText([after.title], maximumBytes: 1024), text: text, headings: headings, links: links, truncated: truncated)
+    }
+
+    static func isGmailLoadingShell(expected: URL, chunks: [String]) -> Bool {
+        expected.host?.lowercased() == "mail.google.com" && chunks.count < 25
+            && chunks.joined(separator: "\n").contains("Using Gmail with screen readers")
+    }
+
+    static func observesSelectedDestination(root: AXUIElement, pid: pid_t, expected: URL) -> Bool {
+        guard let before = try? identity(root: root, pid: pid, expected: expected),
+              let after = try? identity(root: root, pid: pid, expected: expected) else { return false }
+        return snapshotIdentityMatches(sameProcess: before.pid == after.pid, sameWindow: CFEqual(before.window, after.window),
+            sameTab: CFEqual(before.tab, after.tab), sameDocument: CFEqual(before.document, after.document),
+            beforeURL: before.url, afterURL: after.url, beforeTitle: before.title, afterTitle: after.title, expected: expected)
+    }
+
+    static func matchesRequestedTab(sameProcess: Bool, sameWindow: Bool, sameTab: Bool,
+                                    beforeURL: String, afterURL: String, expected: URL) -> Bool {
+        sameProcess && sameWindow && sameTab
+            && BrowserAutomation.matchesDestination(beforeURL, expected: expected)
+            && BrowserAutomation.matchesDestination(afterURL, expected: expected)
     }
 
     nonisolated static func headingEvidence(headings: [String], truncated: Bool) -> String {
@@ -333,10 +360,10 @@ enum BrowserPageReader {
     static func snapshotIdentityMatches(sameProcess: Bool, sameWindow: Bool, sameTab: Bool, sameDocument: Bool,
                                         beforeURL: String, afterURL: String, beforeTitle: String, afterTitle: String,
                                         expected: URL) -> Bool {
-        sameProcess && sameWindow && sameTab && sameDocument && beforeURL == afterURL && beforeTitle == afterTitle
+        matchesRequestedTab(sameProcess: sameProcess, sameWindow: sameWindow, sameTab: sameTab,
+                            beforeURL: beforeURL, afterURL: afterURL, expected: expected)
+            && sameDocument && beforeURL == afterURL && beforeTitle == afterTitle
             && !beforeTitle.isEmpty && !BrowserAutomation.isSecurityInterruption(afterTitle)
-            && BrowserAutomation.matchesDestination(beforeURL, expected: expected)
-            && BrowserAutomation.matchesDestination(afterURL, expected: expected)
     }
 
     private static func focusedDocument(root: AXUIElement, window: AXUIElement) -> AXUIElement? {

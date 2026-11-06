@@ -26,8 +26,9 @@ class TestF06ConversationalUI(RelayE2ETestBase):
 
     def test_f06_03_role_attribution_and_evidence(self):
         """Verifies action evidence disclosure and Relay attribution in message thread."""
-        has_evidence = "Action evidence" in self.content or "checkmark.shield" in self.content or "Checked by Relay" in self.content
-        self.assertTrue(has_evidence, "Assistant messages must support verified action evidence")
+        self.assertIn("RelayActionEvidence(text: evidence)", self.content)
+        design = (self.sources_relay / "RelayDesignSystem.swift").read_text(encoding="utf-8")
+        self.assertIn('Label("Action evidence"', design)
 
     def test_f06_04_message_scroll_anchoring(self):
         """Verifies ScrollViewReader auto-scrolls to latest messages."""
