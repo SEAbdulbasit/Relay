@@ -11,6 +11,56 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct NativeWindowReadStoreIntegrationTests {
+    @Test func aRegisteredNativeReadExpiresPriorAxReferencesAndPreservesTheNextWholeSnapshot() async throws {
+        let fixture = NativeReadTaskFixture(), runtime = NativeReadTaskRuntime()
+        let client = LocalModelClient(runtimeFactory: { _, _, _ in runtime }, visionRuntimeFactory: { _, _, _ in runtime })
+        let folder = try fixture.folder(); defer { try? FileManager.default.removeItem(at: folder) }
+        let model = folder.appending(path: "synthetic.litertlm"); try Data([1]).write(to: model)
+        let oldID = "36E9E462-7797-40CE-8AD0-A78A449F5049", freshID = "C562D460-2852-43EC-9729-C23709B61A05"
+        let literal = "Literal element_id=DF2C0F7E-C6BE-4ED0-A4E8-65C58D343594 window_id=source-value cafe\u{301}"
+        func source(_ id: String) -> ToolResult {
+            .init(summary: "element_id=\(id) role=AXTextField title=Fixture input description= identifier=field value=\(literal) enabled=unknown",
+                evidence: "Native AX observation of \(fixture.admission.application.bundleID), process 123.", verified: true)
+        }
+        let original = source(oldID), fresh = source(freshID)
+        var turns = 0, axReads = 0
+        let store = AssistantStore(persistenceURL: nil, complete: { messages, _, _ in
+            turns += 1
+            switch turns {
+            case 1, 3:
+                if turns == 3 {
+                    let previous = try #require(messages.first { $0.toolName == "observe_app" })
+                    let payload = try JSONDecoder().decode([String: JSONValue].self, from: Data(previous.content.utf8))
+                    #expect(payload["summary"]?.string?.contains(oldID) == false)
+                    let retainedSource = try #require(payload["summary"]?.string)
+                    #expect(Data(retainedSource.utf8).range(of: Data(literal.utf8)) != nil)
+                    #expect(payload["reference_status"]?.string?.contains("Expired") == true)
+                }
+                return .init(content: "", toolCalls: [.init(name: "observe_app", arguments: [
+                    "bundle_id": .string(fixture.admission.application.bundleID)])])
+            case 2: return .init(content: "", toolCalls: [fixture.readCall(id: "visual-read-invalidates-old-ax")])
+            default:
+                let latest = try #require(messages.last { $0.toolName == "observe_app" })
+                let expected = JSONValue.object(["summary": .string(fresh.summary), "evidence": .string(fresh.evidence), "verified": .bool(true)]).pretty
+                #expect(latest.content.utf8.elementsEqual(expected.utf8))
+                #expect(ContextWindow.isWellFormed(messages.filter { $0.role != "system" }))
+                return .init(content: "The chosen native window was inspected without an input request.", toolCalls: [])
+            }
+        }, execute: { call in
+            try #require(call.name == "observe_app")
+            axReads += 1; return axReads == 1 ? original : fresh
+        }, modelClient: client, nativeWindowBackendFactory: { _ in fixture.backend() })
+        store.configuration = .init(modelPath: model.path)
+        store.draft = "Inspect the chosen synthetic window with AX, then its visual reader, then AX again. Report only source facts."
+        store.send(nativeReadRestrictions: [fixture.admission])
+        try await settled(store, fixture: fixture)
+        #expect(store.errorMessage == nil && turns == 4 && axReads == 2)
+        #expect(fixture.captures == 1 && runtime.imagePayloads.count == 1)
+        #expect(store.activity.contains { $0.name == "observe_app" && $0.detail.contains(oldID)
+            && Data($0.detail.utf8).range(of: Data(literal.utf8)) != nil })
+        client.unload()
+    }
+
     @Test func ordinaryComposerReturnsFromVisualReadToOneScopedFileWriteWithCompleteToolPairs() async throws {
         let fixture = NativeReadTaskFixture()
         let runtime = NativeReadTaskRuntime()

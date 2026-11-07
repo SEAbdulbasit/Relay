@@ -183,11 +183,11 @@ struct SettingsView: View {
     // MARK: - Model Settings
     private var modelSettings: some View {
         VStack(alignment: .leading, spacing: 22) {
-            sectionTitle("Workspace intelligence", detail: "Choose a local provider or use your existing ChatGPT sign-in for workspace tasks.")
+            sectionTitle("Models", detail: "Choose what powers your workspace tasks.")
 
-            WorkspaceCodexOption(store: store)
+            if store.workspaceUsesCodex { WorkspaceCodexOption(store: store) }
 
-            sectionTitle("Your local intelligence", detail: "Choose an embedded model or your local LM Studio service. No Relay account is needed.")
+            sectionTitle("Local model", detail: "Run on this Mac or connect to LM Studio. No Relay account is needed.")
 
             Picker("Local provider", selection: Binding(get: { store.configuration.backend }, set: { store.selectLocalProvider($0) })) {
                 Text("On this Mac").tag(LocalBackend.liteRTLM)
@@ -204,111 +204,63 @@ struct SettingsView: View {
                 HStack(alignment: .top, spacing: 14) {
                     RelayIconBadge(icon: "cpu", color: RelayColors.accentEmerald, size: 38, iconSize: 17)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(store.configuration.modelPath.isEmpty ? "No model selected" : URL(fileURLWithPath: store.configuration.modelPath).lastPathComponent)
+                        Text("Installed models")
                             .font(.system(size: 16, weight: .semibold))
                             .lineLimit(2)
-                        Text(store.configuration.modelPath.isEmpty ? "Select or download a .litertlm model package." : "Local Model Package · LiteRT-LM")
+                        Text("Choose a model below or import one you already have.")
                             .font(.system(size: 13)).foregroundStyle(RelayTheme.muted)
                     }
                     Spacer()
-                    Button("Choose model…") { store.chooseModel() }
+                    Button("Import model…") { store.chooseModel() }
                         .buttonStyle(RelaySecondaryButtonStyle())
                         .disabled(store.isPreparingModel)
                 }
 
                 Divider().overlay(RelayTheme.line)
 
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("On-Device Model Catalog")
-                        .font(.system(size: 13.5, weight: .semibold))
-                        .foregroundStyle(.white)
-                    Text(ModelManifest.supportedArchitecturesNote)
-                        .font(.relayCaption)
-                        .foregroundStyle(RelayTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
+                if let name = importedModelName {
+                    Label(name, systemImage: "doc")
+                        .font(.relayBody).lineLimit(2).textSelection(.enabled)
+                        .accessibilityLabel("Selected imported model: " + name)
+                }
 
+                VStack(alignment: .leading, spacing: 10) {
                     ForEach(ModelManifest.catalog, id: \.filename) { manifest in
                         let installedURL = ModelManifest.resolveInstalledURL(for: manifest)
                         let isSelected = installedURL?.path == store.configuration.modelPath
                         HStack(spacing: 12) {
                             RelayHealthDot(color: isSelected && store.actionsReady ? RelayColors.accentEmerald : (installedURL != nil ? RelayColors.accentGold : RelayColors.textMuted))
                             VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: 8) {
-                                    Text(manifest.displayName)
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundStyle(.white)
-                                    Text(manifest == .gemma4E4B ? "3.66 GB · High accuracy" : "2.59 GB · Fast and compact")
-                                        .font(.system(size: 11.5, weight: .medium))
-                                        .foregroundStyle(RelayColors.textSecondary)
-                                }
-                                Text(manifest.filename)
-                                    .font(.system(size: 11.5, design: .monospaced))
-                                    .foregroundStyle(RelayTheme.muted)
+                                Text(manifest.displayName)
+                                    .font(.system(size: 14, weight: .medium))
+                                Text(manifest == .gemma4E4B ? "3.66 GB" : "2.59 GB")
+                                    .font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
                             }
                             Spacer()
                             if isSelected && store.actionsReady {
-                                Text("ACTIVE")
-                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                Label("Ready", systemImage: "checkmark.circle.fill")
+                                    .font(.relayCaption)
                                     .foregroundStyle(RelayColors.accentEmerald)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(RelayColors.accentEmerald.opacity(0.12), in: Capsule())
+                            } else if isSelected {
+                                Text("Selected").font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
                             } else if installedURL != nil {
-                                Button(isSelected ? "Load \(manifest.displayName)" : "Use \(manifest.displayName)") {
+                                Button("Use") {
                                     Task { await store.selectCatalogModel(manifest) }
                                 }
                                 .buttonStyle(RelaySecondaryButtonStyle())
                                 .disabled(store.isPreparingModel || store.isRunning)
+                                .accessibilityLabel("Use " + manifest.displayName)
                             } else {
                                 Text("Not downloaded")
                                     .font(.relayCaption)
                                     .foregroundStyle(RelayTheme.muted)
                             }
                         }
-                        .padding(12)
-                        .background(Color.white.opacity(isSelected ? 0.055 : 0.025), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(isSelected ? RelayColors.accentEmerald.opacity(0.35) : Color.white.opacity(0.08), lineWidth: 1))
+                        .padding(.vertical, 10)
                     }
                 }
 
                 Divider().overlay(RelayTheme.line)
-
-                HStack {
-                    Text("Compute Backend")
-                        .font(.system(size: 14, weight: .medium))
-                    Spacer()
-                    HStack(spacing: 3) {
-                        ForEach([("cpu", "CPU"), ("gpu", "GPU")], id: \.0) { tag, label in
-                            let selected = store.configuration.computeBackend == tag
-                            Button {
-                                store.configuration.computeBackend = tag
-                                store.saveConfiguration()
-                            } label: {
-                                Text(label)
-                                    .font(.system(size: 12, weight: selected ? .semibold : .medium))
-                                    .foregroundStyle(selected ? .white : RelayColors.textSecondary)
-                                    .frame(width: 68, height: 26)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                            .fill(selected ? RelayColors.accentEmerald.opacity(0.22) : Color.clear)
-                                    )
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                            .strokeBorder(selected ? RelayColors.accentEmerald.opacity(0.45) : Color.clear, lineWidth: 1)
-                                    )
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(RelayPressStyle())
-                            .disabled(store.isPreparingModel)
-                        }
-                    }
-                    .padding(3)
-                    .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
-                }
-
-                Text("Apple Silicon CPU is recommended for optimal stability across turn-based agent execution.")
-                    .font(.relayCaption).foregroundStyle(RelayTheme.muted)
 
                 HStack(spacing: 12) {
                     Button(store.isPreparingModel ? "Preparing…" : store.actionsReady ? "Reload model" : "Load model") { saveAndRefresh() }
@@ -342,6 +294,8 @@ struct SettingsView: View {
 
             }
             note("Embedded Gemma runs on this Mac. LM Studio requests go to your selected local service, whose own privacy settings apply. Model downloads, ChatGPT and browser tasks can use the internet.", icon: "desktopcomputer")
+
+            if !store.workspaceUsesCodex { WorkspaceCodexOption(store: store) }
 
             DisclosureGroup("Computer-use engine · advanced") {
             VStack(alignment: .leading, spacing: 14) {
@@ -421,17 +375,39 @@ struct SettingsView: View {
 
             DisclosureGroup("Model details & verification logs") {
                 VStack(alignment: .leading, spacing: 10) {
-                    if !store.configuration.modelPath.isEmpty {
-                        Text(store.configuration.modelPath).font(.relayMono).textSelection(.enabled)
+                    if store.configuration.backend == .liteRTLM {
+                        Picker("Compute Backend", selection: Binding(get: { store.configuration.computeBackend }, set: {
+                            store.configuration.computeBackend = $0
+                            store.saveConfiguration()
+                        })) {
+                            Text("CPU").tag("cpu")
+                            Text("GPU").tag("gpu")
+                        }
+                        .pickerStyle(.segmented)
+                        .disabled(store.isPreparingModel || store.isRunning)
+                        if !store.configuration.modelPath.isEmpty {
+                            Text(store.configuration.modelPath).font(.relayMono).textSelection(.enabled)
+                        }
+                        Text(ModelManifest.supportedArchitecturesNote)
+                        Text("Loading checks the engine and structured tool calls. Mac control permissions are checked separately in Permissions.")
+                        Text("Use the setup assistant to download or verify a catalog model.")
+                    } else if let local = store.configuration.lmStudio {
+                        Text(local.endpoint.baseURL.absoluteString).font(.relayMono).textSelection(.enabled)
+                        if !local.modelID.isEmpty { Text(local.modelID).font(.relayMono).textSelection(.enabled) }
+                        Text("Model and image checks apply only to this exact local endpoint and model selection.")
                     }
-                    Text("Loading checks the engine and runs a structured probe call verifying tool call generation. Mac control permissions are validated independently through macOS Accessibility.")
-                    Text("Recommended model: Gemma 4 E2B (2.59 GB). Re-run the Setup assistant to download or verify this model.")
                 }
                 .font(.system(size: 13)).foregroundStyle(RelayTheme.muted)
                 .lineSpacing(3).padding(.top, 10)
             }
             .font(.system(size: 14, weight: .medium))
         }
+    }
+
+    private var importedModelName: String? {
+        let path = store.configuration.modelPath
+        guard !path.isEmpty, !ModelManifest.catalog.contains(where: { ModelManifest.resolveInstalledURL(for: $0)?.path == path }) else { return nil }
+        return URL(fileURLWithPath: path).lastPathComponent
     }
 
     // MARK: - Access Settings

@@ -99,6 +99,8 @@ Final package manifest: `provider-native-read-final-package.json`, SHA-256 `89eb
 
 ## Boundaries and next implementation
 
+Subsequent qualification found an unattributed pointer event in a separate owned read diagnostic. The full retained failure and its evidence limits are in [the presentation/controller follow-up](verification-2026-11-07-presentation-control.md). The read/artifact results above retain their exact file/form oracles; their zero-input report must not be interpreted as proof that every pointer event was monitored. General native zero-input qualification remains unresolved.
+
 - The default LM Studio service was unavailable. Actual LM Studio model, tool and image-quality qualification remains open; no model was downloaded or server started on the user's behalf for this test.
 - Relay's packaged Accessibility grant remains distinct from test-host access. Screen Recording/source/microphone, hardware displays/notch/Spaces, service accounts, wake behavior and signed distribution retain their separate gates.
 - Native task read authority is currently memory-only. Same-process Stop/Resume retains it; process-restored tasks need an explicit fresh binding that preserves any original restrictions. Restoring history must not mint unrestricted scope or executable effects.

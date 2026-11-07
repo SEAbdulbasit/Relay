@@ -26,9 +26,9 @@ class TestF08SettingsReentry(RelayE2ETestBase):
         self.assertIn("onOpenSetup", self.content)
 
     def test_f08_03_model_status_and_diagnostics_display(self):
-        """Verifies local intelligence section displays model status and configuration."""
-        has_model_section = "Local Intelligence" in self.content or "Your local intelligence" in self.content
-        self.assertTrue(has_model_section, "Model settings must describe on-device local intelligence")
+        """Source contract for the local model pane; not rendered UI proof."""
+        self.assertIn('sectionTitle("Local model"', self.content)
+        self.assertIn("store.modelStatus", self.content)
         self.assertIn("store.configuration.modelPath", self.content)
 
     def test_f08_04_access_permissions_management(self):

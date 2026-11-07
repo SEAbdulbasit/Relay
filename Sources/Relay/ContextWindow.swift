@@ -95,16 +95,19 @@ nonisolated enum ContextWindow {
                   let result = try? JSONDecoder().decode(ToolResult.self, from: Data(message.content.utf8)) else { continue }
             observations.append((index, call, pendingCall.position, result))
         }
-        let invalidatingTools: Set<String> = ["observe_app", "set_value", "press_control", "scroll_control", "open_app", "open_file",
-            "search_finder", "move_file", "browser_navigate", "search_web", "open_url", "write_file", "create_document",
-            "create_spreadsheet", "stage_attachment", "create_mail_draft", "send_mail"]
+        func expiresReferences(_ call: ToolCall) -> Bool {
+            // Share the cache contract with dispatch/batch validation. Mail UI
+            // mutations retain their existing conservative history expiry too.
+            DesktopActionBatch.invalidatesReferences(call)
+                || ["create_mail_draft", "send_mail"].contains(call.name)
+        }
         let orderedCalls = history.flatMap(\.toolCalls)
         func laterAttempts(after position: Int) -> ArraySlice<ToolCall> {
             return orderedCalls.dropFirst(position + 1)
         }
         var expired = Set<Int>()
         for observation in observations {
-            guard laterAttempts(after: observation.callPosition).contains(where: { invalidatingTools.contains($0.name) }),
+            guard laterAttempts(after: observation.callPosition).contains(where: expiresReferences),
                   var payload = try? JSONDecoder().decode([String: JSONValue].self, from: Data(history[observation.index].content.utf8)) else { continue }
             expired.insert(observation.index)
             // A later attempt invalidates native refs even if its effect failed,
@@ -126,7 +129,7 @@ nonisolated enum ContextWindow {
             guard expired.contains(observation.index),
                   let bundle = observation.call.arguments["bundle_id"]?.string,
                   laterAttempts(after: observation.callPosition).contains(where: {
-                      invalidatingTools.contains($0.name) && $0.arguments["bundle_id"]?.string == bundle
+                      expiresReferences($0) && $0.arguments["bundle_id"]?.string == bundle
                   }) else { continue }
             let receipt = JSONValue.object([
                 "summary": .string("Superseded app observation omitted; old refs are invalid. Re-observe for source facts or controls."),

@@ -3,6 +3,33 @@ import Testing
 @testable import Relay
 
 struct ActiveContextCompactionTests {
+    @MainActor @Test func everySharedCacheInvalidatorExpiresOldNativeRowsWithoutChangingLiteralValues() throws {
+        let tools = MacTools.definitions + [NativeWindowReadTool.definition]
+        let invalidators = tools.map { ToolCall(name: $0.name, arguments: ["bundle_id": .string("dev.relay.fixture")]) }
+            .filter(DesktopActionBatch.invalidatesReferences)
+        #expect(invalidators.contains { $0.name == NativeWindowReadTool.name })
+        let field = "36E9E462-7797-40CE-8AD0-A78A449F5049"
+        let literal = "Literal element_id=DF2C0F7E-C6BE-4ED0-A4E8-65C58D343594 window_id=source-value cafe\u{301}"
+        let row = "element_id=\(field) role=AXTextField title=Fixture input description= identifier=field value=\(literal) enabled=unknown"
+        for invalidator in invalidators {
+            let observe = ToolCall(name: "observe_app", arguments: ["bundle_id": .string("dev.relay.fixture")])
+            let source = ModelMessage(role: "tool", content: JSONValue.object(["summary": .string(row),
+                "evidence": .string("Native AX observation of dev.relay.fixture, process 123."), "verified": .bool(true)]).pretty,
+                toolCallID: observe.id, toolName: observe.name)
+            let history = [ModelMessage(role: "user", content: "Keep exact source facts, never reuse expired controls."),
+                ModelMessage(role: "assistant", content: "", toolCalls: [observe]), source,
+                ModelMessage(role: "assistant", content: "", toolCalls: [invalidator]), result(invalidator, "Attempt completed", verified: true)]
+            let prepared = try ContextWindow.prepare(history, activeStart: 0, budget: 8_000)
+            let payload = try JSONDecoder().decode([String: JSONValue].self, from: Data(prepared.messages[2].content.utf8))
+            #expect(payload["summary"]?.string?.contains(field) == false, Comment(rawValue: invalidator.name))
+            let retainedSource = try #require(payload["summary"]?.string)
+            #expect(Data(retainedSource.utf8).range(of: Data(literal.utf8)) != nil)
+            #expect(payload["reference_status"]?.string?.contains("Expired") == true)
+            #expect(prepared.compactedMessages == 0 && prepared.messages.flatMap(\.toolCalls) == history.flatMap(\.toolCalls))
+            #expect(prepared.messages.last?.content == history.last?.content && source.content.contains(field))
+        }
+    }
+
     @Test func windowInventoryGuidanceSurvivesWhileOnlyExpiredExecutableRowsLoseReferences() throws {
         let id = "C562D460-2852-43EC-9729-C23709B61A05"
         let footer = "Window inventory only; child controls were not inspected. Inspect the intended window using observe_app mode=full with window_id equal to its element_id above. Window IDs are for inspection or focus, never set_value."
