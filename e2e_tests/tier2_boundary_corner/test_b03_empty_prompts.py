@@ -36,7 +36,11 @@ class TestB03EmptyPrompts(RelayE2ETestBase):
         has_control_handling = "components(separatedBy:" in self.main_content or "draft" in self.main_content
         self.assertTrue(has_control_handling)
 
-    def test_b03_05_composer_placeholder_rendered_when_empty(self):
-        """Verifies the draft text field has a visible prompt in its empty state."""
-        self.assertIn('TextField("Message Relay", text: $store.draft', self.main_content)
-        self.assertIn('prompt: Text(isSteering ? "Steer the current task…" : "Ask Relay…")', self.main_content)
+    def test_b03_05_composer_has_an_empty_state_prompt_and_accessible_name(self):
+        """Source contract only; actual prompt contrast is qualified in the native UI."""
+        self.assertTrue('TextField("Message Relay", text: $store.draft' in self.main_content,
+                        "The composer must remain bound to the real draft")
+        self.assertTrue('.relayTextFieldPrompt(isSteering ? "Steer the current task…" : "Ask Relay…", when: store.draft.isEmpty)' in self.main_content,
+                        "The empty composer needs its shared readable prompt")
+        self.assertTrue('.accessibilityLabel("Message Relay or steer current task")' in self.main_content,
+                        "The composer needs an accessible name independent of its decorative prompt")

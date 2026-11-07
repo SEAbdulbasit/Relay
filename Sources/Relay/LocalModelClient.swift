@@ -11,6 +11,8 @@ final class LocalModelClient {
     static let defaultSamplerTopK = 64
     typealias RuntimeFactory = @MainActor (URL, String, URL) async throws -> any LocalModelRuntime
     private let runtimeFactory: RuntimeFactory
+    private let visionRuntimeFactory: RuntimeFactory
+    private enum RuntimeMode { case text, vision }
     private var runtime: (any LocalModelRuntime)?
     private var activeConversation: (any LocalConversationSession)?
     private var loadedIdentity: String?
@@ -23,9 +25,16 @@ final class LocalModelClient {
     }
     private(set) var conversationMetrics = ConversationMetrics()
 
-    init(runtimeFactory: RuntimeFactory? = nil) {
+    convenience init(runtimeFactory: RuntimeFactory? = nil) {
+        self.init(runtimeFactory: runtimeFactory, visionRuntimeFactory: nil)
+    }
+
+    init(runtimeFactory: RuntimeFactory?, visionRuntimeFactory: RuntimeFactory?) {
         self.runtimeFactory = runtimeFactory ?? { url, backend, cache in
             try await NativeLocalModelRuntime.load(url: url, backend: backend, cache: cache)
+        }
+        self.visionRuntimeFactory = visionRuntimeFactory ?? { url, backend, cache in
+            try await NativeLocalModelRuntime.load(url: url, backend: backend, cache: cache, vision: true)
         }
     }
 
@@ -55,9 +64,13 @@ final class LocalModelClient {
 
     /// Loads the imported package into the embedded runtime. Initialization executes on Engine's actor.
     func load(configuration: ModelConfiguration) async throws {
+        try await load(configuration: configuration, mode: .text)
+    }
+
+    private func load(configuration: ModelConfiguration, mode: RuntimeMode) async throws {
         try Task.checkCancellation()
         let url = try Self.validatedModelURL(configuration)
-        let identity = "\(url.path)|\(configuration.computeBackend)"
+        let identity = "\(url.path)|\(configuration.computeBackend)" + (mode == .vision ? "|native-vision" : "")
         if loadedIdentity == identity, runtime != nil { return }
         guard !generating else { throw RelayError.message("Stop the current inference before replacing its model.") }
         guard !loading else { throw RelayError.message("A local model is already loading. Wait for initialization to finish.") }
@@ -71,7 +84,8 @@ final class LocalModelClient {
             .appendingPathComponent("Relay/ModelCache", isDirectory: true)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
         let candidate: any LocalModelRuntime
-        do { candidate = try await runtimeFactory(url, configuration.computeBackend, cache) }
+        let factory = mode == .vision ? visionRuntimeFactory : runtimeFactory
+        do { candidate = try await factory(url, configuration.computeBackend, cache) }
         catch {
             throw RelayError.message("LiteRT-LM could not load this model on \(configuration.computeBackend.uppercased()): \(error.localizedDescription). Check the package's supported backend and available memory.")
         }
@@ -95,19 +109,54 @@ final class LocalModelClient {
     }
 
     func complete(messages: [ModelMessage], tools: [ToolDefinition], configuration: ModelConfiguration) async throws -> ModelReply {
+        try await complete(messages: messages, tools: tools, configuration: configuration, visionInput: nil)
+    }
+
+    /// Images exist only in this local native completion. They are never added to Codable
+    /// application history or passed through the hosted text-planning route.
+    func complete(messages: [ModelMessage], tools: [ToolDefinition], configuration: ModelConfiguration,
+                  vision: NativeVisionPlanningInput) async throws -> ModelReply {
+        try await complete(messages: messages, tools: tools, configuration: configuration, visionInput: vision)
+    }
+
+    private func complete(messages: [ModelMessage], tools: [ToolDefinition], configuration: ModelConfiguration,
+                          visionInput: NativeVisionPlanningInput?) async throws -> ModelReply {
         guard !generating else { throw RelayError.message("Only one model inference can run at a time.") }
         try Task.checkCancellation()
-        try await load(configuration: configuration)
+        var visionContext: (systemPrompt: String, messages: [ModelMessage])?
+        var visionTools: [any LiteRTLM.Tool]?
+        if let visionInput {
+            try visionInput.validate()
+            let context = try Self.prepareContext(messages: messages, tools: tools)
+            let nativeTools = try LiteRTLM.RelayNativeTools.makeTools(named: tools.map(\.name))
+            let schemas = LiteRTLM.ToolManager(tools: nativeTools).toolsJsonDescription
+            try NativeVisionPlanningBudget.validate(messages: context.messages, systemPrompt: context.systemPrompt,
+                tools: tools, actualNativeSchemaBytes: schemas.utf8.count, annotation: visionInput.frame.annotation)
+            visionContext = context; visionTools = nativeTools
+        }
+        try await load(configuration: configuration, mode: visionInput == nil ? .text : .vision)
         try Task.checkCancellation()
+        try visionInput?.validate()
         guard !generating else { throw RelayError.message("Only one model inference can run at a time.") }
         guard let runtime else { throw RelayError.message("Load a local model first.") }
-        let context = try Self.prepareContext(messages: messages, tools: tools)
+        let context: (systemPrompt: String, messages: [ModelMessage])
+        if let visionContext { context = visionContext }
+        else { context = try Self.prepareContext(messages: messages, tools: tools) }
         let nativeHistory = try context.messages.map(Self.nativeMessage)
-        guard let last = nativeHistory.last else { throw RelayError.message("The conversation is empty.") }
+        guard let textLast = nativeHistory.last else { throw RelayError.message("The conversation is empty.") }
+        let last: LiteRTLM.Message
+        let initialMessages: [LiteRTLM.Message]
+        if let visionInput {
+            last = LiteRTLM.Message(of: .imageData(visionInput.frame.jpeg), .text(visionInput.frame.annotation))
+            initialMessages = nativeHistory
+        } else { last = textLast; initialMessages = Array(nativeHistory.dropLast()) }
+        let nativeTools: [any LiteRTLM.Tool]
+        if let visionTools { nativeTools = visionTools }
+        else { nativeTools = try LiteRTLM.RelayNativeTools.makeTools(named: tools.map(\.name)) }
         let config = LiteRTLM.ConversationConfig(
             systemMessage: LiteRTLM.Message(context.systemPrompt, role: .system),
-            initialMessages: Array(nativeHistory.dropLast()),
-            tools: try LiteRTLM.RelayNativeTools.makeTools(named: tools.map(\.name)),
+            initialMessages: initialMessages,
+            tools: nativeTools,
             samplerConfig: try LiteRTLM.SamplerConfig(topK: Self.defaultSamplerTopK, topP: 0.95, temperature: 0.15),
             thinkingConfig: LiteRTLM.ThinkingConfig(enableThinking: false),
             automaticToolCalling: false
@@ -122,6 +171,7 @@ final class LocalModelClient {
         conversationMetrics.created += 1
         try Task.checkCancellation()
         guard generation == revision else { conversation.cancel(); throw CancellationError() }
+        try visionInput?.validate()
         activeConversation = conversation
         let inferenceClock = ContinuousClock()
         let inferenceStarted = inferenceClock.now
@@ -154,6 +204,7 @@ final class LocalModelClient {
             throw RelayError.message("Local inference exceeded its three-minute budget. No returned action was dispatched.")
         }
         guard generation == revision else { throw CancellationError() }
+        try visionInput?.validate()
         return try Self.parseReply(reply, availableTools: Set(tools.map(\.name)))
     }
 

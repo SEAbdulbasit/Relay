@@ -4,7 +4,7 @@ import Foundation
 /// must independently bind the selected text/current document before capture.
 nonisolated struct QuickTextActionIntent: Equatable, Sendable {
     enum Action: String, Sendable { case summarize, proofread }
-    enum Target: String, Sendable { case current, selection, page, document }
+    enum Target: String, Sendable { case current, selection, page, document, conversation }
     let action: Action
     let target: Target
 
@@ -47,6 +47,7 @@ nonisolated struct QuickTextActionIntent: Equatable, Sendable {
         // Proofreading is a selected-text workflow. An explicit page/document
         // request remains ordinary conversation rather than widening its edit.
         guard action == .summarize else { return nil }
+        if conversationTargets.contains(targetText) { return Self(action: action, target: .conversation) }
         if pageTargets.contains(targetText) { return Self(action: action, target: .page) }
         if documentTargets.contains(targetText) { return Self(action: action, target: .document) }
         return nil
@@ -68,5 +69,9 @@ nonisolated struct QuickTextActionIntent: Equatable, Sendable {
     private static let documentTargets: Set<String> = [
         "this document", "that document", "the current document", "my current document",
         "this pdf", "the current pdf", "my current pdf"
+    ]
+    private static let conversationTargets: Set<String> = [
+        "this chat", "that chat", "the current chat", "my current chat",
+        "this conversation", "that conversation", "the current conversation", "my current conversation"
     ]
 }

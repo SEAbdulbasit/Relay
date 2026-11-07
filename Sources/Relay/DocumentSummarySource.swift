@@ -6,7 +6,13 @@ import PDFKit
 /// A captured, bounded source value. It is deliberately not Codable or written
 /// to the conversation, knowledge index, exported history, or a remote provider.
 nonisolated struct DocumentSummarySource: Sendable {
-    enum Kind: String, Sendable { case selection, browser, pdf }
+    enum Kind: String, Sendable { case selection, browser, pdf, nativeDocument, conversation }
+    enum NativeCaptureFailure: Error, LocalizedError {
+        case pdfMetadataOnly
+        var errorDescription: String? {
+            "The current PDF exposed only its document location. Choose that PDF explicitly to summarize its text; no file was opened."
+        }
+    }
     static let maximumTextBytes = 8_000
     let kind: Kind
     let title: String
@@ -45,6 +51,16 @@ nonisolated struct DocumentSummarySource: Sendable {
             coverage: "Static text from the chosen browser's selected loaded document, including accessible offscreen nodes. Editable fields, unloaded content and hidden history were excluded."
                 + (snapshot.truncated ? " The capture was bounded; some loaded content was omitted." : "") + videoLimit,
             truncated: snapshot.truncated)
+    }
+
+    static func native(_ snapshot: SummaryNativeDocumentCapture.Snapshot) throws -> Self {
+        guard !snapshot.requiresPDFRead else { throw NativeCaptureFailure.pdfMetadataOnly }
+        let kind: Kind = switch snapshot.mode {
+        case .document: .nativeDocument
+        case .conversation: .conversation
+        }
+        return try Self(kind: kind, title: snapshot.title, application: snapshot.application,
+            text: snapshot.text, coverage: snapshot.coverage, truncated: snapshot.truncated, capturedAt: snapshot.capturedAt)
     }
 
     /// Keeps opening, middle and ending rather than silently losing a long

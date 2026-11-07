@@ -79,9 +79,11 @@ struct WritingProfileView: View {
     }
 
     private func darkField(_ placeholder: String, text: Binding<String>) -> some View {
-        TextField("", text: text, prompt: Text(placeholder).foregroundStyle(RelayColors.textDim))
+        TextField("", text: text, prompt: Text(""))
             .textFieldStyle(.plain)
             .font(.system(size: 13.5))
+            .relayTextFieldPrompt(placeholder, when: text.wrappedValue.isEmpty, font: .system(size: 13.5))
+            .accessibilityLabel(placeholder)
             .foregroundStyle(.white)
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
@@ -90,10 +92,12 @@ struct WritingProfileView: View {
     }
 
     private func darkMultilineField(_ placeholder: String, text: Binding<String>, lineLimit: ClosedRange<Int>) -> some View {
-        TextField("", text: text, prompt: Text(placeholder).foregroundStyle(RelayColors.textDim), axis: .vertical)
+        TextField("", text: text, prompt: Text(""), axis: .vertical)
             .lineLimit(lineLimit)
             .textFieldStyle(.plain)
             .font(.system(size: 13.5))
+            .relayTextFieldPrompt(placeholder, when: text.wrappedValue.isEmpty, font: .system(size: 13.5))
+            .accessibilityLabel(placeholder)
             .foregroundStyle(.white)
             .padding(12)
             .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 9, style: .continuous))

@@ -1,6 +1,23 @@
 import SwiftUI
 import AppKit
 
+extension View {
+    /// Plain macOS text fields dim native placeholders even when a prompt supplies
+    /// a color. Draw the empty-state prompt once at the shared readable contrast.
+    func relayTextFieldPrompt(_ prompt: String, when isEmpty: Bool, font: Font = .relayBody) -> some View {
+        overlay(alignment: .topLeading) {
+            if isEmpty {
+                Text(prompt)
+                    .font(font)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .lineLimit(1)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+}
+
 // MARK: - Color Palette Tokens (ChatGPT macOS & Antigravity Matte Graphite Palette)
 enum RelayColors {
     static let pitch = Color(red: 18/255, green: 19/255, blue: 23/255)              // #121317 Window canvas
@@ -686,6 +703,37 @@ nonisolated struct RelayResponseText {
     }
 }
 
+/// Transcript details use one quiet disclosure without a second label or card.
+/// Settings retain their own larger controls.
+struct RelayTranscriptDisclosureGroupStyle: DisclosureGroupStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.15)) {
+                    configuration.isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
+                        .frame(width: 12)
+                    configuration.label
+                }
+                .font(.relayCaption)
+                .foregroundStyle(RelayColors.textSecondary)
+                .frame(minHeight: 24, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(configuration.isExpanded ? "Expanded" : "Collapsed")
+            if configuration.isExpanded { configuration.content.padding(.leading, 18) }
+        }
+    }
+}
+
 struct RelayActionEvidence: View {
     let text: String
 
@@ -702,9 +750,7 @@ struct RelayActionEvidence: View {
                 .font(.relayCaption.weight(.medium))
                 .foregroundStyle(RelayColors.textBright)
         }
-        .disclosureGroupStyle(RelayDisclosureGroupStyle(
-            accent: RelayColors.textBright, verticalPadding: 5, horizontalPadding: 8, cornerRadius: 8
-        ))
+        .disclosureGroupStyle(RelayTranscriptDisclosureGroupStyle())
     }
 }
 

@@ -32,6 +32,22 @@ enum BrowserPageReader {
         let applicationName: String
     }
 
+    /// Compares captured metadata and retained AX identities only. This never
+    /// queries a browser or captures a new target on a recovery caller's behalf.
+    static func sameCapturedDocument(_ lhs: CurrentDocumentTarget, _ rhs: CurrentDocumentTarget) -> Bool {
+        lhs.launchedAt == rhs.launchedAt && lhs.identity.pid == rhs.identity.pid
+            && CFEqual(lhs.identity.window, rhs.identity.window)
+            && CFEqual(lhs.identity.tab, rhs.identity.tab)
+            && CFEqual(lhs.identity.document, rhs.identity.document)
+            && lhs.identity.url == rhs.identity.url && lhs.identity.title == rhs.identity.title
+    }
+
+    static func capturedDocumentBelongs(_ target: CurrentDocumentTarget, processID: pid_t,
+                                        launchedAt: Date, window: AXUIElement) -> Bool {
+        target.identity.pid == processID && target.launchedAt == launchedAt
+            && CFEqual(target.identity.window, window)
+    }
+
     static func read(expectedURL: String, browser: String) async throws -> Snapshot {
         let expected = try BrowserAutomation.validatedURL(expectedURL)
         let browser = try BrowserAutomation.validatedBrowser(browser)
@@ -50,7 +66,8 @@ enum BrowserPageReader {
 
     /// Pin the exact source before a caller opens a reader or schedules work.
     /// No asynchronous delay or application activation precedes this binding.
-    static func captureCurrentTarget(application chosen: NSRunningApplication? = nil) throws -> CurrentDocumentTarget {
+    static func captureCurrentTarget(application chosen: NSRunningApplication? = nil,
+                                     expectedWindow: AXUIElement? = nil) throws -> CurrentDocumentTarget {
         try Task.checkCancellation()
         guard AXIsProcessTrusted() else { throw RelayError.message("Reading the current document needs Relay's Accessibility permission.") }
         guard let application = chosen ?? NSWorkspace.shared.frontmostApplication, !application.isTerminated,
@@ -62,7 +79,7 @@ enum BrowserPageReader {
         AXUIElementSetMessagingTimeout(root, 0.15)
         let pinned: Identity
         do {
-            pinned = try identity(root: root, pid: application.processIdentifier, expected: nil)
+            pinned = try identity(root: root, pid: application.processIdentifier, expected: nil, expectedWindow: expectedWindow)
         } catch {
             throw RelayError.message(error.localizedDescription + " Keep the intended page selected and wait for its accessible content before trying again. No summary source was captured.")
         }
@@ -95,7 +112,8 @@ enum BrowserPageReader {
         let root = AXUIElementCreateApplication(target.application.processIdentifier)
         AXUIElementSetMessagingTimeout(root, 0.15)
         let expected = try validatedCurrentDocumentURL(url: target.identity.url, title: target.identity.title)
-        let current = try identity(root: root, pid: target.application.processIdentifier, expected: expected)
+        let current = try identity(root: root, pid: target.application.processIdentifier, expected: expected,
+            expectedWindow: target.identity.window)
         guard snapshotIdentityMatches(sameProcess: current.pid == target.identity.pid,
             sameWindow: CFEqual(current.window, target.identity.window), sameTab: CFEqual(current.tab, target.identity.tab),
             sameDocument: CFEqual(current.document, target.identity.document), beforeURL: target.identity.url,
@@ -115,7 +133,7 @@ enum BrowserPageReader {
         var resolvedBefore: Identity?
         for attempt in 0..<4 {
             do {
-                resolvedBefore = try identity(root: root, pid: application.processIdentifier, expected: expected)
+                resolvedBefore = try identity(root: root, pid: application.processIdentifier, expected: expected, expectedWindow: pinned?.window)
                 break
             } catch {
                 let msg = error.localizedDescription
@@ -227,7 +245,7 @@ enum BrowserPageReader {
         if isGmailLoadingShell(expected: expected, chunks: pass.chunks) {
             try Task.checkCancellation()
             try await Task.sleep(for: .milliseconds(800))
-            let refreshed = try identity(root: root, pid: application.processIdentifier, expected: expected)
+            let refreshed = try identity(root: root, pid: application.processIdentifier, expected: expected, expectedWindow: before.window)
             guard matchesRequestedTab(sameProcess: before.pid == refreshed.pid && !application.isTerminated,
                                       sameWindow: CFEqual(before.window, refreshed.window),
                                       sameTab: CFEqual(before.tab, refreshed.tab), beforeURL: before.url,
@@ -245,7 +263,7 @@ enum BrowserPageReader {
         let links = pass.links
         var truncated = pass.truncated
         try Task.checkCancellation()
-        let after = try identity(root: root, pid: application.processIdentifier, expected: expected)
+        let after = try identity(root: root, pid: application.processIdentifier, expected: expected, expectedWindow: before.window)
         guard snapshotIdentityMatches(sameProcess: before.pid == after.pid && !application.isTerminated && application.launchDate == launchedAt,
                                       sameWindow: CFEqual(before.window, after.window), sameTab: CFEqual(before.tab, after.tab),
                                       sameDocument: CFEqual(before.document, after.document), beforeURL: before.url,
@@ -267,7 +285,7 @@ enum BrowserPageReader {
 
     static func observesSelectedDestination(root: AXUIElement, pid: pid_t, expected: URL) -> Bool {
         guard let before = try? identity(root: root, pid: pid, expected: expected),
-              let after = try? identity(root: root, pid: pid, expected: expected) else { return false }
+              let after = try? identity(root: root, pid: pid, expected: expected, expectedWindow: before.window) else { return false }
         return snapshotIdentityMatches(sameProcess: before.pid == after.pid, sameWindow: CFEqual(before.window, after.window),
             sameTab: CFEqual(before.tab, after.tab), sameDocument: CFEqual(before.document, after.document),
             beforeURL: before.url, afterURL: after.url, beforeTitle: before.title, afterTitle: after.title, expected: expected)
@@ -319,8 +337,11 @@ enum BrowserPageReader {
         return result
     }
 
-    private static func identity(root: AXUIElement, pid: pid_t, expected: URL?) throws -> Identity {
+    private static func identity(root: AXUIElement, pid: pid_t, expected: URL?, expectedWindow: AXUIElement? = nil) throws -> Identity {
         guard let window = element(root, kAXFocusedWindowAttribute) else { throw RelayError.message("The browser has no identifiable selected window.") }
+        guard expectedWindow.map({ CFEqual($0, window) }) ?? true else {
+            throw RelayError.message("The selected browser window changed before metadata capture. No other window was inspected.")
+        }
         var queue = [window]
         if let toolbar = element(window, "AXToolbar") { queue.append(toolbar) }
         var cursor = 0

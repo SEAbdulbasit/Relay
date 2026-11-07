@@ -17,6 +17,9 @@ final class MacTools {
         var observed: Date
         var window: AXUIElement?
         var windowFingerprint: String?
+        var recoveryWindowID: NativeRecoveryIdentityRegistry.WindowID? = nil
+        var recoveryControlID: NativeRecoveryIdentityRegistry.ControlID? = nil
+        var recoveryIdentityFingerprint: String? = nil
     }
     private struct AgentDesktopRefRecord {
         var ref: String
@@ -30,7 +33,6 @@ final class MacTools {
         var observed: Date
         var fingerprint: String
         var windowBinding: HelperWindowBinding? = nil
-        var recoveryPath: String? = nil
     }
     private struct HelperWindowBinding {
         let window: AXUIElement
@@ -41,6 +43,8 @@ final class MacTools {
     /// a UI action. Models cannot create this ticket or broaden its AX scope.
     @MainActor final class MutationReadbackScope {
         let call: ToolCall
+        let recoveryWindowID: NativeRecoveryIdentityRegistry.WindowID?
+        let recoveryAttemptID = UUID()
         fileprivate let owner: UUID
         fileprivate let actionID: String
         fileprivate let actionFingerprint: String
@@ -56,14 +60,70 @@ final class MacTools {
         fileprivate init(call: ToolCall, owner: UUID, action: ToolCall, target: DesktopApplicationIdentity,
                          window: AXUIElement, documentFingerprint: String,
                          browserTarget: BrowserPageReader.CurrentDocumentTarget?,
+                         recoveryWindowID: NativeRecoveryIdentityRegistry.WindowID?,
                          effectGeneration: UInt64, observationGeneration: UInt64) {
             self.call = call; self.owner = owner; actionID = action.id
             actionFingerprint = ToolPolicy.fingerprint(action)
             self.target = target; self.window = window; self.documentFingerprint = documentFingerprint
             self.browserTarget = browserTarget
+            self.recoveryWindowID = recoveryWindowID
             preparedAt = Date(); self.effectGeneration = effectGeneration
             self.observationGeneration = observationGeneration
         }
+    }
+    /// Bookkeeping attempt only. This does not refresh, authorize or execute its
+    /// captured call. Normal execute() still validates its native window ID.
+    @MainActor final class PreciseWindowReadAttempt {
+        let call: ToolCall
+        let knownWindowID: NativeRecoveryIdentityRegistry.WindowID?
+        fileprivate let target: DesktopApplicationIdentity
+        fileprivate let window: AXUIElement
+        fileprivate let owner: UUID
+        let recoveryAttemptID = UUID()
+        fileprivate let effect: UInt64
+        fileprivate let observation: UInt64
+        fileprivate var used = false
+        fileprivate init(call: ToolCall, windowID: NativeRecoveryIdentityRegistry.WindowID?,
+                         target: DesktopApplicationIdentity, window: AXUIElement,
+                         owner: UUID, effect: UInt64, observation: UInt64) {
+            self.call = call; knownWindowID = windowID; self.owner = owner
+            self.target = target; self.window = window
+            self.effect = effect; self.observation = observation
+        }
+    }
+    @MainActor final class PreciseWindowReadReceipt {
+        fileprivate let owner: UUID
+        fileprivate let nonce: UUID
+        fileprivate let callFingerprint: String
+        fileprivate let windowID: NativeRecoveryIdentityRegistry.WindowID
+        fileprivate let effect: UInt64
+        fileprivate let observation: UInt64
+        fileprivate var consumed = false
+        fileprivate init(owner: UUID, nonce: UUID, call: ToolCall,
+                         windowID: NativeRecoveryIdentityRegistry.WindowID, effect: UInt64, observation: UInt64) {
+            self.owner = owner; self.nonce = nonce; callFingerprint = ToolPolicy.fingerprint(call)
+            self.windowID = windowID; self.effect = effect; self.observation = observation
+        }
+    }
+    nonisolated struct VerifiedWindowRead: Sendable {
+        let windowID: NativeRecoveryIdentityRegistry.WindowID
+        let attemptID: UUID
+        fileprivate init(windowID: NativeRecoveryIdentityRegistry.WindowID, attemptID: UUID) {
+            self.windowID = windowID; self.attemptID = attemptID
+        }
+    }
+    private struct WindowRecoveryBinding {
+        let target: DesktopApplicationIdentity
+        let window: AXUIElement
+        let documentFingerprint: String
+        let browser: BrowserPageReader.CurrentDocumentTarget?
+    }
+    private struct CompleteWindowReadProof {
+        let windowID: NativeRecoveryIdentityRegistry.WindowID
+        let target: DesktopApplicationIdentity
+        let window: AXUIElement
+        let effect: UInt64
+        let observation: UInt64
     }
     private struct Approval {
         var fingerprint: String
@@ -72,6 +132,8 @@ final class MacTools {
     private var effectGeneration: UInt64 = 0
     private var observationGeneration: UInt64 = 0
     private let readbackOwner = UUID()
+    private let recoveryIdentities = NativeRecoveryIdentityRegistry()
+    private var completeWindowReadProof: CompleteWindowReadProof?
     private var movePreviews: [String: ScopedFileOperations.MovePreview] = [:]
     private var elements: [String: ElementRecord] = [:]
     private var agentDesktopRefs: [String: AgentDesktopRefRecord] = [:]
@@ -90,30 +152,81 @@ final class MacTools {
         mailTools = MailWorkflowTools(workflow: mailWorkflow ?? MailWorkflow())
     }
 
-    /// Cached identity only: this never reads AX, refreshes a reference, changes
-    /// scope or authorizes another attempt. Software-issued IDs are excluded so
-    /// observing the same unchanged control cannot reset its recovery counter.
+    /// Cached identity only. Helpers without the actual native AX control remain
+    /// unbound: a label, matching path or fresh @ref cannot resolve another issue.
     func recoveryScopeFingerprint(for call: ToolCall) -> String? {
         guard let bundle = call.arguments["bundle_id"]?.string else { return nil }
         let references = ["element_id", "root_ref", "window_id"].compactMap { call.arguments[$0]?.string }
-        guard references.count == 1, let reference = references.first else { return nil }
-        func identity(_ target: DesktopApplicationIdentity) -> [String] {
-            [target.bundleID, String(target.processID), String(target.launchedAt.timeIntervalSince1970), target.bundleURL.path]
+        guard references.count == 1, let reference = references.first,
+              let record = elements[reference], record.bundleID == bundle,
+              let id = record.recoveryControlID, recoveryIdentities.contains(id) else { return nil }
+        return SHA256.hash(data: Data(id.opaqueValue.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// No AX queries. A full native window observation with no query/subtree is
+    /// the only call shape eligible to reconcile an earlier window-read failure.
+    func preparePreciseWindowReadRecovery(for call: ToolCall) -> PreciseWindowReadAttempt? {
+        guard call.name == "observe_app", let bundle = call.arguments["bundle_id"]?.string,
+              (call.arguments["mode"]?.string?.lowercased() ?? "full") == "full",
+              call.arguments["query"] == nil, call.arguments["root_ref"] == nil,
+              let ref = call.arguments["window_id"]?.string, let record = elements[ref],
+              record.bundleID == bundle, let window = record.window, CFEqual(record.element, window) else { return nil }
+        let id = record.recoveryWindowID.flatMap { recoveryIdentities.contains($0) ? $0 : nil }
+        return PreciseWindowReadAttempt(call: call, windowID: id, target: record.target, window: window, owner: readbackOwner,
+            effect: effectGeneration, observation: observationGeneration)
+    }
+
+    /// Executes the unmodified ordinary read path. Its attempt is single-use;
+    /// concurrency, Stop, partial output or a changed scope only removes receipt
+    /// eligibility. None of those conditions creates another read or an action.
+    func executePreciseWindowRead(_ attempt: PreciseWindowReadAttempt) async throws
+        -> (ToolResult, PreciseWindowReadReceipt?) {
+        try Task.checkCancellation()
+        guard attempt.owner == readbackOwner, !attempt.used,
+              attempt.effect == effectGeneration, attempt.observation == observationGeneration else {
+            throw RelayError.message("The precise read recovery attempt is expired or belongs to another executor.")
         }
-        let components: [String]
-        if let record = elements[reference], record.bundleID == bundle,
-           let window = record.window, let windowFingerprint = record.windowFingerprint {
-            components = ["native"] + identity(record.target) + [String(CFHash(window)), windowFingerprint,
-                String(CFHash(record.element)), record.fingerprint]
-        // Browser helper trees do not yet cache an exact tab/document identity.
-        // A native window title and absent AXURL cannot resolve another tab's issue.
-        } else if !["com.google.Chrome", "com.apple.Safari"].contains(bundle),
-                  let record = agentDesktopRefs[reference], record.bundleID == bundle,
-                  let window = record.windowBinding, let path = record.recoveryPath {
-            components = ["helper"] + identity(record.target) + [String(CFHash(window.window)), window.title,
-                window.documentFingerprint, path, record.role, record.title, record.value, String(record.enabled)]
-        } else { return nil }
-        return SHA256.hash(data: Data(components.joined(separator: "\u{0}").utf8)).map { String(format: "%02x", $0) }.joined()
+        attempt.used = true
+        let result = try await execute(attempt.call)
+        try Task.checkCancellation()
+        let receipt = result.verified ? makePreciseReadReceipt(call: attempt.call, nonce: attempt.recoveryAttemptID,
+            target: attempt.target, window: attempt.window, effect: attempt.effect, observation: attempt.observation &+ 1) : nil
+        return (result, receipt)
+    }
+
+    func readbackWithRecovery(_ scope: MutationReadbackScope, after action: ToolCall) async throws
+        -> (ToolResult, PreciseWindowReadReceipt?) {
+        let before = observationGeneration
+        let result = try await readback(scope, after: action)
+        try Task.checkCancellation()
+        let receipt = result.verified ? makePreciseReadReceipt(call: scope.call, nonce: scope.recoveryAttemptID,
+            target: scope.target, window: scope.window, effect: scope.effectGeneration, observation: before &+ 1) : nil
+        return (result, receipt)
+    }
+
+    /// Consume immediately after the matching validated result. Returning a
+    /// window token is recovery bookkeeping, never a mutation approval or retry.
+    func consumePreciseReadReceipt(_ receipt: PreciseWindowReadReceipt, for call: ToolCall)
+        -> VerifiedWindowRead? {
+        guard receipt.owner == readbackOwner, !receipt.consumed else { return nil }
+        receipt.consumed = true
+        guard !Task.isCancelled, receipt.callFingerprint == ToolPolicy.fingerprint(call), receipt.effect == effectGeneration,
+              receipt.observation == observationGeneration, recoveryIdentities.contains(receipt.windowID),
+              completeWindowReadProof?.windowID == receipt.windowID,
+              completeWindowReadProof?.effect == receipt.effect,
+              completeWindowReadProof?.observation == receipt.observation else { return nil }
+        return VerifiedWindowRead(windowID: receipt.windowID, attemptID: receipt.nonce)
+    }
+
+    private func makePreciseReadReceipt(call: ToolCall, nonce: UUID,
+                                       target: DesktopApplicationIdentity, window: AXUIElement,
+                                       effect: UInt64, observation: UInt64) -> PreciseWindowReadReceipt? {
+        guard !Task.isCancelled, effect == effectGeneration, observation == observationGeneration,
+              let proof = completeWindowReadProof, recoveryIdentities.contains(proof.windowID),
+              proof.target == target, CFEqual(proof.window, window),
+              proof.effect == effect, proof.observation == observation else { return nil }
+        return PreciseWindowReadReceipt(owner: readbackOwner, nonce: nonce, call: call,
+            windowID: proof.windowID, effect: effect, observation: observation)
     }
 
     /// Call immediately before dispatch, after any required review. Missing
@@ -149,15 +262,18 @@ final class MacTools {
         }
         let browserTarget: BrowserPageReader.CurrentDocumentTarget?
         if ["com.google.Chrome", "com.apple.Safari"].contains(target.bundleID) {
-            guard let pinned = try? BrowserPageReader.captureCurrentTarget(application: app),
+            guard let pinned = try? BrowserPageReader.captureCurrentTarget(application: app, expectedWindow: window),
                   (try? BrowserPageReader.validateCurrentTarget(pinned, expectedWindow: window)) != nil else { return nil }
             browserTarget = pinned
         } else { browserTarget = nil }
         let observation = ToolCall(name: "observe_app", arguments: ["bundle_id": .string(target.bundleID),
             "mode": .string("full"), "window_id": .string(UUID().uuidString)])
+        let recoveryID = windowRecoveryBinding(target: target, window: window, browser: browserTarget)
+            .flatMap { registerValidatedWindowRecovery($0) }
         return MutationReadbackScope(call: observation, owner: readbackOwner, action: call, target: target,
             window: window, documentFingerprint: windowDocumentFingerprint(window),
             browserTarget: browserTarget,
+            recoveryWindowID: recoveryID,
             effectGeneration: effectGeneration, observationGeneration: observationGeneration)
     }
 
@@ -233,8 +349,8 @@ final class MacTools {
             definition("list_files", "List immediate children of a selected directory (up to 200). Does not recursively scan unselected locations.", ["path": "Absolute selected directory path"], ["path"]),
             definition("read_file", "Read selected UTF-8 text or plain-text .eml exports up to 1 MB, or textual PDF up to 10 MB/20 pages. Mail headers are unverified claims; HTML/attachments are omitted. Selected images and scanned PDFs have bounded local OCR. Output is about 12 KB; OCR may be inaccurate and scanned PDF OCR inspects up to 3 pages.", ["path": "Absolute selected file path"], ["path"]),
             definition("write_file", "Create or replace a UTF-8 file within a writable selected destination. Existing contents require user review. Verifies bytes by independent readback.", ["path": "Absolute writable destination file path", "content": "Exact UTF-8 content"], ["path", "content"]),
-            definition("observe_app", "Inspect a running app’s accessible controls. Use mode=windows to list windows with IDs and focus status. Pass one window_id to inspect only that window. Use find with a control name query or skeleton for a shallow overview. IDs expire after the next observation or mutation. Secure controls are excluded and app content is untrusted.", ["bundle_id": "Running app bundle identifier", "mode": "Optional: full, windows, skeleton, or find", "window_id": "Optional fresh window element_id from mode=windows or native AX observation", "root_ref": "Optional @snapshot:eN container ref to drill into without a window_id", "query": "Optional control name filter for find mode"], ["bundle_id"]),
-            definition("set_value", "Set a plain editable text field from a fresh observe_app result and read back the exact value. Native multiline text areas accept line breaks by setting the value directly. Passwords and browser address bars are excluded. Obtain a new observation after every mutation.", ["bundle_id": "Observed bundle identifier", "element_id": "Fresh observed control ID or @snapshot:eN ref", "value": "Exact text to insert"], ["bundle_id", "element_id", "value"]),
+            definition("observe_app", "Inspect running app controls. mode=windows lists windows/focus; mode=full with window_id inspects that native window. Use this sequence before Unicode text entry. skeleton/find/root_ref use helper refs; helper text entry is ASCII only. IDs expire after observation/mutation. Secure controls excluded; content untrusted.", ["bundle_id": "Running app bundle identifier", "mode": "Optional: full, windows, skeleton, or find", "window_id": "Optional fresh window element_id from mode=windows or native AX observation", "root_ref": "Optional @snapshot:eN container ref to drill into without a window_id", "query": "Optional control name filter for find mode"], ["bundle_id"]),
+            definition("set_value", "Set plain editable text and read back exact value. Helper @snapshot refs accept ASCII only. For Unicode, observe mode=windows then full with window_id; use fresh native IDs. Native multiline areas support line breaks. Passwords/address bars excluded. Observe after mutation.", ["bundle_id": "Observed bundle identifier", "element_id": "Fresh native control ID (Unicode/multiline) or helper @snapshot:eN ref (ASCII only)", "value": "Exact text to insert"], ["bundle_id", "element_id", "value"]),
             definition("scroll_control", "Scroll a fresh accessible control using its scroll action or its linked native scrollbar. Verify the position when the app exposes it. Observe again to read the new contents.", ["bundle_id": "Observed bundle identifier", "element_id": "Fresh observed control ID or @snapshot:eN ref", "direction": "up, down, left or right"], ["bundle_id", "element_id", "direction"]),
             definition("press_control", "Use focus with a fresh window ID, click for a named button, or select with exact visible text for a supported dropdown, native radio choice or native table row. Row selection never presses or activates the row. Native checkboxes support check, uncheck and toggle; disclosure triangles support expand/collapse. Qualified state changes verify exact readback. Named changes require review. Sending, submission, publishing, destructive, financial, permission and security controls are unsupported. Observe after mutation.", ["bundle_id": "Observed bundle identifier", "element_id": "Fresh observed control ID or @snapshot:eN ref", "action": "Optional: click, focus, select, toggle, check, uncheck, expand, or collapse", "value": "Required for select: exact visible option/radio title or observed AXRow description; omit for other actions"], ["bundle_id", "element_id"]),
             definition("browser_navigate", "Navigate to a reviewed HTTP/HTTPS destination in Chrome or Safari. Uses a new tab with target-bound address entry when supported, otherwise a supported URL-opening request. Verification covers the selected URL/title only; read page contents separately. Uncertain results, redirects and authentication require inspection.", ["url": "Exact HTTP/HTTPS destination", "browser": "Google Chrome or Safari name or bundle identifier"], ["url", "browser"]),
@@ -268,6 +384,7 @@ final class MacTools {
         displayedContextFailures.removeAll()
         displayedAttachmentReviews.removeAll()
         discardObservations()
+        recoveryIdentities.removeAll()
     }
 
     func reviewReason(for call: ToolCall) -> String? {
@@ -1042,6 +1159,24 @@ final class MacTools {
             windows = [focused]
         }
         let windowLimit = 32
+        let observationDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        let isBrowser = ["com.google.Chrome", "com.apple.Safari"].contains(bundleID)
+        let capturedBrowser: BrowserPageReader.CurrentDocumentTarget?
+        if isBrowser, mode != "windows", windows.count == 1, let intended = windows.first,
+           focused.map({ CFEqual($0, intended) }) == true {
+            capturedBrowser = try? BrowserPageReader.captureCurrentTarget(application: app, expectedWindow: intended)
+        } else { capturedBrowser = nil }
+        var recoveryBindings: [WindowRecoveryBinding] = []
+        for window in windows.prefix(windowLimit) where ContinuousClock.now < observationDeadline {
+            AXUIElementSetMessagingTimeout(window, 0.015)
+            if isBrowser {
+                guard let capturedBrowser, BrowserPageReader.capturedDocumentBelongs(capturedBrowser,
+                    processID: target.processID, launchedAt: target.launchedAt, window: window) else { continue }
+            }
+            if let binding = windowRecoveryBinding(target: target, window: window, browser: capturedBrowser) {
+                recoveryBindings.append(binding)
+            }
+        }
         var queue: [(element: AXUIElement, depth: Int, window: AXUIElement?, windowID: String?, windowFingerprint: String?)] = windows.isEmpty
             ? [(root, 0, nil, nil, nil)]
             : windows.prefix(windowLimit).map { ($0, 0, $0, UUID().uuidString, nil) }
@@ -1049,9 +1184,9 @@ final class MacTools {
         var candidates: [(id: String, record: ElementRecord, row: String, priority: Int)] = []
         var cursor = 0
         let observed = Date()
-        let observationDeadline = ContinuousClock.now.advanced(by: .seconds(3))
         let depthLimit = mode == "windows" ? 0 : (mode == "skeleton" ? 2 : 12)
         var omitted = windows.count > windowLimit
+        var completeForRecovery = true
         while ContinuousClock.now < observationDeadline && cursor < queue.count && candidates.count < 250 {
             await Task.yield()
             try Task.checkCancellation()
@@ -1060,8 +1195,10 @@ final class MacTools {
             cursor += 1
             guard !seen.contains(where: { CFEqual($0, element) }) else { continue }
             seen.append(element)
-            if isSecure(element) || (attribute(element, "AXHidden") as? Bool) == true { continue }
+            if isSecure(element) { completeForRecovery = false; continue }
+            if (attribute(element, "AXHidden") as? Bool) == true { continue }
             let role = attribute(element, kAXRoleAttribute) as? String ?? "unknown"
+            if role == "unknown" { completeForRecovery = false }
             if role == "AXMenuBar" { continue }
             let isWindow = role == "AXWindow"
             let minimized = isWindow && (attribute(element, kAXMinimizedAttribute) as? Bool) == true
@@ -1078,7 +1215,8 @@ final class MacTools {
                 let identity = describe(element, role: role, title: title, description: description, identifier: identifier)
                 let fingerprint = isWindow ? (windowFingerprint ?? "") : stateFingerprint(element)
                 let record = ElementRecord(element: element, target: target, fingerprint: fingerprint,
-                                           observed: observed, window: containingWindow, windowFingerprint: windowFingerprint)
+                                           observed: observed, window: containingWindow, windowFingerprint: windowFingerprint,
+                                           recoveryIdentityFingerprint: controlIdentityFingerprint(element))
                 let location: String
                 if isWindow {
                     location = " focused=\(focused.map { CFEqual($0, element) } ?? false) minimized=\(minimized)"
@@ -1093,12 +1231,18 @@ final class MacTools {
                 candidates.append((id, record, "element_id=\(id) \(identity)\(location)", priority))
             }
             if minimized || mode == "windows" { continue }
-            if let children = attribute(element, kAXChildrenAttribute) as? [AXUIElement], !children.isEmpty {
+            var childValue: CFTypeRef?
+            let childStatus = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childValue)
+            if childStatus == .success, let children = childValue as? [AXUIElement], !children.isEmpty {
                 let capacity = min(250, 500 - queue.count)
                 if depth < depthLimit {
                     queue.append(contentsOf: children.prefix(capacity).map { ($0, depth + 1, containingWindow, windowID, windowFingerprint) })
                 }
                 if depth == depthLimit || children.count > capacity { omitted = true }
+            } else if childStatus == .success {
+                if !(childValue is [AXUIElement]) { completeForRecovery = false }
+            } else if childStatus != .attributeUnsupported && childStatus != .noValue {
+                completeForRecovery = false
             }
         }
         try checkObservation(generation, app: app, target: target)
@@ -1111,16 +1255,36 @@ final class MacTools {
         }
         var rows: [String] = []
         var bytes = 0
+        var boundWindows: [(AXUIElement, NativeRecoveryIdentityRegistry.WindowID)] = []
+        for binding in recoveryBindings where ContinuousClock.now < observationDeadline {
+            if let id = registerValidatedWindowRecovery(binding) { boundWindows.append((binding.window, id)) }
+        }
         for candidate in candidates.enumerated().sorted(by: { lhs, rhs in
             lhs.element.priority == rhs.element.priority ? lhs.offset < rhs.offset : lhs.element.priority < rhs.element.priority
         }).map(\.element) {
             let count = candidate.row.utf8.count + 1
             guard bytes + count <= 11_500 else { continue }
-            elements[candidate.id] = candidate.record
+            var record = candidate.record
+            if let window = record.window,
+               let (_, id) = boundWindows.first(where: { CFEqual($0.0, window) }) {
+                record.recoveryWindowID = id
+                var ownerPID: pid_t = 0
+                if let identity = record.recoveryIdentityFingerprint,
+                   AXUIElementGetPid(record.element, &ownerPID) == .success, ownerPID == target.processID {
+                    record.recoveryControlID = recoveryIdentities.registerControl(element: record.element,
+                        in: id, identityFingerprint: identity)
+                }
+            }
+            elements[candidate.id] = record
             rows.append(candidate.row)
             bytes += count
         }
         omitted = omitted || cursor < queue.count || rows.count < candidates.count
+        if mode == "full", query == nil, let scopedWindow, !omitted, completeForRecovery,
+           let (_, id) = boundWindows.first(where: { CFEqual($0.0, scopedWindow) }) {
+            completeWindowReadProof = CompleteWindowReadProof(windowID: id, target: target,
+                window: scopedWindow, effect: effectGeneration, observation: generation)
+        }
         let summary = (rows.isEmpty ? "No matching accessible controls were observed." : rows.joined(separator: "\n"))
             + (omitted ? "\n[Some controls were outside the observation limits. Narrow the scope before acting.]" : "")
         let method = usedFallback ? "Native AX fallback" : "Native AX observation"
@@ -1135,6 +1299,7 @@ final class MacTools {
         observationGeneration &+= 1
         elements.removeAll()
         agentDesktopRefs.removeAll()
+        completeWindowReadProof = nil
     }
 
     private func checkObservation(_ generation: UInt64, app: NSRunningApplication, target: DesktopApplicationIdentity) throws {
@@ -1160,7 +1325,7 @@ final class MacTools {
             guard line.hasPrefix("element_id="), let token = line.split(separator: " ").first else { return nil }
             return String(token.dropFirst("element_id=".count))
         })
-        func walkNode(_ node: [String: Any], path: String?) {
+        func walkNode(_ node: [String: Any]) {
             guard !AgentDesktopBridge.isProtectedObservationNode(node) else { return }
             if let ref = node["ref_id"] as? String, exposedRefs.contains(ref) {
                 let role = (node["role"] as? String) ?? "unknown"
@@ -1179,19 +1344,18 @@ final class MacTools {
                     enabled: enabled,
                     observed: now,
                     fingerprint: fp,
-                    windowBinding: windowBinding,
-                    recoveryPath: path
+                    windowBinding: windowBinding
                 )
             }
             if let children = node["children"] as? [[String: Any]] {
-                for (index, child) in children.enumerated() { walkNode(child, path: path.map { $0 + "." + String(index) }) }
+                for child in children { walkNode(child) }
             }
         }
         if let tree = payload["tree"] as? [String: Any] {
-            walkNode(tree, path: "0")
+            walkNode(tree)
         }
         if let matches = payload["matches"] as? [[String: Any]] {
-            for match in matches { walkNode(match, path: nil) }
+            for match in matches { walkNode(match) }
         }
     }
 
@@ -1256,7 +1420,7 @@ final class MacTools {
 
     private func describe(_ element: AXUIElement, role: String, title: String, description: String, identifier: String) -> String {
         let value = String(describing: attribute(element, kAXValueAttribute) ?? "" as CFString)
-        let enabled = (attribute(element, kAXEnabledAttribute) as? Bool) ?? true
+        let enabled = (attribute(element, kAXEnabledAttribute) as? Bool).map(String.init) ?? "unknown"
         func field(_ value: String, limit: Int = 200) -> String {
             Self.boundedText(value, utf8Limit: limit).replacingOccurrences(of: "\\", with: "\\\\")
                 .map { $0.isNewline ? "\\n" : String($0) }.joined()
@@ -1289,6 +1453,49 @@ final class MacTools {
         let fields = [kAXIdentifierAttribute, kAXDocumentAttribute, kAXURLAttribute]
         let values = fields.map { String(describing: attribute(element, $0) ?? "" as CFString) }
         return SHA256.hash(data: Data(values.joined(separator: "\u{0}").utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func recoveryDocumentFingerprint(_ window: AXUIElement) -> String? {
+        guard (attribute(window, kAXRoleAttribute) as? String) == "AXWindow",
+              (attribute(window, kAXMinimizedAttribute) as? Bool) == false,
+              let title = attribute(window, kAXTitleAttribute) as? String, !title.isEmpty,
+              title.utf8.count <= 4_096 else { return nil }
+        var values = [title]
+        for name in [kAXIdentifierAttribute, kAXDocumentAttribute, kAXURLAttribute] {
+            var value: CFTypeRef?
+            let status = AXUIElementCopyAttributeValue(window, name as CFString, &value)
+            if status == .attributeUnsupported || status == .noValue { values.append(""); continue }
+            guard status == .success, let value else { return nil }
+            let text: String
+            if let string = value as? String { text = string }
+            else if let url = value as? URL { text = url.absoluteString }
+            else { return nil }
+            guard text.utf8.count <= 8_192 else { return nil }
+            values.append(text)
+        }
+        return SHA256.hash(data: Data(values.joined(separator: "\u{0}").utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func windowRecoveryBinding(target: DesktopApplicationIdentity, window: AXUIElement,
+                                       browser: BrowserPageReader.CurrentDocumentTarget?) -> WindowRecoveryBinding? {
+        var ownerPID: pid_t = 0
+        guard AXUIElementGetPid(window, &ownerPID) == .success, ownerPID == target.processID,
+              let document = recoveryDocumentFingerprint(window),
+              ["com.google.Chrome", "com.apple.Safari"].contains(target.bundleID) == (browser != nil) else { return nil }
+        return WindowRecoveryBinding(target: target, window: window, documentFingerprint: document, browser: browser)
+    }
+
+    private func registerValidatedWindowRecovery(_ binding: WindowRecoveryBinding)
+        -> NativeRecoveryIdentityRegistry.WindowID? {
+        guard let app = resolveRunningApplication(binding.target.bundleID),
+              DesktopApplicationTarget.matches(binding.target, application: app),
+              windowIsAttached(binding.window, to: binding.target.processID),
+              recoveryDocumentFingerprint(binding.window) == binding.documentFingerprint else { return nil }
+        if let browser = binding.browser {
+            guard (try? BrowserPageReader.validateCurrentTarget(browser, expectedWindow: binding.window)) != nil else { return nil }
+        }
+        return recoveryIdentities.registerWindow(target: binding.target, window: binding.window,
+            documentFingerprint: binding.documentFingerprint, browser: binding.browser)
     }
 
     private func freshRecord(_ call: ToolCall) throws -> ElementRecord {
@@ -1340,7 +1547,7 @@ final class MacTools {
                   !label.contains("password") else {
                 throw RelayError.message("Only plain editable text controls are supported; browser address bars, passwords and search-submission controls are excluded.")
             }
-            let value = try Self.validatedEditableText(textAllowingEmpty("value", call), multiline: false)
+            let value = try Self.validatedHelperEditableText(textAllowingEmpty("value", call))
             try await showAgentPointer(refRecord, label: "Type")
             defer { RelayActionPointer.shared.finishAction() }
             try requireHelperOutsideChooser(freshAgentDesktopRef(call))
@@ -1417,6 +1624,15 @@ final class MacTools {
             throw RelayError.message("Text entry supports up to 30,000 characters and 120,000 UTF-8 bytes. Line breaks and tabs require a native multiline text area; other control characters are excluded.")
         }
         return value
+    }
+
+    /// The helper can normalize Unicode while reporting only uncertain delivery.
+    /// Refuse before pointer display or dispatch; native AX preserves exact bytes.
+    static func validatedHelperEditableText(_ value: String) throws -> String {
+        guard value.utf8.allSatisfy({ $0 < 128 }) else {
+            throw RelayError.message("No text was entered. Helper refs support ASCII only. For exact Unicode, observe_app mode=windows, then mode=full with its fresh window_id; use the new native control ID. Do not repeat this helper write.")
+        }
+        return try validatedEditableText(value, multiline: false)
     }
 
     private func controlLabel(_ element: AXUIElement) -> String {

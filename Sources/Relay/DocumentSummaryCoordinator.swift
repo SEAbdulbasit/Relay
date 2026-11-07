@@ -14,8 +14,8 @@ final class DocumentSummarySession: Identifiable {
     fileprivate func captured(_ source: DocumentSummarySource) { self.source = source; phase = .queued }
     fileprivate func generating() { phase = .generating }
     fileprivate func completed(_ text: String) { resultText = text; phase = .ready }
-    fileprivate func failed() {
-        source = nil; resultText = ""; errorMessage = "This local summary could not finish. Capture the document again to retry."; phase = .failed
+    fileprivate func failed(message: String? = nil) {
+        source = nil; resultText = ""; errorMessage = message ?? "This local summary could not finish. Capture the document again to retry."; phase = .failed
     }
     fileprivate func clear(_ phase: Phase) { source = nil; resultText = ""; errorMessage = nil; self.phase = phase }
 }
@@ -28,6 +28,16 @@ final class DocumentSummaryCoordinator {
     typealias Generate = QuickTextActionSession.Generate
     typealias Capture = @MainActor () async throws -> DocumentSummarySource
     typealias BrowserCapture = @MainActor (NSRunningApplication?) throws -> Capture
+    typealias SourceAuthorization = @MainActor () -> Bool
+    struct PreparedCapture {
+        let kind: DocumentSummarySource.Kind?
+        let isSourceAuthorized: SourceAuthorization
+        let capture: Capture
+        init(kind: DocumentSummarySource.Kind? = nil, isSourceAuthorized: @escaping SourceAuthorization, capture: @escaping Capture) {
+            self.kind = kind; self.isSourceAuthorized = isSourceAuthorized; self.capture = capture
+        }
+    }
+    typealias NativeCapture = @MainActor (NSRunningApplication, @escaping SourceAuthorization) throws -> PreparedCapture
     static let maximumSessions = 4
     private(set) var sessions: [DocumentSummarySession] = []
     private(set) var isBusy = false
@@ -37,6 +47,13 @@ final class DocumentSummaryCoordinator {
     @ObservationIgnored var prepareBrowserCapture: BrowserCapture = { application in
         let target = try BrowserPageReader.captureCurrentTarget(application: application)
         return { try await DocumentSummaryCapture.browser(target: target) }
+    }
+    @ObservationIgnored var prepareNativeCapture: NativeCapture = { application, isActive in
+        let request = try SummaryNativeDocumentCapture.prepare(application: application, isActive: isActive)
+        let kind: DocumentSummarySource.Kind = switch request.mode { case .document: .nativeDocument; case .conversation: .conversation }
+        return PreparedCapture(kind: kind, isSourceAuthorized: SummaryNativeDocumentCapture.authorization(for: request), capture: {
+            try DocumentSummarySource.native(await SummaryNativeDocumentCapture.capture(request))
+        })
     }
     @ObservationIgnored private var captures: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var queue: [UUID] = []
@@ -51,6 +68,19 @@ final class DocumentSummaryCoordinator {
         try requireCapacity()
         let capture = try prepareBrowserCapture(application)
         return try start(capture: capture)
+    }
+
+    /// Resolve the invocation before scheduling any capture. A rejected native
+    /// profile never silently reads a later frontmost app, selection or PDF.
+    @discardableResult func startNative(application: NSRunningApplication,
+                                       requiredKind: DocumentSummarySource.Kind? = nil,
+                                       isActive: @escaping SourceAuthorization = { true }) throws -> DocumentSummarySession {
+        try Task.checkCancellation()
+        try requireCapacity()
+        guard isActive() else { throw SummaryNativeDocumentCapture.Failure.inactive }
+        let prepared = try prepareNativeCapture(application, isActive)
+        guard requiredKind == nil || prepared.kind == requiredKind else { throw SummaryNativeDocumentCapture.Failure.unsupportedProfile }
+        return try start(isSourceAuthorized: prepared.isSourceAuthorized, capture: prepared.capture)
     }
 
     @discardableResult func startPDF(path: String) throws -> DocumentSummarySession {
@@ -90,6 +120,7 @@ final class DocumentSummaryCoordinator {
                 }
             }
             do {
+                guard self?.authorizations[id]?() == true else { session?.clear(.stopped); return }
                 let source = try await capture()
                 try Task.checkCancellation()
                 guard let self, let session, self.sessions.contains(where: { $0.id == id }), !self.cancelledIDs.contains(id) else { return }
@@ -99,6 +130,8 @@ final class DocumentSummaryCoordinator {
                 self.startNext()
             } catch is CancellationError {
                 if let self, let session, !self.cancelledIDs.contains(id) { session.clear(.stopped) }
+            } catch let error as DocumentSummarySource.NativeCaptureFailure {
+                if let self, let session, !self.cancelledIDs.contains(id) { session.failed(message: error.localizedDescription) }
             } catch {
                 if let self, let session, !self.cancelledIDs.contains(id) { session.failed() }
             }

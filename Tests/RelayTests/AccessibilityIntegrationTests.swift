@@ -41,6 +41,17 @@ struct AccessibilityContractTests {
         #expect(throws: (any Error).self) { try MacTools.validatedEditableText("One\u{2028}Two", multiline: false) }
     }
 
+    @Test(arguments: ["", "Exact ASCII 8431", "-Literal -- quotes \" ' and spaces "])
+    func helperTextEntryPreservesSupportedASCII(value: String) throws {
+        #expect(try MacTools.validatedHelperEditableText(value).utf8.elementsEqual(value.utf8))
+    }
+
+    @Test(arguments: ["Native Gemma café 8431", "Native Gemma cafe\u{301} 8431", "🌍", "日本語", "nonbreaking\u{A0}space"])
+    func helperUnicodeIsRefusedWithoutChangingNativeTextSupport(value: String) throws {
+        #expect(throws: (any Error).self) { try MacTools.validatedHelperEditableText(value) }
+        #expect(try MacTools.validatedEditableText(value, multiline: false).utf8.elementsEqual(value.utf8))
+    }
+
     @Test func scrollbarTargetMovesInDirectionAndStaysInBounds() {
         #expect(MacTools.scrollTarget(0, within: 0...1, forward: true) == 0.2)
         #expect(MacTools.scrollTarget(0.9, within: 0...1, forward: true) == 1)

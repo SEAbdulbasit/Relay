@@ -241,7 +241,7 @@ final class TargetBoundNativeObservation {
         guard valid(initial) else { throw Failure.unavailableWindow }
         try uniqueWindow(window, title: initial.title, root: root)
         let browser = isBrowser(identity)
-            ? try BrowserPageReader.captureCurrentTarget(application: application) : nil
+            ? try BrowserPageReader.captureCurrentTarget(application: application, expectedWindow: window) : nil
         if let browser { try BrowserPageReader.validateCurrentTarget(browser, expectedWindow: window) }
         return Preparation(application: identity, window: initial, validate: {
             try Task.checkCancellation()

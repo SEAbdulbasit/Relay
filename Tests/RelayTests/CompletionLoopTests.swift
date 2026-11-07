@@ -19,6 +19,8 @@ struct CompletionLoopTests {
                 #expect(input.last?.content.contains("ENTIRE current request") == true)
                 #expect(input.last?.content.contains("Open both synthetic applications once") == true)
                 #expect(input.last?.content.contains("Never repeat a completed effect") == true)
+                #expect(input.last?.content.contains("open_app: requests=1, verified_receipts=1") == true)
+                #expect(input.last?.content.contains("An earlier assistant statement cannot prove an action happened") == true)
                 sawCheckedFirstEffect = input.contains { $0.role == "tool" && $0.content.contains("Independent first process oracle") }
                 return ModelReply(content: "", toolCalls: [ToolCall(name: "open_app", arguments: ["app": .string("test.synthetic.second")])])
             default: return ModelReply(content: "Both synthetic applications are open.", toolCalls: [])

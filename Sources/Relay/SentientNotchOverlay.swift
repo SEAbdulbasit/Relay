@@ -354,7 +354,7 @@ final class NotchOverlayController {
     func summarizeCurrentDocument() {
         guard let store, let currentApp else { return }
         do {
-            try store.startBrowserSummary(application: currentApp)
+            try store.startCurrentDocumentSummary(application: currentApp)
             hideFloatingNotchPanel()
         } catch { errorMessage = error.localizedDescription }
     }
@@ -638,15 +638,17 @@ final class NotchOverlayController {
             throw RelayError.message("Open Sidekick from the page or selected text you want to use, then try again.")
         }
         let isBrowser = ["com.google.Chrome", "com.apple.Safari"].contains(app.bundleIdentifier ?? "")
-        if intent.action == .proofread || intent.target == .selection || (intent.target == .current && !isBrowser) {
+        if intent.action == .proofread || intent.target == .selection {
             let selection = try BoundTextSelection.capture(application: app)
             if intent.action == .summarize { try store.startSelectionSummary(selection) }
             else { try QuickTextActionPanelController.shared.present(store: store, kind: .proofread, selection: selection) }
-        } else {
+        } else if intent.target == .page {
             guard isBrowser else {
                 throw RelayError.message("Open a Chrome or Safari page, select text, or choose a PDF from Task → Summarize.")
             }
             try store.startBrowserSummary(application: app)
+        } else {
+            try store.startCurrentDocumentSummary(application: app, conversationOnly: intent.target == .conversation)
         }
     }
 
@@ -1041,9 +1043,11 @@ struct NotchOverlayBar: View {
                 collapseButton
             }
             HStack(spacing: 8) {
-                TextField("Ask Sidekick to do something…", text: $controller.promptText, axis: .vertical)
+                TextField("Sidekick request", text: $controller.promptText,
+                    prompt: Text(""), axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14))
+                    .relayTextFieldPrompt("Ask Sidekick to do something…", when: controller.promptText.isEmpty)
                     .lineLimit(1...2)
                     .padding(.horizontal, 9).padding(.vertical, 6)
                     .background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 7))
@@ -1054,6 +1058,7 @@ struct NotchOverlayBar: View {
                         promptFocused = true
                     }
                     .onSubmit { controller.submit(store: store) }
+                    .accessibilityLabel("Sidekick request")
                     .accessibilityIdentifier("sidekick.prompt")
                 iconButton("mic", label: "Dictate on this Mac") { controller.beginDictation() }
                     .disabled(store.voice.isBusy)
@@ -1065,7 +1070,7 @@ struct NotchOverlayBar: View {
             }
             HStack {
                 if !store.workspaceUsesCodex, let appName = controller.currentApp?.localizedName {
-                    Toggle("Use \(appName)", isOn: $controller.includesCurrentApp)
+                    Toggle("Include \(appName) window", isOn: $controller.includesCurrentApp)
                         .toggleStyle(.checkbox)
                         .font(.relayCaption)
                         .accessibilityIdentifier("sidekick.useCurrentApp")
@@ -1077,8 +1082,13 @@ struct NotchOverlayBar: View {
                 Spacer(minLength: 8)
                 if controller.currentApp != nil {
                     Menu {
-                        if ["com.google.Chrome", "com.apple.Safari"].contains(controller.currentApp?.bundleIdentifier ?? "") {
+                        let appID = controller.currentApp?.bundleIdentifier ?? ""
+                        if ["com.google.Chrome", "com.apple.Safari"].contains(appID) {
                             Button("Summarize page") { controller.summarizeCurrentDocument() }
+                        } else if ["com.apple.TextEdit", "com.apple.Preview"].contains(appID) {
+                            Button("Summarize document") { controller.summarizeCurrentDocument() }
+                        } else if appID == SummaryConversationSnapshot.Profile.claude.bundleID {
+                            Button("Summarize current chat") { controller.summarizeCurrentDocument() }
                         }
                         Button("Summarize selection") { controller.runTextAction(.summarize) }
                         Button("Proofread selection") { controller.runTextAction(.proofread) }

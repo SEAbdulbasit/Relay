@@ -235,7 +235,7 @@ final class AssistantStore {
         }
         summaries.currentGrants = { [weak self] in self?.grants ?? [] }
         textActionShortcuts.onSummarize = { [weak self] in
-            do { try self?.startBrowserSummary() }
+            do { try self?.startCurrentDocumentSummary() }
             catch { NotchOverlayController.shared.showTextActionError(error.localizedDescription) }
         }
         textActionShortcuts.onProofread = { [weak self] in
@@ -670,10 +670,15 @@ final class AssistantStore {
                        !recovery.hasUnresolvedErrors, unverifiedResults == 0 {
                         completedEffectAudited = true
                         record("Checking requested outcome", "Comparing the completed effects with the whole request before finishing. Completed work and normal action checks remain in force.", "planning")
+                        let ledger = TaskToolLedger.summary(history: modelMessages.dropFirst(activeContextStart),
+                            toolNames: Set(definitions.map(\.name)))
                         appendTurn(ModelMessage(role: "user", content: """
-                        Before finishing, compare the checked tool results with this ENTIRE current request, including its latest constraints:
+                        Before finishing, check this ENTIRE current request against the actual tool protocol:
                         \(objective)
-                        A report about one completed step does not finish a compound request. Preserve all completed effects and their exact receipts. If requested work remains, continue only those already-authorized steps through the advertised tools, fresh target observations and normal reviews. Never repeat a completed effect, replay an uncertain action, infer new access or bypass a declined review. If all requested outcomes are supported by the evidence, answer concisely. If something is genuinely blocked, state the concrete remaining blocker and completed work. This is a bounded planning check, not a new user instruction or authorization; do not mention it in the answer.
+
+                        \(ledger)
+
+                        An earlier assistant statement cannot prove an action happened. If a requested step has no corresponding call/result, it remains undone. Continue that step only through advertised tools, fresh observations and normal reviews. Never repeat a completed effect or blindly replay an uncertain action. Do not infer access or bypass a declined review. If blocked, report the actual remaining step. Otherwise answer from the checked outcomes. This check grants no new authority; do not mention it in the answer.
                         """))
                         continue
                     }
@@ -686,14 +691,23 @@ final class AssistantStore {
                     // Finishing a model turn is not independent proof of every requested outcome.
                     let unresolved = recovery.hasUnresolvedErrors || unverifiedResults > 0
                     phase = unresolved ? .needsInput : .idle
-                    record("Response finished", "The run ended. Only the listed tool outcomes have independent evidence; broader task completeness is not a benchmark claim.", unresolved ? "needs input" : "finished")
+                    record("Response finished", unresolved
+                        ? "The response is ready, but some actions still need attention. Check their results before continuing."
+                        : "The response is ready. Check the recorded action results for what was verified.", unresolved ? "needs input" : "finished")
                     persist()
                     return
                 }
                 var actionReadbacks: [(MacTools.MutationReadbackScope, ToolCall, TaskRecoveryBudget.Key)] = []
                 // Execute one tool at a time. Even if the model batches calls, Stop/steering is checked between every dispatch.
                 for call in reply.toolCalls {
-                    let recoveryKey = TaskRecoveryBudget.key(for: call, observedScope: tools.recoveryScopeFingerprint(for: call))
+                    let operationKey = TaskRecoveryBudget.key(for: call, observedScope: tools.recoveryScopeFingerprint(for: call))
+                    let preciseRead = executeOverride == nil ? tools.preparePreciseWindowReadRecovery(for: call) : nil
+                    let recoveryKey = preciseRead.map { attempt in
+                        attempt.knownWindowID.map(TaskRecoveryBudget.windowReadKey)
+                            ?? TaskRecoveryBudget.unboundWindowReadKey(originalAction: operationKey)
+                    } ?? operationKey
+                    var readAttempt: TaskRecoveryBudget.WindowReadAttempt?
+                    defer { if let readAttempt { recovery.discardWindowReadAttempt(readAttempt) } }
                     do {
                         try gate(expected)
                         if DesktopActionBatch.invalidatesReferences(call) { actionReadbacks.removeAll() }
@@ -747,7 +761,16 @@ final class AssistantStore {
                             result = ToolResult(summary: "Read visible text from the selected window.",
                                                 evidence: visual.evidence, verified: visual.verified)
                         } else if let executeOverride { result = try await executeOverride(call) }
-                        else { result = try await tools.execute(call) }
+                        else if let preciseRead {
+                            let started = recovery.captureWindowReadAttempt(for: preciseRead.recoveryAttemptID)
+                            readAttempt = started
+                            let (observed, receipt) = try await tools.executePreciseWindowRead(preciseRead)
+                            result = observed
+                            if observed.verified, let receipt,
+                               let proof = tools.consumePreciseReadReceipt(receipt, for: call) {
+                                recovery.recordVerifiedWindowRead(started, window: proof.windowID, attemptID: proof.attemptID)
+                            }
+                        } else { result = try await tools.execute(call) }
                         record(call.name, "\(result.summary)\nEvidence: \(result.evidence)", result.verified ? "verified" : "effect uncertain")
                         let output = Self.toolFeedback(result)
                         let cloudOutput: String?
@@ -774,18 +797,20 @@ final class AssistantStore {
                             cloudOutput = nil
                         }
                         appendTurn(ModelMessage(role: "tool", content: output, toolCallID: call.id, toolName: call.name), cloudContent: cloudOutput)
-                        if let readbackScope { actionReadbacks.append((readbackScope, call, recoveryKey)) }
+                        if let readbackScope { actionReadbacks.append((readbackScope, call, operationKey)) }
                         if call.name == "read_browser_page", result.verified { browserReadSucceeded = true }
                         if result.verified {
                             verifiedResults.append(result)
                             recovery.recordVerifiedSuccess(recoveryKey)
-                        } else { unverifiedResults += 1 }
+                        } else if preciseRead != nil { try recovery.recordFailure(recoveryKey) }
+                        else { unverifiedResults += 1 }
                         if expected != revision || Task.isCancelled {
                             messages.append(ChatMessage(role: "assistant", text: "An in-flight action finished after interruption: \(result.summary)\n\(result.evidence)", artifacts: [result.artifactPath].compactMap { $0 }))
                             persist()
                         }
                         try gate(expected)
                     } catch is CancellationError { throw CancellationError() }
+                    catch let limit as TaskRecoveryBudget.Limit { throw limit }
                     catch {
                         guard expected == revision, !Task.isCancelled else { throw CancellationError() }
                         record(call.name, error.localizedDescription, "failed / inspect before retry")
@@ -804,19 +829,27 @@ final class AssistantStore {
                     try gate(expected)
                     try budget.check()
                     let observation = scope.call
-                    let recoveryKey = TaskRecoveryBudget.key(for: observation, observedScope: actionKey.fingerprint)
+                    let recoveryKey = scope.recoveryWindowID.map(TaskRecoveryBudget.windowReadKey)
+                        ?? TaskRecoveryBudget.unboundWindowReadKey(originalAction: actionKey)
+                    let readAttempt = recovery.captureWindowReadAttempt(for: scope.recoveryAttemptID)
+                    defer { recovery.discardWindowReadAttempt(readAttempt) }
                     appendTurn(ModelMessage(role: "assistant", content: "", toolCalls: [observation]))
                     record(observation.name, "Reading the action’s original window before the next planning step.", "requested")
                     do {
-                        let result = try await tools.readback(scope, after: action)
+                        let (result, receipt) = try await tools.readbackWithRecovery(scope, after: action)
+                        if result.verified, let receipt,
+                           let proof = tools.consumePreciseReadReceipt(receipt, for: observation) {
+                            recovery.recordVerifiedWindowRead(readAttempt, window: proof.windowID, attemptID: proof.attemptID)
+                        }
                         appendTurn(ModelMessage(role: "tool", content: Self.toolFeedback(result),
                             toolCallID: observation.id, toolName: observation.name))
                         record(observation.name, "\(result.summary)\nEvidence: \(result.evidence)", result.verified ? "verified" : "effect uncertain")
                         if result.verified {
                             verifiedResults.append(result)
                             recovery.recordVerifiedSuccess(recoveryKey)
-                        } else { unverifiedResults += 1 }
+                        } else { try recovery.recordFailure(recoveryKey) }
                     } catch is CancellationError { throw CancellationError() }
+                    catch let limit as TaskRecoveryBudget.Limit { throw limit }
                     catch {
                         try gate(expected)
                         record(observation.name, error.localizedDescription, "failed / inspect before retry")
@@ -1282,10 +1315,27 @@ final class AssistantStore {
     }
 
     @discardableResult
-    func startBrowserSummary(application: NSRunningApplication? = nil) throws -> DocumentSummarySession {
+    func startCurrentDocumentSummary(application: NSRunningApplication? = nil, conversationOnly: Bool = false,
+                                     presentPanel: Bool = true) throws -> DocumentSummarySession {
+        guard canStartDocumentSummary else { throw RelayError.message("Load a local model and finish other work before summarizing a document.") }
+        guard let application = application ?? NSWorkspace.shared.frontmostApplication else {
+            throw RelayError.message("Open the document or conversation you want to summarize, then invoke Summarize again.")
+        }
+        if !conversationOnly, ["com.google.Chrome", "com.apple.Safari"].contains(application.bundleIdentifier ?? "") {
+            return try startBrowserSummary(application: application, presentPanel: presentPanel)
+        }
+        let session = try summaries.startNative(application: application,
+            requiredKind: conversationOnly ? .conversation : nil,
+            isActive: { [weak self] in self?.interactiveSessionActive == true })
+        if presentPanel { DocumentSummaryPanelController.shared.present(session: session, coordinator: summaries) }
+        return session
+    }
+
+    @discardableResult
+    func startBrowserSummary(application: NSRunningApplication? = nil, presentPanel: Bool = true) throws -> DocumentSummarySession {
         guard canStartDocumentSummary else { throw RelayError.message("Load a local model and finish other work before summarizing a document.") }
         let session = try summaries.startBrowser(application: application)
-        DocumentSummaryPanelController.shared.present(session: session, coordinator: summaries)
+        if presentPanel { DocumentSummaryPanelController.shared.present(session: session, coordinator: summaries) }
         return session
     }
 

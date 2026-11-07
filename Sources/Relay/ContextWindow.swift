@@ -165,12 +165,12 @@ nonisolated enum ContextWindow {
             guard record.hasPrefix("role=AX"), record.contains(" title="), record.contains(" description="),
                   record.contains(" identifier="), record.contains(" value=") else { return line }
             if record.hasPrefix("role=AXWindow ") {
-                guard record.range(of: #" enabled=(?:true|false) focused=(?:true|false) minimized=(?:true|false)$"#, options: .regularExpression) != nil else { return line }
+                guard record.range(of: #" enabled=(?:true|false|unknown) focused=(?:true|false) minimized=(?:true|false)$"#, options: .regularExpression) != nil else { return line }
             } else {
                 if let range = record.range(of: #" window_id=[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"#, options: .regularExpression) {
                     record = String(record[..<range.lowerBound])
                 }
-                guard record.hasSuffix(" enabled=true") || record.hasSuffix(" enabled=false") else { return line }
+                guard record.hasSuffix(" enabled=true") || record.hasSuffix(" enabled=false") || record.hasSuffix(" enabled=unknown") else { return line }
             }
             removed = true
             return "expired_control " + record

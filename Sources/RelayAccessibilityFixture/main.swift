@@ -27,6 +27,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     private var rowActivationCount = 0
     private var rowClickCount = 0
     private var revertingSelection = false
+    private var visionCanvas: NativeVisionCanvas?
     private let environment = ProcessInfo.processInfo.environment
     private var launchToken: String { environment["RELAY_FIXTURE_TOKEN"] ?? fallbackToken }
     private let fallbackToken = UUID().uuidString
@@ -44,6 +45,18 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         window.identifier = NSUserInterfaceItemIdentifier("relay.fixture.window")
         window.isReleasedWhenClosed = false
         window.delegate = self
+        if environment["RELAY_FIXTURE_NATIVE_VISION_CANVAS"] == "1" {
+            window.title = "Relay Native Vision Fixture"
+            window.setContentSize(NSSize(width: 560, height: 340))
+            let canvas = NativeVisionCanvas(frame: NSRect(x: 0, y: 0, width: 560, height: 340))
+            visionCanvas = canvas
+            window.contentView = canvas
+            window.center()
+            window.makeKeyAndOrderFront(nil)
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            writeOracle()
+            return
+        }
         let content = NSView()
         window.contentView = content
 
@@ -354,7 +367,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
             DraftState(text: $0.string, focused: window.isKeyWindow && window.firstResponder === $0,
                        selectionLocation: $0.selectedRange().location, selectionLength: $0.selectedRange().length)
         }
-        let state = OracleState(input: input.stringValue, result: result.stringValue,
+        let state = OracleState(input: input.stringValue, editingInput: input.currentEditor()?.string, result: result.stringValue,
                                 clickCount: clickCount, launchToken: launchToken, draft: draft,
                                 secondaryInput: secondaryInput?.string, focusedWindow: NSApplication.shared.keyWindow?.title,
                                 secondaryScrollOffset: secondaryScroll.map { $0.contentView.bounds.minY }, delivery: delivery?.titleOfSelectedItem,
@@ -363,7 +376,8 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                                 radioSelection: radioButtons.first(where: { $0.state == .on })?.tag, radioPressCount: radioPressCount,
                                 selectedRow: choiceTable?.selectedRow, rowSelectionCount: rowSelectionCount,
                                 rowActivationCount: rowActivationCount, rowClickCount: rowClickCount,
-                                rowLabels: choiceTable == nil ? nil : rowLabels)
+                                rowLabels: choiceTable == nil ? nil : rowLabels,
+                                visionMarker: visionCanvas?.marker)
         if state == lastOracleState { return }
         do {
             let data = try JSONEncoder().encode(state)
@@ -384,6 +398,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
 
     private struct OracleState: Encodable, Equatable {
         let input: String
+        let editingInput: String?
         let result: String
         let clickCount: Int
         let launchToken: String
@@ -403,6 +418,39 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         let rowActivationCount: Int
         let rowClickCount: Int
         let rowLabels: [String]?
+        let visionMarker: String?
+    }
+}
+
+/// The random marker is drawn directly. It is never an AX value, label, title,
+/// argument, environment variable or filename; only the private fixture oracle has it.
+@MainActor
+private final class NativeVisionCanvas: NSView {
+    let marker: String
+    override init(frame frameRect: NSRect) {
+        let alphabet = Array("ABCDEFGHJKMNPQRTUVWXY346789")
+        marker = String((0..<6).map { _ in alphabet.randomElement()! })
+        super.init(frame: frameRect)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.image)
+        setAccessibilityLabel("Synthetic visual canvas")
+        setAccessibilityIdentifier("relay.fixture.vision.canvas")
+        setAccessibilityChildren([])
+    }
+    required init?(coder: NSCoder) { return nil }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.white.setFill()
+        bounds.fill()
+        let caption = "LOCAL VISION CANVAS" as NSString
+        caption.draw(at: NSPoint(x: 28, y: bounds.height - 45), withAttributes: [
+            .font: NSFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: NSColor.darkGray
+        ])
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 72, weight: .bold), .foregroundColor: NSColor.black
+        ]
+        let text = marker as NSString
+        let size = text.size(withAttributes: attributes)
+        text.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2), withAttributes: attributes)
     }
 }
 

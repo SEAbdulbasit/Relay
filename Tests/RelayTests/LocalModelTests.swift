@@ -109,6 +109,13 @@ struct LocalModelTests {
         #expect(native.count == definitions.count)
         for definition in definitions {
             let function = try #require(native.compactMap { $0.object?["function"]?.object }.first { $0["name"]?.string == definition.name })
+            if ["observe_app", "set_value"].contains(definition.name) {
+                for description in [definition.description, function["description"]?.string ?? ""] {
+                    #expect(description.contains("ASCII only"))
+                    #expect(description.contains("Unicode"))
+                    #expect(description.contains("mode=windows") && description.contains("window_id"))
+                }
+            }
             let parameters = function["parameters"]?.object ?? [:]
             let nativeProperties = parameters["properties"]?.object ?? [:]
             let expectedProperties = definition.parameters.object?["properties"]?.object ?? [:]

@@ -23,6 +23,18 @@ struct QuickTextActionIntentTests {
         #expect(QuickTextActionIntent.parse(text) == .init(action: .summarize, target: .document))
     }
 
+    @Test(arguments: ["Summarize this chat", "summarise that conversation", "Can you summarize the current chat?",
+        "Please summarize my current conversation."])
+    func conversationRequestsRetainTheirExplicitScope(text: String) {
+        #expect(QuickTextActionIntent.parse(text) == .init(action: .summarize, target: .conversation))
+    }
+
+    @Test(arguments: ["proofread this chat", "summarize our previous conversation", "summarize this chat and send a reply",
+        "do not summarize this conversation", "summarize all chats"])
+    func widerOrCompoundChatRequestsDoNotBecomeAnAutomaticQuickCapture(text: String) {
+        #expect(QuickTextActionIntent.parse(text) == nil)
+    }
+
     @Test(arguments: ["summarize my selection", "summarise the highlighted text", "Summarize this selected text.",
         "please summarize what I selected", "Can you summarize the current selection?"])
     func explicitSelectionRequestsPreserveTheirTarget(text: String) {

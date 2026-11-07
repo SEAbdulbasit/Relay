@@ -71,6 +71,10 @@ struct NativeModelWorkflowIntegrationTests {
     func actualGemmaFillsAndReviewsOneInertNativeFormWithIndependentOutcomeOracle() async throws {
         try #require(AXIsProcessTrusted(), "Existing Accessibility permission is required; this gate never requests it.")
         let path = try #require(ProcessInfo.processInfo.environment["RELAY_GEMMA_MODEL_PATH"])
+        let backend = ProcessInfo.processInfo.environment["RELAY_GEMMA_TEST_BACKEND"] ?? "cpu"
+        let modelLabel = ProcessInfo.processInfo.environment["RELAY_GEMMA_TEST_MODEL_LABEL"] ?? "Gemma 4 E2B"
+        try #require(["cpu", "gpu"].contains(backend), "Use an explicit supported test compute backend.")
+        try #require(["Gemma 4 E2B", "Gemma 4 E4B"].contains(modelLabel), "Use a qualified local package label for this test.")
         let expected = "Native Gemma café 8431"
         // The existing multiline fixture option enables its independent 100 ms
         // state polling, so pre-review field checks do not depend on AX events.
@@ -94,6 +98,7 @@ struct NativeModelWorkflowIntegrationTests {
                 let schemaBytes = try JSONEncoder().encode(definitions).count
                 print("Native model budget turn \(trace.generations): systemBytes=\(systemBytes), schemaBytes=\(schemaBytes), historyBytes=\(ContextWindow.bytes(messages.filter { $0.role != "system" })), historyBudget=\(LocalModelClient.maximumContextBytes - systemBytes - schemaBytes).")
                 let foregroundBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier == fixture.application.processIdentifier
+                trace.rememberSyntheticRows(messages)
                 let inferenceStart = ContinuousClock.now
                 let reply = try await client.complete(messages: messages, tools: definitions, configuration: configuration)
                 let elapsed = inferenceStart.duration(to: ContinuousClock.now).components
@@ -104,7 +109,10 @@ struct NativeModelWorkflowIntegrationTests {
                 guard trace.proposedCalls.count + reply.toolCalls.count <= 12 else {
                     throw RelayError.message("Native model gate exceeded twelve bounded fixture calls.")
                 }
-                for call in reply.toolCalls { try validate(call, messages: messages, expected: expected) }
+                for call in reply.toolCalls {
+                    print(trace.targetDiagnostic(call, messages: messages))
+                    try validate(call, messages: messages, expected: expected)
+                }
                 trace.proposedCalls.append(contentsOf: reply.toolCalls)
                 trace.observedResults = messages.filter { $0.role == "tool" && $0.toolName == "observe_app" }.compactMap {
                     (try? JSONDecoder().decode(ToolResult.self, from: Data($0.content.utf8)))?.summary
@@ -113,7 +121,7 @@ struct NativeModelWorkflowIntegrationTests {
                 return reply
             }, modelClient: client)
             defer { store.stop(); client.unload() }
-            store.configuration = ModelConfiguration(modelPath: path, computeBackend: "cpu", model: "Gemma 4 E2B")
+            store.configuration = ModelConfiguration(modelPath: path, computeBackend: backend, model: modelLabel)
             store.draft = """
                 Only control the already-running Relay Accessibility Fixture app, bundle \(AccessibilityCheckRunner.fixtureBundleID). Do not list, open, inspect or control any other app. In that fixture, replace the field labelled Fixture input with exactly: \(expected)
                 Then click its Apply button exactly once. Inspect the resulting Fixture result and report whether it matches. This is an inert local test form, not a submission. Use the ordinary exact review for Apply; do not bypass review or repeat a click. Leave the disabled control untouched.
@@ -131,6 +139,16 @@ struct NativeModelWorkflowIntegrationTests {
                     try #require(trace.proposedCalls.last(where: { $0.name == "press_control" })?.id == review.call.id)
                     try #require(review.reason.contains("Press “Apply”") && review.reason.contains(AccessibilityCheckRunner.fixtureBundleID)
                         && review.reason.contains(expected) && review.reason.contains("Fixture input"))
+                    if !state.input.utf8.elementsEqual(expected.utf8) || state.result != "Not applied" || state.clickCount != 0 {
+                        print("Native fixture pre-review mismatch: input=\(String(reflecting: MacTools.boundedText(state.input, utf8Limit: 256))), inputUTF8=\(Array(state.input.utf8.prefix(256))), editingInput=\(String(reflecting: state.editingInput.map { MacTools.boundedText($0, utf8Limit: 256) })), result=\(String(reflecting: MacTools.boundedText(state.result, utf8Limit: 256))), clickCount=\(state.clickCount).")
+                        let inputLine = trace.observedResults.last.flatMap {
+                            try? AccessibilityCheckRunner.controlLine("relay.fixture.input", in: $0)
+                        } ?? "No native fixture input row"
+                        print("Native fixture pre-review latest input: \(MacTools.boundedText(inputLine, utf8Limit: 1600)).")
+                        if let receipt = trace.latestWriteReceipt {
+                            print("Native fixture pre-review write receipt: verified=\(receipt.verified), summary=\(String(reflecting: MacTools.boundedText(receipt.summary, utf8Limit: 512))), evidence=\(String(reflecting: MacTools.boundedText(receipt.evidence, utf8Limit: 1024))).")
+                        }
+                    }
                     try #require(state.input.utf8.elementsEqual(expected.utf8) && state.result == "Not applied" && state.clickCount == 0)
                     try #require(trace.approvedReviewIDs.isEmpty, "Only one exact clean-state Apply review may be approved.")
                     trace.approvedReviewIDs.insert(review.id)
@@ -166,7 +184,7 @@ struct NativeModelWorkflowIntegrationTests {
             let failures = store.activity.filter { $0.status.contains("failed") }.map { "\($0.name): \($0.detail)" }
             print("Native model activity failures: \(failures).")
             print("Native model final response: \(store.messages.last?.text ?? "No final response").")
-            print("Native model workflow: backend=cpu, generations=\(trace.generations), proposedCalls=\(trace.proposedCalls.count), exactReviews=\(trace.approvedReviewIDs.count), oracleClickCount=\(state.clickCount), seconds=\(seconds). Only the inert fixture was controlled.")
+            print("Native model workflow: backend=\(backend), model=\(modelLabel), package=\(URL(fileURLWithPath: path).lastPathComponent), generations=\(trace.generations), proposedCalls=\(trace.proposedCalls.count), exactReviews=\(trace.approvedReviewIDs.count), oracleClickCount=\(state.clickCount), seconds=\(seconds). Only the inert fixture was controlled.")
         }
     }
 
@@ -183,8 +201,9 @@ struct NativeModelWorkflowIntegrationTests {
               let observed = try? JSONDecoder().decode(ToolResult.self, from: Data(content.utf8)), observed.verified else {
             throw RelayError.message("Native model proposed a mutation without an observed fixture control.")
         }
-        let identifier = call.name == "set_value" ? "relay.fixture.input" : "relay.fixture.apply"
-        let id = try AccessibilityCheckRunner.controlID(identifier, in: observed.summary)
+        let id = call.name == "set_value"
+            ? try fixtureInputID(in: observed.summary)
+            : try AccessibilityCheckRunner.controlID("relay.fixture.apply", in: observed.summary)
         guard call.arguments["element_id"]?.string == id else {
             throw RelayError.message("Native model proposed a mutation on a control other than the exact observed fixture target.")
         }
@@ -199,6 +218,99 @@ struct NativeModelWorkflowIntegrationTests {
         }
     }
 
+    /// Only the owned fixture's named input has a helper alternative. A helper
+    /// name is serialized as `title`; Apply still requires its native identifier.
+    private func fixtureInputID(in summary: String) throws -> String {
+        guard summary.hasPrefix("agent-desktop snapshot (") else {
+            return try AccessibilityCheckRunner.controlID("relay.fixture.input", in: summary)
+        }
+        let lines = summary.split(separator: "\n").map(String.init)
+        let header = lines.first ?? ""
+        let headerPattern = #"^agent-desktop snapshot \(Relay Accessibility Fixture, snapshot_id=([A-Za-z0-9_-]{1,80}), refs=([0-9]{1,3})\):$"#
+        let headerExpression = try NSRegularExpression(pattern: headerPattern)
+        guard let headerMatch = headerExpression.firstMatch(in: header, range: NSRange(header.startIndex..., in: header)),
+              let snapshotRange = Range(headerMatch.range(at: 1), in: header),
+              let countRange = Range(headerMatch.range(at: 2), in: header),
+              let count = Int(header[countRange]), (1...160).contains(count) else {
+            throw RelayError.message("The helper observation is not an exact owned fixture snapshot.")
+        }
+        let snapshot = String(header[snapshotRange])
+        let rowExpression = try NSRegularExpression(pattern:
+            #"^element_id=([^ ]+) role=textfield title=Fixture input(?= (?:value=|actions=\[|enabled=))"#)
+        let matchingRows = lines.compactMap { line -> (String, String)? in
+            guard let match = rowExpression.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+                  let reference = Range(match.range(at: 1), in: line) else { return nil }
+            return (String(line[reference]), line)
+        }
+        guard matchingRows.count == 1, let (reference, row) = matchingRows.first,
+              row.hasSuffix(" enabled=true"),
+              reference.range(of: "^@" + NSRegularExpression.escapedPattern(for: snapshot) + #":e[1-9][0-9]{0,3}$"#,
+                  options: .regularExpression) != nil else {
+            throw RelayError.message("Expected one enabled helper Fixture input in the latest exact snapshot.")
+        }
+        return reference
+    }
+
+    @Test
+    func strictValidatorAcceptsOnlyTheLatestUniqueNamedHelperInput() throws {
+        let summary = """
+            agent-desktop snapshot (Relay Accessibility Fixture, snapshot_id=sCurrent, refs=2):
+            element_id=@sCurrent:e1 role=textfield title=Fixture input actions=[SetValue] enabled=true
+            element_id=@sCurrent:e2 role=button title=Apply actions=[Click] enabled=true
+            """
+        let messages = try syntheticHelperMessages(summary)
+        try validate(ToolCall(name: "set_value", arguments: ["bundle_id": .string(AccessibilityCheckRunner.fixtureBundleID),
+            "element_id": .string("@sCurrent:e1"), "value": .string("Native Gemma café 8431")]),
+            messages: messages, expected: "Native Gemma café 8431")
+        #expect(throws: (any Error).self) {
+            try validate(ToolCall(name: "press_control", arguments: ["bundle_id": .string(AccessibilityCheckRunner.fixtureBundleID),
+                "element_id": .string("@sCurrent:e2")]), messages: messages, expected: "Native Gemma café 8431")
+        }
+    }
+
+    @Test(arguments: ["ambiguous", "wrong-role", "stale-row", "no-match", "wrong-title", "disabled",
+        "other-app", "stale-proposal", "changed-value", "unverified", "earlier-only"])
+    func strictValidatorRefusesUnprovenHelperTargets(caseName: String) throws {
+        var summary = """
+            agent-desktop snapshot (Relay Accessibility Fixture, snapshot_id=sCurrent, refs=1):
+            element_id=@sCurrent:e1 role=textfield title=Fixture input actions=[SetValue] enabled=true
+            """
+        var proposedID = "@sCurrent:e1"
+        var value = "Native Gemma café 8431"
+        switch caseName {
+        case "ambiguous": summary += "\nelement_id=@sCurrent:e2 role=textfield title=Fixture input actions=[SetValue] enabled=true"
+        case "wrong-role": summary = summary.replacingOccurrences(of: "role=textfield", with: "role=button")
+        case "stale-row": summary = summary.replacingOccurrences(of: "element_id=@sCurrent:e1", with: "element_id=@sEarlier:e1")
+        case "no-match", "earlier-only": summary = summary.replacingOccurrences(of: "title=Fixture input", with: "title=Unrelated draft")
+        case "wrong-title": summary = summary.replacingOccurrences(of: "title=Fixture input", with: "title=Fixture input extra")
+        case "disabled": summary = summary.replacingOccurrences(of: "enabled=true", with: "enabled=false")
+        case "other-app": summary = summary.replacingOccurrences(of: "(Relay Accessibility Fixture,", with: "(Other App,")
+        case "stale-proposal": proposedID = "@sEarlier:e1"
+        case "changed-value": value += " altered"
+        default: break
+        }
+        var messages = try syntheticHelperMessages(summary, verified: caseName != "unverified")
+        if caseName == "earlier-only" {
+            let earlier = """
+                agent-desktop snapshot (Relay Accessibility Fixture, snapshot_id=sEarlier, refs=1):
+                element_id=@sEarlier:e1 role=textfield title=Fixture input actions=[SetValue] enabled=true
+                """
+            messages.insert(contentsOf: try syntheticHelperMessages(earlier), at: 0)
+            proposedID = "@sEarlier:e1"
+        }
+        let call = ToolCall(name: "set_value", arguments: ["bundle_id": .string(AccessibilityCheckRunner.fixtureBundleID),
+            "element_id": .string(proposedID), "value": .string(value)])
+        #expect(throws: (any Error).self) {
+            try validate(call, messages: messages, expected: "Native Gemma café 8431")
+        }
+    }
+
+    private func syntheticHelperMessages(_ summary: String, verified: Bool = true) throws -> [ModelMessage] {
+        let result = ToolResult(summary: summary, evidence: "Synthetic owned fixture observation", verified: verified)
+        return [ModelMessage(role: "tool", content: String(decoding: try JSONEncoder().encode(result), as: UTF8.self),
+            toolCallID: UUID().uuidString, toolName: "observe_app")]
+    }
+
     private func isApplyClick(_ call: ToolCall) -> Bool {
         // Match production's documented omitted/empty action default and
         // case-insensitive native action spelling without allowing selection.
@@ -208,6 +320,7 @@ struct NativeModelWorkflowIntegrationTests {
 
     private struct Oracle: Decodable {
         let input: String
+        let editingInput: String?
         let result: String
         let clickCount: Int
         let launchToken: String
@@ -220,10 +333,56 @@ struct NativeModelWorkflowIntegrationTests {
         try #require(state.launchToken == fixture.token)
         return state
     }
-    private final class WorkflowTrace {
+    @MainActor private final class WorkflowTrace {
         var generations = 0
         var proposedCalls: [ToolCall] = []
         var approvedReviewIDs = Set<UUID>()
         var observedResults: [String] = []
+        var latestWriteReceipt: ToolResult?
+        private var knownRows: [String: String] = [:]
+
+        func rememberSyntheticRows(_ messages: [ModelMessage]) {
+            latestWriteReceipt = messages.last(where: { $0.role == "tool" && $0.toolName == "set_value" }).flatMap {
+                try? JSONDecoder().decode(ToolResult.self, from: Data($0.content.utf8))
+            }
+            for message in messages where message.role == "tool" && message.toolName == "observe_app" {
+                for (id, row) in Self.rows(message.content) where knownRows.count < 512 || knownRows[id] != nil {
+                    knownRows[id] = row
+                }
+            }
+        }
+
+        func targetDiagnostic(_ call: ToolCall, messages: [ModelMessage]) -> String {
+            guard let id = call.arguments["element_id"]?.string else {
+                return "Native fixture proposal diagnostic: name=\(MacTools.boundedText(call.name, utf8Limit: 80)), no element_id."
+            }
+            let latest = messages.last { $0.role == "tool" && $0.toolName == "observe_app" }
+                .map { Self.rows($0.content) } ?? [:]
+            let match: String
+            let row: String?
+            if let current = latest[id] { match = "latest-exact"; row = current }
+            else if let earlier = knownRows[id] { match = "earlier-exact"; row = earlier }
+            else if let uuid = UUID(uuidString: id), let equivalent = latest.first(where: { UUID(uuidString: $0.key) == uuid }) {
+                match = "latest-same-UUID-different-spelling"; row = equivalent.value
+            } else if let uuid = UUID(uuidString: id), let equivalent = knownRows.first(where: { UUID(uuidString: $0.key) == uuid }) {
+                match = "earlier-same-UUID-different-spelling"; row = equivalent.value
+            } else { match = "unseen"; row = nil }
+            return "Native fixture proposal diagnostic: name=\(MacTools.boundedText(call.name, utf8Limit: 80)), element_id=\(String(reflecting: MacTools.boundedText(id, utf8Limit: 100))), match=\(match), \(row ?? "no matched synthetic role/title/identifier")."
+        }
+
+        private static func rows(_ content: String) -> [String: String] {
+            guard let result = try? JSONDecoder().decode(ToolResult.self, from: Data(content.utf8)), result.verified else { return [:] }
+            var rows: [String: String] = [:]
+            for line in result.summary.split(separator: "\n") where line.hasPrefix("element_id=") {
+                guard let first = line.split(separator: " ").first else { continue }
+                let id = String(first.dropFirst("element_id=".count))
+                func field(_ start: String, _ end: String) -> String {
+                    guard let from = line.range(of: start), let to = line[from.upperBound...].range(of: end) else { return "<absent>" }
+                    return String(decoding: line[from.upperBound..<to.lowerBound].utf8.prefix(160), as: UTF8.self)
+                }
+                rows[id] = "role=\(String(reflecting: field(" role=", " title="))), title=\(String(reflecting: field(" title=", " description="))), identifier=\(String(reflecting: field(" identifier=", " value=")))"
+            }
+            return rows
+        }
     }
 }

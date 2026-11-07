@@ -37,6 +37,10 @@ struct MainView: View {
         [.thinking, .acting, .awaitingReview].contains(store.phase) || store.accessibilityCheckRunning || store.isAuxiliaryBusy
     }
 
+    private var reservedSidebarWidth: CGFloat {
+        workspacePage == .workspace && store.showActivity && viewportWidth >= 1200 ? 311 : 0
+    }
+
     var body: some View {
         ZStack {
             RelayAtmosphere()
@@ -56,7 +60,10 @@ struct MainView: View {
                         Button("Set up access") { settingsDestination = .access }
                             .buttonStyle(RelaySecondaryButtonStyle())
                     }
-                    .padding(.horizontal, 24).padding(.vertical, 8)
+                    .frame(maxWidth: workspaceColumnWidth)
+                    .padding(.horizontal, RelayTheme.inset).padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
+                    .padding(.trailing, reservedSidebarWidth)
                 }
 
                 if let error = store.errorMessage { errorBanner(error) }
@@ -83,8 +90,11 @@ struct MainView: View {
                             store.selectionNotice = nil
                         }
                     }
-                    .padding(.horizontal, 28)
+                    .frame(maxWidth: workspaceColumnWidth)
+                    .padding(.horizontal, RelayTheme.inset)
                     .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity)
+                    .padding(.trailing, reservedSidebarWidth)
                 }
 
                 if workspacePage == .knowledge {
@@ -111,7 +121,7 @@ struct MainView: View {
                             conversationDock
                         }
                         if store.showActivity && viewportWidth >= 1200 {
-                            Divider().overlay(RelayTheme.line)
+                            Divider().overlay(RelayTheme.line).frame(width: 1)
                             activityPanel
                                 .frame(width: 310)
                                 .background(RelayTheme.sidebar)
@@ -320,8 +330,8 @@ struct MainView: View {
 
                     Color.clear.frame(height: 1).id("bottom")
                 }
+                .frame(maxWidth: workspaceColumnWidth)
                 .padding(.horizontal, RelayTheme.inset).padding(.vertical, 24)
-                .frame(maxWidth: RelayTheme.contentWidth)
                 .frame(maxWidth: .infinity)
             }
             .scrollIndicators(.visible)
@@ -399,10 +409,8 @@ struct MainView: View {
             } else {
                 SpinningLogo(size: 18, fast: true)
                 if store.phase == .acting {
-                    RelayRoleBadge(role: "Executor")
                     Text("Working with your Mac…").font(.system(size: 14)).foregroundStyle(RelayTheme.muted)
                 } else if store.phase == .thinking {
-                    RelayRoleBadge(role: "Planner")
                     Text("Planning the next step…").font(.system(size: 14)).foregroundStyle(RelayTheme.muted)
                 } else {
                     Text(store.isPreparingModel ? "Preparing local model…" : store.accessibilityCheckRunning ? "Checking Mac controls…" : store.focusedDraft.isBusy ? "Drafting in the source app…" : store.isAuxiliaryBusy ? "Finishing current work…" : store.workspaceUsesCodex ? "Working on your request…" : "Thinking on this Mac…")
@@ -420,11 +428,11 @@ struct MainView: View {
                 HStack {
                     Spacer(minLength: 96)
                     Text(message.text)
-                        .font(.system(size: 14.5, weight: .regular, design: .default))
+                        .font(.relayBody)
                         .foregroundStyle(RelayColors.textPrimary)
                         .textSelection(.enabled)
                         .padding(.horizontal, 16)
-                        .padding(.vertical, 10.5)
+                        .padding(.vertical, 10)
                         .background(
                             RelayColors.surfaceElevated,
                             in: RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -437,42 +445,33 @@ struct MainView: View {
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     let parsed = extractRoleAndContent(from: message.text, defaultRole: message.role)
-                    HStack(spacing: 8) {
-                        if let role = parsed.role {
-                            RelayRoleBadge(role: role)
-                        } else {
-                            SpinningLogo(size: 16, fast: false, paused: true)
-                            Text(message.role == "assistant" ? "Relay" : "System")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(RelayColors.textBright)
-                        }
-                        Spacer()
-
-                        if message.role == "assistant", store.speech.isEnabled {
-                            RelayIconButton(
-                                icon: store.speech.activeMessageID == message.id ? "stop.circle.fill" : "speaker.wave.2",
-                                label: store.speech.activeMessageID == message.id ? "Stop reading response" : "Read this response aloud",
-                                size: 30,
-                                iconSize: 12
-                            ) {
-                                if store.speech.activeMessageID == message.id { store.speech.stop() }
-                                else { store.readAloud(message) }
-                            }
-                            .disabled(store.isRunning || store.voice.isBusy)
-                        }
+                    if let role = parsed.role {
+                        RelayRoleBadge(role: role)
+                    } else if message.role != "assistant" {
+                        Text("System").font(.relayCaption).foregroundStyle(RelayTheme.muted)
                     }
-                    .foregroundStyle(RelayTheme.muted)
 
                     let response = RelayResponseText(parsed.cleanText)
                     Text(.init(response.body))
-                        .font(.system(size: 15))
+                        .font(.relayBody)
                         .foregroundStyle(RelayColors.textPrimary)
-                        .lineSpacing(5)
+                        .lineSpacing(4)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
 
                     if let evidence = response.evidence {
                         RelayActionEvidence(text: evidence)
+                    }
+                    if message.role == "assistant", store.speech.isEnabled {
+                        RelayIconButton(
+                            icon: store.speech.activeMessageID == message.id ? "stop.circle.fill" : "speaker.wave.2",
+                            label: store.speech.activeMessageID == message.id ? "Stop reading response" : "Read this response aloud",
+                            size: 28, iconSize: 12
+                        ) {
+                            if store.speech.activeMessageID == message.id { store.speech.stop() }
+                            else { store.readAloud(message) }
+                        }
+                        .disabled(store.isRunning || store.voice.isBusy)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -540,6 +539,20 @@ struct MainView: View {
 
             if let review = store.pendingReview { reviewCard(review) }
 
+            if store.phase == .needsInput {
+                HStack(spacing: 12) {
+                    Label("Review incomplete or uncertain results.", systemImage: "exclamationmark.circle")
+                        .font(.relayCaption).foregroundStyle(RelayColors.accentAmber)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button("Inspect activity") { store.showActivity = true }.buttonStyle(.link)
+                    Button("Continue") { store.resume() }.buttonStyle(RelaySecondaryButtonStyle())
+                        .disabled(store.isAuxiliaryBusy)
+                }
+                .padding(.vertical, 8)
+                .accessibilityElement(children: .contain)
+            }
+
             if store.phase == .stopped {
                 HStack(spacing: 12) {
                     Image(systemName: "pause.circle.fill").foregroundStyle(RelayColors.accentCoral)
@@ -554,7 +567,7 @@ struct MainView: View {
             }
 
             if store.showActivity && viewportWidth < 1200 && store.pendingReview == nil {
-                activityPanel.frame(maxHeight: 160)
+                activityPanel.frame(maxHeight: 220)
             }
 
             composer
@@ -571,10 +584,11 @@ struct MainView: View {
         return VStack(spacing: 8) {
             HStack(alignment: .bottom, spacing: 8) {
                 TextField("Message Relay", text: $store.draft,
-                          prompt: Text(isSteering ? "Steer the current task…" : "Ask Relay…").foregroundStyle(RelayColors.textSecondary),
+                          prompt: Text(""),
                           axis: .vertical)
-                    .font(.system(size: 16))
+                    .font(.relayBody)
                     .textFieldStyle(.plain)
+                    .relayTextFieldPrompt(isSteering ? "Steer the current task…" : "Ask Relay…", when: store.draft.isEmpty)
                     .lineLimit(1...(store.pendingReview == nil ? 5 : 2))
                     .focused($composerFocused)
                     .onSubmit { submitMessage() }
@@ -698,17 +712,19 @@ struct MainView: View {
 
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(presentation.title).font(.system(size: 13, weight: .medium))
-                                    Text(presentation.status).font(.system(size: 12)).foregroundStyle(RelayColors.textSecondary)
+                                    if entry.name != "Response finished" || entry.status != "finished" {
+                                        Text(presentation.status).font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
+                                    }
                                 }
                                 Spacer(minLength: 0)
                             }
 
                             DisclosureGroup("View details") {
-                                Text(entry.detail).font(.system(size: 12.5, design: .monospaced)).lineSpacing(3)
+                                Text(entry.detail).font(.relayCaption).lineSpacing(3)
                                     .foregroundStyle(RelayColors.textSecondary).textSelection(.enabled)
                                     .padding(.top, 2)
                             }
-                            .disclosureGroupStyle(RelayDisclosureGroupStyle(accent: RelayColors.textBright, verticalPadding: 6, horizontalPadding: 8, cornerRadius: 8))
+                            .disclosureGroupStyle(RelayTranscriptDisclosureGroupStyle())
                         }
                         .padding(.vertical, 10).padding(.horizontal, 2)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -721,7 +737,6 @@ struct MainView: View {
             .frame(maxHeight: .infinity)
         }
         .padding(16)
-        .background(RelayColors.cardBG, in: RoundedRectangle(cornerRadius: 12))
     }
 
     // MARK: - Review Card
@@ -736,9 +751,12 @@ struct MainView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(review.reason).font(.system(size: 14)).foregroundStyle(RelayTheme.ink).textSelection(.enabled)
                     if !review.sharesWithOpenAI && !review.hasStructuredMailReview {
-                        Text(review.call.name).font(.relayMono).foregroundStyle(RelayColors.accentEmerald)
-                        Text(JSONValue.object(review.call.arguments).pretty)
-                            .font(.relayMono).textSelection(.enabled)
+                        DisclosureGroup("Action details") {
+                            Text(review.call.name).font(.relayMono)
+                            Text(JSONValue.object(review.call.arguments).pretty)
+                                .font(.relayMono).textSelection(.enabled)
+                        }
+                        .disclosureGroupStyle(RelayTranscriptDisclosureGroupStyle())
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -771,7 +789,10 @@ struct MainView: View {
         }
         .padding(12).background(RelayColors.accentCoral.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(RelayColors.accentCoral.opacity(0.24), lineWidth: 1))
-        .padding(.horizontal, 40).padding(.bottom, 6)
+        .frame(maxWidth: workspaceColumnWidth)
+        .padding(.horizontal, RelayTheme.inset).padding(.bottom, 8)
+        .frame(maxWidth: .infinity)
+        .padding(.trailing, reservedSidebarWidth)
     }
 }
 

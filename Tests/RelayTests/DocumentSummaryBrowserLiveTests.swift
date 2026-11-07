@@ -72,6 +72,7 @@ struct DocumentSummaryBrowserLiveTests {
             try #require(NSWorkspace.shared.frontmostApplication?.processIdentifier == fixture.application.processIdentifier)
             let differentWindow = try selectedWindow(of: fixture.application)
             #expect(throws: RelayError.self) { try BrowserPageReader.validateCurrentTarget(pinned, expectedWindow: differentWindow) }
+            #expect(throws: RelayError.self) { try BrowserPageReader.captureCurrentTarget(application: browser, expectedWindow: differentWindow) }
             try BrowserPageReader.validateCurrentTarget(pinned, expectedWindow: originalWindow)
             let current = try await BrowserPageReader.readCurrent(target: pinned)
             try BrowserPageReader.validateCurrentTarget(pinned, expectedWindow: originalWindow)

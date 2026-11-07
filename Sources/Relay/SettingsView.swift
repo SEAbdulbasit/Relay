@@ -762,13 +762,15 @@ struct SettingsView: View {
                 TextField(
                     "",
                     text: $memoryText,
-                    prompt: Text("e.g. Always format terminal commands in code blocks").foregroundStyle(RelayColors.textDim),
+                    prompt: Text(""),
                     axis: .vertical
                 )
                     .lineLimit(2...4)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13.5))
+                    .relayTextFieldPrompt("e.g. Always format terminal commands in code blocks", when: memoryText.isEmpty, font: .system(size: 13.5))
                     .foregroundStyle(.white)
+                    .accessibilityLabel("New memory instruction")
                     .padding(12)
                     .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.white.opacity(0.12), lineWidth: 1))

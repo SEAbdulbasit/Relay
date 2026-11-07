@@ -40,11 +40,12 @@ struct ActiveContextCompactionTests {
         #expect(window.messages.last?.content == history.last?.content && ContextWindow.isWellFormed(window.messages))
     }
 
-    @Test func expiredNativeRecordsLoseOnlyExecutableReferenceLocationsAndFreshRecordsStayByteExact() throws {
+    @Test(arguments: ["true", "false", "unknown"])
+    func expiredNativeRecordsLoseOnlyExecutableReferenceLocationsAndFreshRecordsStayByteExact(availability: String) throws {
         let windowID = "C562D460-2852-43EC-9729-C23709B61A05", fieldID = "36E9E462-7797-40CE-8AD0-A78A449F5049"
         let literal = "Literal element_id=DF2C0F7E-C6BE-4ED0-A4E8-65C58D343594 window_id=not-a-reference café\u{301}"
-        let snapshot = "element_id=\(windowID) role=AXWindow title=Fixture description= identifier=window value= enabled=true focused=true minimized=false\n"
-            + "element_id=\(fieldID) role=AXTextField title=Fixture input description= identifier=field value=\(literal) enabled=true window_id=\(windowID)"
+        let snapshot = "element_id=\(windowID) role=AXWindow title=Fixture description= identifier=window value= enabled=\(availability) focused=true minimized=false\n"
+            + "element_id=\(fieldID) role=AXTextField title=Fixture input description= identifier=field value=\(literal) enabled=\(availability) window_id=\(windowID)"
         let observe = ToolCall(id: "observe", name: "observe_app", arguments: ["bundle_id": .string("dev.relay.fixture")])
         let native = ModelMessage(role: "tool", content: JSONValue.object(["summary": .string(snapshot),
             "evidence": .string("Native AX observation of dev.relay.fixture, process 123. IDs expire after 60 seconds or the next observation or mutation."),
