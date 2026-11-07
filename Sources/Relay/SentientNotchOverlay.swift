@@ -170,6 +170,7 @@ final class NotchOverlayController {
     private static let shortcutPreference = "relay.sidekick.hotkey"
     private static let holdPreference = "relay.sidekick.holdForVoice"
     private static let compactStatusPreference = "relay.sidekick.compactStatus"
+    private static let releaseVoicePreference = "relay.sidekick.releaseVoiceToSend"
     private static let compactSize = CGSize(width: 210, height: 34)
 
     var promptText = ""
@@ -183,6 +184,8 @@ final class NotchOverlayController {
     private(set) var compactStatusEnabled = false
     private(set) var expanded = false
     private(set) var ownsDictation = false
+    private(set) var releaseVoiceToSend = false
+    private var editedTranscript: String?
     private(set) var focusRequest = 0
     private(set) var panelLayout: SidekickPanelLayout?
     private(set) var hoveringNotch = false
@@ -192,7 +195,21 @@ final class NotchOverlayController {
     private(set) var errorMessage: String?
 
     @ObservationIgnored private var panel: SidekickFloatingPanel?
+    @ObservationIgnored private let displayHandles = SidekickDisplayHandles()
+    @ObservationIgnored private var preferredDisplayID: UInt32?
+    @ObservationIgnored private var panelDisplayID: UInt32?
+    @ObservationIgnored private var primaryHoldGesture: SidekickHoldGesture?
+    @ObservationIgnored private var voiceHoldID: UUID?
+    @ObservationIgnored private var voiceHoldTask: Task<Void, Never>?
+    @ObservationIgnored private var heldOriginPID: Int32?
+    @ObservationIgnored private var heldPrompt = ""
+    @ObservationIgnored private let preferences: UserDefaults
+    @ObservationIgnored private let presentsPanels: Bool
+    @ObservationIgnored private let quickTextActionOverride: (@MainActor (QuickTextActionIntent) throws -> Void)?
+    @ObservationIgnored private let frontmostPID: @MainActor () -> Int32?
     @ObservationIgnored private var screenObserver: (any NSObjectProtocol)?
+    @ObservationIgnored private var inactiveObservers: [any NSObjectProtocol] = []
+    @ObservationIgnored private var sessionState = WorkspaceSessionState()
     @ObservationIgnored private var dictationStart: Task<Void, Never>?
     @ObservationIgnored private var textPreparation: Task<Void, Never>?
     @ObservationIgnored private var textPreparationID: UUID?
@@ -202,27 +219,53 @@ final class NotchOverlayController {
     @ObservationIgnored private var available = false
     @ObservationIgnored private var openWorkspace: () -> Void = {}
 
+    init(preferences: UserDefaults = .standard, presentsPanels: Bool = true,
+         quickTextAction: (@MainActor (QuickTextActionIntent) throws -> Void)? = nil,
+         frontmostPID: @escaping @MainActor () -> Int32? = { NSWorkspace.shared.frontmostApplication?.processIdentifier }) {
+        self.preferences = preferences
+        self.presentsPanels = presentsPanels
+        self.quickTextActionOverride = quickTextAction
+        self.frontmostPID = frontmostPID
+    }
+
     func connect(store: AssistantStore, available: Bool, openWorkspace: @escaping () -> Void) {
+        if let previous = self.store, previous !== store {
+            cancelOwnedDictation(for: previous)
+            closePanel()
+        }
         self.store = store
+        store.setInteractiveSessionActive(sessionState.isActive)
         self.available = available
         self.openWorkspace = openWorkspace
+        store.onStopInput = { [weak self, weak store] in
+            guard let store else { return }
+            self?.cancelOwnedDictation(for: store)
+        }
+        displayHandles.onOpen = { [weak self] displayID in self?.open(on: displayID) }
+        displayHandles.canHold = { [weak self] in self?.canBeginVoiceHold == true }
+        displayHandles.onHold = { [weak self] displayID in self?.beginNotchVoiceHold(on: displayID) == true }
+        displayHandles.onRelease = { [weak self] cancelled in self?.endNotchVoiceHold(cancelled: cancelled) }
         guard available else {
-            discardDictation()
+            cancelOwnedDictation(for: store)
             expanded = false
             closePanel()
             return
         }
-        let defaults = UserDefaults.standard
+        let defaults = preferences
+        observeVoiceSleep()
+        releaseVoiceToSend = defaults.bool(forKey: Self.releaseVoicePreference)
         let shortcut = SidekickModifierKey(rawValue: defaults.string(forKey: Self.shortcutPreference) ?? "") ?? .rightCommand
-        store.focusedDraft.setShortcutKey(shortcut)
-        store.focusedDraft.setHoldForVoiceEnabled(defaults.bool(forKey: Self.holdPreference))
+        if presentsPanels {
+            store.focusedDraft.setShortcutKey(shortcut)
+            store.focusedDraft.setHoldForVoiceEnabled(defaults.bool(forKey: Self.holdPreference))
+        }
         store.focusedDraft.beginVoiceHold = { [weak self] in self?.beginDictation(focusPanel: false) == true }
         store.focusedDraft.endVoiceHold = { [weak self] in self?.stopDictation() }
         pinnedToNotch = defaults.object(forKey: Self.pinPreference) as? Bool
             ?? NSScreen.screens.contains { $0.safeAreaInsets.top > 0 }
         compactStatusEnabled = defaults.bool(forKey: Self.compactStatusPreference)
         if pinnedToNotch { showPanelIfNeeded() }
-        if screenObserver == nil {
+        if presentsPanels, screenObserver == nil {
             screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                     object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.screenChanged() }
@@ -230,26 +273,57 @@ final class NotchOverlayController {
         }
     }
 
+    private func observeVoiceSleep() {
+        guard presentsPanels, inactiveObservers.isEmpty else { return }
+        for name in WorkspaceSessionState.notifications {
+            inactiveObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name,
+                object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.receiveSessionNotification(name) }
+            })
+        }
+    }
+
+    func receiveSessionNotification(_ name: Notification.Name) {
+        guard sessionState.consume(name) else { return }
+        if sessionState.isActive {
+            store?.setInteractiveSessionActive(true)
+            if available, pinnedToNotch { showPanelIfNeeded() }
+        } else {
+            prepareForSleep()
+            expanded = false
+            currentApp = nil
+            includesCurrentApp = false
+            closePanel()
+        }
+    }
+
     func setPinned(_ value: Bool) {
         pinnedToNotch = value
-        UserDefaults.standard.set(value, forKey: Self.pinPreference)
-        if value { showPanelIfNeeded() }
-        else if !expanded { closePanel() }
+        if !value { cancelVoiceHold() }
+        preferences.set(value, forKey: Self.pinPreference)
+        if value || expanded { showPanelIfNeeded() }
+        else { closePanel() }
     }
 
     func setCompactStatusEnabled(_ value: Bool) {
         compactStatusEnabled = value
-        UserDefaults.standard.set(value, forKey: Self.compactStatusPreference)
+        preferences.set(value, forKey: Self.compactStatusPreference)
     }
 
     func setShortcutKey(_ value: SidekickModifierKey) {
         store?.focusedDraft.setShortcutKey(value)
-        UserDefaults.standard.set(value.rawValue, forKey: Self.shortcutPreference)
+        preferences.set(value.rawValue, forKey: Self.shortcutPreference)
     }
 
     func setHoldForVoiceEnabled(_ value: Bool) {
-        store?.focusedDraft.setHoldForVoiceEnabled(value)
-        UserDefaults.standard.set(value, forKey: Self.holdPreference)
+        if !value { cancelVoiceHold() }
+        if presentsPanels { store?.focusedDraft.setHoldForVoiceEnabled(value) }
+        preferences.set(value, forKey: Self.holdPreference)
+    }
+
+    func setReleaseVoiceToSend(_ value: Bool) {
+        releaseVoiceToSend = value
+        preferences.set(value, forKey: Self.releaseVoicePreference)
     }
 
     func showWorkspace() {
@@ -271,26 +345,62 @@ final class NotchOverlayController {
         }
         do {
             let selection = try BoundTextSelection.capture(application: currentApp)
+            if kind == .summarize { try store.startSelectionSummary(selection) }
+            else { try QuickTextActionPanelController.shared.present(store: store, kind: kind, selection: selection) }
             hideFloatingNotchPanel()
-            try QuickTextActionPanelController.shared.present(store: store, kind: kind, selection: selection)
         } catch { errorMessage = error.localizedDescription }
     }
 
+    func summarizeCurrentDocument() {
+        guard let store, let currentApp else { return }
+        do {
+            try store.startBrowserSummary(application: currentApp)
+            hideFloatingNotchPanel()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func showTextActionError(_ message: String) {
+        open()
+        errorMessage = message
+    }
+
+    func proofreadCurrentSelection(store owner: AssistantStore) {
+        guard presentsPanels, available, owner.interactiveSessionActive, store === owner, !owner.isRunning, !owner.voice.isBusy, owner.actionsReady,
+              let app = NSWorkspace.shared.frontmostApplication else {
+            showTextActionError("Select text in another app and load a local model before proofreading.")
+            return
+        }
+        cancelTextPreparation()
+        do {
+            // Pin the exact selection synchronously at invocation. A cold or
+            // unsupported accessibility provider refuses rather than selecting
+            // a different document after an asynchronous preparation delay.
+            let selection = try BoundTextSelection.capture(application: app)
+            try QuickTextActionPanelController.shared.present(store: owner, kind: .proofread, selection: selection)
+        } catch { showTextActionError(error.localizedDescription) }
+    }
+
     func open() {
+        open(on: displayDescriptors().first(where: { $0.layout.screen.contains(NSEvent.mouseLocation) })?.id)
+    }
+
+    func open(on displayID: UInt32?) {
+        preferredDisplayID = displayID
         expand(focusPanel: true)
     }
 
-    private func expand(focusPanel: Bool) {
-        guard available else { return }
+    private func expand(focusPanel: Bool, preserveContext: Bool = false) {
+        guard available, store?.interactiveSessionActive == true else { return }
         if !expanded {
-            let app = NSWorkspace.shared.frontmostApplication
-            if app?.bundleIdentifier != nil && app?.bundleIdentifier != Bundle.main.bundleIdentifier {
-                currentApp = app
-            } else {
-                currentApp = nil
+            if preferredDisplayID == nil {
+                preferredDisplayID = displayDescriptors().first(where: { $0.layout.screen.contains(NSEvent.mouseLocation) })?.id
             }
-            includesCurrentApp = false
-            prepareTextActions()
+            if !preserveContext {
+                let app = presentsPanels ? NSWorkspace.shared.frontmostApplication : nil
+                currentApp = app?.bundleIdentifier != nil && app?.bundleIdentifier != Bundle.main.bundleIdentifier ? app : nil
+                includesCurrentApp = false
+            }
+            if !ownsDictation { prepareTextActions() }
         }
         expanded = true
         showPanelIfNeeded()
@@ -308,25 +418,32 @@ final class NotchOverlayController {
     }
 
     func hideFloatingNotchPanel() {
+        cancelVoiceHold()
         stopDictation()
         cancelTextPreparation()
         expanded = false
+        preferredDisplayID = nil
         currentApp = nil
         includesCurrentApp = false
         if pinnedToNotch, let panel {
             panel.becomesKeyOnlyIfNeeded = true
             if panel.isKeyWindow { panel.resignKey() }
+            showPanelIfNeeded()
         } else {
             closePanel()
         }
     }
 
     private func closePanel() {
+        cancelVoiceHold()
         cancelTextPreparation()
+        primaryHoldGesture?.detach()
+        displayHandles.closeAll()
         pointerPoll?.invalidate()
         pointerPoll = nil
         panel?.orderOut(nil)
         panel = nil
+        primaryHoldGesture = nil
         isVisible = false
         interactionFrame = nil
         hoveringNotch = false
@@ -334,7 +451,7 @@ final class NotchOverlayController {
 
     private func prepareTextActions() {
         cancelTextPreparation()
-        guard store?.actionsReady == true, let currentApp, currentApp.bundleIdentifier == "com.google.Chrome" else { return }
+        guard presentsPanels, store?.actionsReady == true, let currentApp, currentApp.bundleIdentifier == "com.google.Chrome" else { return }
         let id = UUID()
         textPreparationID = id
         preparingTextActions = true
@@ -360,26 +477,36 @@ final class NotchOverlayController {
     }
 
     private func screenChanged() {
-        guard available, panel != nil || pinnedToNotch else { return }
+        guard available, panel != nil || pinnedToNotch || expanded else { return }
+        cancelVoiceHold()
+        stopDictation()
+        if !displayDescriptors().contains(where: { $0.id == preferredDisplayID }) { preferredDisplayID = nil }
         showPanelIfNeeded()
     }
 
-    private func selectedLayout() -> SidekickPanelLayout? {
-        let screens = NSScreen.screens
-        let mouse = NSEvent.mouseLocation
-        guard let screen = screens.first(where: { $0.safeAreaInsets.top > 0 })
-                ?? screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main else { return nil }
-        let left = screen.auxiliaryTopLeftArea ?? .zero
-        let right = screen.auxiliaryTopRightArea ?? .zero
-        let cameraGap = !left.isEmpty && !right.isEmpty && left.maxX < right.minX ? (left.maxX...right.minX) : nil
-        return SidekickPanelLayout(screen: screen.frame, visibleTop: screen.visibleFrame.maxY,
+    private func displayDescriptors() -> [SidekickDisplayDescriptor] {
+        NSScreen.screens.enumerated().map { index, screen in
+            let left = screen.auxiliaryTopLeftArea ?? .zero
+            let right = screen.auxiliaryTopRightArea ?? .zero
+            let cameraGap = !left.isEmpty && !right.isEmpty && left.maxX < right.minX ? (left.maxX...right.minX) : nil
+            let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? UInt32(index + 1)
+            return SidekickDisplayDescriptor(id: id, name: screen.localizedName, layout: SidekickPanelLayout(
+                                   screen: screen.frame, visibleTop: screen.visibleFrame.maxY,
                                    notchInset: screen.safeAreaInsets.top,
                                    notchWidth: cameraGap.map { $0.upperBound - $0.lowerBound } ?? 0,
-                                   notchCenterX: cameraGap.map { ($0.lowerBound + $0.upperBound) / 2 })
+                                   notchCenterX: cameraGap.map { ($0.lowerBound + $0.upperBound) / 2 }))
+        }
     }
 
     private func showPanelIfNeeded() {
-        guard available, let store, let layout = selectedLayout() else { return }
+        guard presentsPanels else { return }
+        let displays = displayDescriptors()
+        if displays.isEmpty { closePanel(); return }
+        guard available, let store, store.interactiveSessionActive,
+              let display = SidekickDisplayDescriptor.mainDisplay(in: displays, preferredID: expanded ? preferredDisplayID : nil) else { return }
+        let layout = display.layout
+        panelDisplayID = display.id
+        displayHandles.update(displays: displays, mainDisplayID: display.id, pinned: pinnedToNotch, store: store)
         if panelLayout != layout {
             interactionFrame = nil
             hoveringNotch = false
@@ -405,6 +532,10 @@ final class NotchOverlayController {
         let host = NSHostingView(rootView: NotchOverlayBar(store: store, controller: self))
         host.sizingOptions = []
         window.contentView = host
+        primaryHoldGesture = SidekickHoldGesture(view: host,
+            shouldBegin: { [weak self] in self?.canBeginVoiceHold == true },
+            begin: { [weak self] in self?.beginNotchVoiceHold(on: self?.panelDisplayID) == true },
+            end: { [weak self] cancelled in self?.endNotchVoiceHold(cancelled: cancelled) })
         panel = window
         isVisible = true
         interactionFrame = layout.frame(for: Self.compactSize, compact: true)
@@ -453,8 +584,26 @@ final class NotchOverlayController {
     }
 
     func submit(store: AssistantStore) {
+        guard store.interactiveSessionActive else { return }
+        if let owner = self.store { guard owner === store, available else { return } }
         let prompt = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, !store.isRunning, !store.voice.isBusy else { return }
+        if let intent = QuickTextActionIntent.parse(prompt) {
+            do {
+                guard store.actionsReady, !preparingTextActions else {
+                    throw RelayError.message("Load a local model and finish preparing text actions before trying again.")
+                }
+                if let quickTextActionOverride { try quickTextActionOverride(intent) }
+                else { try performQuickTextAction(intent, store: store) }
+                promptText = ""
+                includesCurrentApp = false
+                rememberedNoteTitle = nil
+                submittedMessageID = nil
+                errorMessage = nil
+                hideFloatingNotchPanel()
+            } catch { errorMessage = error.localizedDescription }
+            return
+        }
         guard store.workspaceActionsReady || store.canRunWithoutModel(prompt) else {
             errorMessage = "Choose a workspace model in Relay before sending a task."
             return
@@ -466,7 +615,7 @@ final class NotchOverlayController {
             return
         }
         let visualTarget = appID != nil ? currentApp.flatMap(SidekickWindowText.target(for:)) : nil
-        let sidekickContext = SidekickTaskContext(appID: appID, instructions: UserDefaults.standard.string(
+        let sidekickContext = SidekickTaskContext(appID: appID, instructions: preferences.string(
             forKey: SidekickTaskContext.instructionsPreference) ?? "", visualTarget: visualTarget)
         let workspaceDraft = store.draft
         let previousCount = store.messages.count
@@ -484,9 +633,26 @@ final class NotchOverlayController {
         errorMessage = nil
     }
 
+    private func performQuickTextAction(_ intent: QuickTextActionIntent, store: AssistantStore) throws {
+        guard let app = currentApp, !app.isTerminated else {
+            throw RelayError.message("Open Sidekick from the page or selected text you want to use, then try again.")
+        }
+        let isBrowser = ["com.google.Chrome", "com.apple.Safari"].contains(app.bundleIdentifier ?? "")
+        if intent.action == .proofread || intent.target == .selection || (intent.target == .current && !isBrowser) {
+            let selection = try BoundTextSelection.capture(application: app)
+            if intent.action == .summarize { try store.startSelectionSummary(selection) }
+            else { try QuickTextActionPanelController.shared.present(store: store, kind: .proofread, selection: selection) }
+        } else {
+            guard isBrowser else {
+                throw RelayError.message("Open a Chrome or Safari page, select text, or choose a PDF from Task → Summarize.")
+            }
+            try store.startBrowserSummary(application: app)
+        }
+    }
+
     @discardableResult
-    func beginDictation(focusPanel: Bool = true) -> Bool {
-        guard available, let store, !store.isRunning, !store.voice.isBusy, !ownsDictation else { return false }
+    func beginDictation(focusPanel: Bool = true, expandPanel: Bool = true) -> Bool {
+        guard available, let store, store.interactiveSessionActive, !store.isRunning, !store.voice.isBusy, !ownsDictation else { return false }
         guard store.voice.transcript.isEmpty else {
             errorMessage = "Review the existing transcript in Relay before starting another recording."
             return false
@@ -494,7 +660,8 @@ final class NotchOverlayController {
         store.speech.stop()
         store.speechDiagnostic.stop()
         errorMessage = nil
-        expand(focusPanel: focusPanel)
+        editedTranscript = nil
+        if expandPanel { expand(focusPanel: focusPanel) }
         ownsDictation = true
         dictationStart = Task { @MainActor [weak self, weak store] in
             guard let self, let store, !Task.isCancelled, self.ownsDictation else { return }
@@ -510,16 +677,117 @@ final class NotchOverlayController {
         store?.voice.stop()
     }
 
+    var canBeginVoiceHold: Bool {
+        let enabled = presentsPanels ? store?.focusedDraft.holdForVoiceEnabled == true : preferences.bool(forKey: Self.holdPreference)
+        return available && store?.interactiveSessionActive == true && !expanded && enabled
+            && store?.isRunning == false && store?.voice.isBusy == false && !ownsDictation
+    }
+
+    @discardableResult
+    func beginNotchVoiceHold(on displayID: UInt32? = nil) -> Bool {
+        guard canBeginVoiceHold else { return false }
+        preferredDisplayID = displayID
+        let app = presentsPanels ? NSWorkspace.shared.frontmostApplication : nil
+        currentApp = app?.bundleIdentifier != nil && app?.bundleIdentifier != Bundle.main.bundleIdentifier ? app : nil
+        includesCurrentApp = false
+        guard beginDictation(focusPanel: false, expandPanel: false) else { return false }
+        voiceHoldID = UUID()
+        heldOriginPID = frontmostPID()
+        heldPrompt = promptText
+        return true
+    }
+
+    func endNotchVoiceHold(cancelled: Bool) {
+        guard let id = voiceHoldID, let store else { return }
+        guard !cancelled else {
+            cancelVoiceHold()
+            expand(focusPanel: false, preserveContext: true)
+            return
+        }
+        guard let capture = store.voice.beginFinishingCapture() else {
+            cancelVoiceHold()
+            expand(focusPanel: false, preserveContext: true)
+            return
+        }
+        voiceHoldTask = Task { @MainActor [weak self, weak store] in
+            guard let self, let store, self.voiceHoldID == id else { return }
+            let final = await store.voice.finishCapture(expectedCaptureID: capture)
+            guard self.voiceHoldID == id, !Task.isCancelled, self.ownsDictation else { return }
+            let maySubmit = SidekickVoiceCommitPolicy.maySubmit(final: final, edited: self.editedTranscript != nil,
+                localProvider: !store.workspaceUsesCodex, optedIn: self.releaseVoiceToSend,
+                sameOrigin: self.heldOriginPID != nil && self.heldOriginPID == self.frontmostPID(),
+                promptUnchangedAndEmpty: self.heldPrompt.isEmpty && self.promptText.isEmpty, cancelled: false)
+            self.voiceHoldID = nil
+            self.voiceHoldTask = nil
+            if maySubmit, !store.isRunning {
+                self.useTranscript()
+                self.submit(store: store)
+                if !self.promptText.isEmpty || self.submittedMessageID != nil {
+                    self.expand(focusPanel: false, preserveContext: true)
+                }
+            } else {
+                self.expand(focusPanel: false, preserveContext: true)
+            }
+        }
+    }
+
+    private func cancelVoiceHold() {
+        voiceHoldID = nil
+        voiceHoldTask?.cancel()
+        voiceHoldTask = nil
+        heldOriginPID = nil
+        heldPrompt = ""
+        stopDictation()
+    }
+
+    func cancelOwnedDictation(for owner: AssistantStore) {
+        guard store === owner else { return }
+        cancelTextPreparation()
+        cancelVoiceHold()
+        discardDictation()
+    }
+
+    func prepareForSleep() {
+        store?.setInteractiveSessionActive(false)
+        cancelVoiceHold()
+        cancelTextPreparation()
+        store?.quickText.stop()
+        QuickTextActionPanelController.shared.close()
+        store?.summaries.closeAll()
+        DocumentSummaryPanelController.shared.closeAll()
+    }
+
+    var transcriptText: String { editedTranscript ?? store?.voice.transcript ?? "" }
+
+    func editTranscript(_ value: String) {
+        guard ownsDictation, let store else { return }
+        guard value.utf8.count <= store.voice.maximumTextBytes,
+              !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) && ![9, 10, 13].contains($0.value) }) else {
+            errorMessage = "Keep the transcript within 8,000 UTF-8 bytes of ordinary text."
+            return
+        }
+        cancelVoiceHold()
+        editedTranscript = value
+    }
+
+    func sendTranscript() {
+        guard let store, !store.voice.isBusy, !store.isRunning,
+              !transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        useTranscript()
+        submit(store: store)
+    }
+
     func discardDictation() {
         guard ownsDictation else { return }
         stopDictation()
         store?.voice.cancel()
         ownsDictation = false
+        editedTranscript = nil
     }
 
     func useTranscript() {
         guard ownsDictation, let store, !store.voice.isBusy else { return }
-        let text = store.voice.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = transcriptText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         promptText += promptText.isEmpty ? text : "\n" + text
         discardDictation()
@@ -580,6 +848,17 @@ final class NotchOverlayController {
         store.selectionNotice = "Double Tap drafting is unavailable. Enter or paste the text in Relay and ask for a draft; nothing was captured, pasted or sent."
     }
 
+    isolated deinit {
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+        for observer in inactiveObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+        pointerPoll?.invalidate()
+        textPreparation?.cancel()
+        dictationStart?.cancel()
+        voiceHoldTask?.cancel()
+        if ownsDictation { store?.voice.stop() }
+        displayHandles.closeAll()
+    }
+
 }
 
 private final class SidekickFloatingPanel: NSPanel {
@@ -623,7 +902,7 @@ struct NotchOverlayBar: View {
         case .compact: CGSize(width: 210, height: 34)
         case .compose: CGSize(width: 512, height: controller.errorMessage == nil ? 125 : 155)
         case .progress: CGSize(width: 420, height: 64)
-        case .voice: CGSize(width: 510, height: 220)
+        case .voice: CGSize(width: 530, height: 260)
         case .review: CGSize(width: 530, height: 256)
         case .result: CGSize(width: 530, height: 215)
         }
@@ -715,7 +994,7 @@ struct NotchOverlayBar: View {
                     .accessibilityHidden(true)
                 } else if expandedCue {
                     Circle()
-                        .fill(store.pendingReview != nil ? RelayColors.accentAmber : RelayColors.accentBlue)
+                        .fill(store.voice.isRecording ? RelayColors.accentCoral : store.pendingReview != nil ? RelayColors.accentAmber : RelayColors.accentBlue)
                         .frame(width: 4, height: 4)
                         .padding(.top, 12)
                         .padding(.trailing, 5)
@@ -798,6 +1077,9 @@ struct NotchOverlayBar: View {
                 Spacer(minLength: 8)
                 if controller.currentApp != nil {
                     Menu {
+                        if ["com.google.Chrome", "com.apple.Safari"].contains(controller.currentApp?.bundleIdentifier ?? "") {
+                            Button("Summarize page") { controller.summarizeCurrentDocument() }
+                        }
                         Button("Summarize selection") { controller.runTextAction(.summarize) }
                         Button("Proofread selection") { controller.runTextAction(.proofread) }
                     } label: {
@@ -855,11 +1137,17 @@ struct NotchOverlayBar: View {
             }
             Text(store.voice.errorMessage ?? store.voice.status).font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
                 .lineLimit(3)
-            ScrollView {
-                Text(store.voice.transcript.isEmpty ? "Your words appear here." : store.voice.transcript)
-                    .font(.system(size: 13)).textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityIdentifier("sidekick.transcript")
+            TextEditor(text: Binding(get: { controller.transcriptText }, set: { controller.editTranscript($0) }))
+                .font(.system(size: 13))
+                .scrollContentBackground(.hidden)
+                .padding(6)
+                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+                .frame(minHeight: 70)
+                .accessibilityLabel("Dictation transcript. Editing stops recording.")
+                .accessibilityIdentifier("sidekick.transcript")
+            if store.workspaceUsesCodex {
+                Text("Review before sending this transcript to ChatGPT.")
+                    .font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
             }
             Spacer(minLength: 0)
             HStack(spacing: 8) {
@@ -868,8 +1156,10 @@ struct NotchOverlayBar: View {
                 if store.voice.isBusy {
                     Button("Stop recording", action: controller.stopDictation).buttonStyle(RelaySecondaryButtonStyle())
                 } else {
-                    Button("Use transcript", action: controller.useTranscript).buttonStyle(RelayPrimaryButtonStyle())
-                        .disabled(store.voice.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("Use transcript", action: controller.useTranscript).buttonStyle(RelaySecondaryButtonStyle())
+                        .disabled(controller.transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("Send task", action: controller.sendTranscript).buttonStyle(RelayPrimaryButtonStyle())
+                        .disabled(controller.transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isRunning)
                 }
             }
         }

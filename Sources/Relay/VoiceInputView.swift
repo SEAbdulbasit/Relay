@@ -57,7 +57,7 @@ struct VoiceInputView: View {
             }.scrollIndicators(.visible)
             HStack {
                 if store.voice.isBusy {
-                    Button(store.voice.isRecording ? "Stop recording" : "Cancel permission wait") { store.voice.stop() }.buttonStyle(RelaySecondaryButtonStyle())
+                    Button(store.voice.isRecording ? "Stop recording" : store.voice.phase == .requestingPermission ? "Cancel permission wait" : "Stop voice input") { store.voice.stop() }.buttonStyle(RelaySecondaryButtonStyle())
                 } else {
                     Button("Start local dictation") { Task { await store.voice.start() } }
                         .buttonStyle(RelaySecondaryButtonStyle()).disabled(store.isRunning || store.isClearingConversation || languages.isEmpty)

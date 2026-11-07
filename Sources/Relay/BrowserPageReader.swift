@@ -17,13 +17,19 @@ enum BrowserPageReader {
         let links: [LinkInfo]
         let truncated: Bool
     }
-    private struct Identity {
+    fileprivate struct Identity {
         let pid: pid_t
         let window: AXUIElement
         let document: AXUIElement
         let tab: AXUIElement
         let url: String
         let title: String
+    }
+    struct CurrentDocumentTarget {
+        fileprivate let application: NSRunningApplication
+        fileprivate let launchedAt: Date
+        fileprivate let identity: Identity
+        let applicationName: String
     }
 
     static func read(expectedURL: String, browser: String) async throws -> Snapshot {
@@ -33,9 +39,79 @@ enum BrowserPageReader {
         guard let application = try BrowserAutomation.selectedApplication(browser), !application.isTerminated else {
             throw RelayError.message("Open the intended browser window before reading its page. No browser was opened.")
         }
+        return try await read(expected: expected, application: application, pinned: nil, prepareAccessibility: true)
+    }
+
+    /// Captures the chosen running browser's current selected document. It never
+    /// activates a browser, requests a screenshot, navigates or selects another tab.
+    static func readCurrent(application chosen: NSRunningApplication? = nil) async throws -> Snapshot {
+        try await readCurrent(target: captureCurrentTarget(application: chosen))
+    }
+
+    /// Pin the exact source before a caller opens a reader or schedules work.
+    /// No asynchronous delay or application activation precedes this binding.
+    static func captureCurrentTarget(application chosen: NSRunningApplication? = nil) throws -> CurrentDocumentTarget {
+        try Task.checkCancellation()
+        guard AXIsProcessTrusted() else { throw RelayError.message("Reading the current document needs Relay's Accessibility permission.") }
+        guard let application = chosen ?? NSWorkspace.shared.frontmostApplication, !application.isTerminated,
+              let bundleID = application.bundleIdentifier, let launchedAt = application.launchDate else {
+            throw RelayError.message("Choose a running Chrome or Safari document first.")
+        }
+        _ = try BrowserAutomation.validatedBrowser(bundleID)
         let root = AXUIElementCreateApplication(application.processIdentifier)
         AXUIElementSetMessagingTimeout(root, 0.15)
-        try await BrowserAccessibility.prepareContent(for: application)
+        let pinned: Identity
+        do {
+            pinned = try identity(root: root, pid: application.processIdentifier, expected: nil)
+        } catch {
+            throw RelayError.message(error.localizedDescription + " Keep the intended page selected and wait for its accessible content before trying again. No summary source was captured.")
+        }
+        _ = try validatedCurrentDocumentURL(url: pinned.url, title: pinned.title)
+        guard !application.isTerminated, application.launchDate == launchedAt else {
+            throw RelayError.message("The chosen browser process changed while selecting its document.")
+        }
+        return CurrentDocumentTarget(application: application, launchedAt: launchedAt, identity: pinned,
+            applicationName: application.localizedName ?? bundleID)
+    }
+
+    static func readCurrent(target: CurrentDocumentTarget) async throws -> Snapshot {
+        try Task.checkCancellation()
+        guard !target.application.isTerminated, target.application.launchDate == target.launchedAt else {
+            throw RelayError.message("The original browser process changed before document capture.")
+        }
+        let expected = try validatedCurrentDocumentURL(url: target.identity.url, title: target.identity.title)
+        return try await read(expected: expected, application: target.application, pinned: target.identity, prepareAccessibility: false)
+    }
+
+    /// Revalidates only process/window/tab/document metadata. It never reads
+    /// page text, enhances Accessibility, navigates, or activates the browser.
+    static func validateCurrentTarget(_ target: CurrentDocumentTarget, expectedWindow: AXUIElement? = nil) throws {
+        try Task.checkCancellation()
+        guard AXIsProcessTrusted(), !target.application.isTerminated,
+              target.application.launchDate == target.launchedAt,
+              expectedWindow.map({ CFEqual($0, target.identity.window) }) ?? true else {
+            throw RelayError.message("The original browser process or document window changed before readback.")
+        }
+        let root = AXUIElementCreateApplication(target.application.processIdentifier)
+        AXUIElementSetMessagingTimeout(root, 0.15)
+        let expected = try validatedCurrentDocumentURL(url: target.identity.url, title: target.identity.title)
+        let current = try identity(root: root, pid: target.application.processIdentifier, expected: expected)
+        guard snapshotIdentityMatches(sameProcess: current.pid == target.identity.pid,
+            sameWindow: CFEqual(current.window, target.identity.window), sameTab: CFEqual(current.tab, target.identity.tab),
+            sameDocument: CFEqual(current.document, target.identity.document), beforeURL: target.identity.url,
+            afterURL: current.url, beforeTitle: target.identity.title, afterTitle: current.title, expected: expected),
+              !target.application.isTerminated, target.application.launchDate == target.launchedAt else {
+            throw RelayError.message("The original browser tab or document changed. No broader readback was performed.")
+        }
+    }
+
+    private static func read(expected: URL, application: NSRunningApplication, pinned: Identity?, prepareAccessibility: Bool) async throws -> Snapshot {
+        guard let launchedAt = application.launchDate else { throw RelayError.message("The original browser process could not be identified.") }
+        let root = AXUIElementCreateApplication(application.processIdentifier)
+        AXUIElementSetMessagingTimeout(root, 0.15)
+        if prepareAccessibility { try await BrowserAccessibility.prepareContent(for: application) }
+        try Task.checkCancellation()
+        guard !application.isTerminated, application.launchDate == launchedAt else { throw RelayError.message("The original browser closed during document capture.") }
         var resolvedBefore: Identity?
         for attempt in 0..<4 {
             do {
@@ -54,6 +130,14 @@ enum BrowserPageReader {
         }
         guard let initialBefore = resolvedBefore else {
             throw RelayError.message("The selected browser tab could not be identified uniquely within the inspection budget. No page snapshot was returned.")
+        }
+        if let pinned {
+            guard snapshotIdentityMatches(sameProcess: pinned.pid == initialBefore.pid,
+                sameWindow: CFEqual(pinned.window, initialBefore.window), sameTab: CFEqual(pinned.tab, initialBefore.tab),
+                sameDocument: CFEqual(pinned.document, initialBefore.document), beforeURL: pinned.url, afterURL: initialBefore.url,
+                beforeTitle: pinned.title, afterTitle: initialBefore.title, expected: expected) else {
+                throw RelayError.message("The chosen browser document changed before capture. No summary source was returned.")
+            }
         }
 
         func capturePass(startingFrom before: Identity) async throws -> (chunks: [String], headings: [String], links: [LinkInfo], truncated: Bool) {
@@ -162,7 +246,7 @@ enum BrowserPageReader {
         var truncated = pass.truncated
         try Task.checkCancellation()
         let after = try identity(root: root, pid: application.processIdentifier, expected: expected)
-        guard snapshotIdentityMatches(sameProcess: before.pid == after.pid && !application.isTerminated,
+        guard snapshotIdentityMatches(sameProcess: before.pid == after.pid && !application.isTerminated && application.launchDate == launchedAt,
                                       sameWindow: CFEqual(before.window, after.window), sameTab: CFEqual(before.tab, after.tab),
                                       sameDocument: CFEqual(before.document, after.document), beforeURL: before.url,
                                       afterURL: after.url, beforeTitle: before.title, afterTitle: after.title, expected: expected) else {
@@ -235,7 +319,7 @@ enum BrowserPageReader {
         return result
     }
 
-    private static func identity(root: AXUIElement, pid: pid_t, expected: URL) throws -> Identity {
+    private static func identity(root: AXUIElement, pid: pid_t, expected: URL?) throws -> Identity {
         guard let window = element(root, kAXFocusedWindowAttribute) else { throw RelayError.message("The browser has no identifiable selected window.") }
         var queue = [window]
         if let toolbar = element(window, "AXToolbar") { queue.append(toolbar) }
@@ -317,10 +401,17 @@ enum BrowserPageReader {
         let url = string(document, "AXURL")
         let title = readableDocumentTitle(title: string(document, kAXTitleAttribute),
                                           description: string(document, kAXDescriptionAttribute))
-        if let failure = pageIdentityFailure(url: url, title: title, expected: expected) {
+        let checkedExpected = try expected ?? validatedCurrentDocumentURL(url: url, title: title)
+        if let failure = pageIdentityFailure(url: url, title: title, expected: checkedExpected) {
             throw RelayError.message(failure)
         }
         return Identity(pid: pid, window: window, document: document, tab: tab, url: url, title: title)
+    }
+
+    static func validatedCurrentDocumentURL(url: String, title: String) throws -> URL {
+        let checked = try BrowserAutomation.validatedURL(url)
+        if let failure = pageIdentityFailure(url: url, title: title, expected: checked) { throw RelayError.message(failure) }
+        return checked
     }
 
     static func permitsDocumentIdentity(windowIdentifier: String, selectedTabCount: Int,

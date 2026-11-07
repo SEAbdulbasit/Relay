@@ -53,6 +53,12 @@ struct RelayApp: App {
                 Button("Add Folder…") { store.chooseFolder() }
                 Button("Inspect Image or Window…") { store.showImageInspection = true }
                     .disabled(!onboarding.completed || store.isRunning)
+                Menu("Summarize") {
+                    Button("Chrome page") { store.summarizeBrowser(.chrome) }
+                    Button("Safari page") { store.summarizeBrowser(.safari) }
+                    Button("Choose PDF…") { store.chooseSummaryPDF() }
+                }
+                .disabled(!onboarding.completed || !store.canStartDocumentSummary)
             }
         }
         Settings {

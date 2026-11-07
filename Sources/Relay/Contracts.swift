@@ -117,7 +117,11 @@ nonisolated enum RelayError: LocalizedError {
 
 nonisolated enum ModelProtocolError: LocalizedError {
     case invalidAction(String)
+    case emptyResponse
     var errorDescription: String? {
-        switch self { case .invalidAction(let reason): "The model returned an invalid action request: \(reason). No action from that reply was dispatched." }
+        switch self {
+        case .invalidAction(let reason): "The model returned an invalid action request: \(reason). No action from that reply was dispatched."
+        case .emptyResponse: "The model returned no answer or action. No action from that reply was dispatched."
+        }
     }
 }

@@ -35,13 +35,18 @@ protocol LocalVoiceBackend: AnyObject {
     func begin(localeIdentifier: String, requiresOnDeviceRecognition: Bool,
                onEvent: @escaping @MainActor @Sendable (LocalSpeechEvent) -> Void) throws
     func stop()
+    func finish()
+}
+
+extension LocalVoiceBackend {
+    func finish() { stop() }
 }
 
 /// Explicit, bounded dictation into a separate reviewable transcript. No initialization-time
 /// permission requests, microphone access, automatic draft writes or chat submission occur.
 @Observable @MainActor
 final class LocalVoiceInput {
-    enum Phase { case idle, requestingPermission, recording, stopped, failed }
+    enum Phase { case idle, requestingPermission, recording, finishing, stopped, failed }
     var localeIdentifier: String {
         didSet {
             if localeIdentifier != oldValue, isBusy {
@@ -55,7 +60,9 @@ final class LocalVoiceInput {
     private(set) var errorMessage: String?
     private(set) var phase: Phase = .idle
     var isRecording: Bool { phase == .recording }
-    var isBusy: Bool { phase == .requestingPermission || phase == .recording }
+    var isBusy: Bool { phase == .requestingPermission || phase == .recording || phase == .finishing }
+    private(set) var transcriptIsFinal = false
+    private(set) var captureID: UUID?
     private(set) var maximumDuration: TimeInterval
     /// Session-only upper-bound timing, including native startup/teardown; never persisted.
     private(set) var lastCaptureElapsedSeconds: TimeInterval?
@@ -67,7 +74,8 @@ final class LocalVoiceInput {
     @ObservationIgnored private var revision = 0
     @ObservationIgnored private var captureStarted: ContinuousClock.Instant?
     @ObservationIgnored private let sleepNotificationCenter: NotificationCenter
-    @ObservationIgnored private var sleepObserver: NSObjectProtocol?
+    @ObservationIgnored private var inactiveObservers: [NSObjectProtocol] = []
+    @ObservationIgnored private var sessionState = WorkspaceSessionState()
 
     init(localeIdentifier: String = Locale.current.identifier,
          maximumDuration: TimeInterval = 30, maximumTextBytes: Int = 8_000,
@@ -79,16 +87,20 @@ final class LocalVoiceInput {
         self.backend = backend ?? AppleOnDeviceVoiceBackend()
         let sleepCenter = sleepNotificationCenter ?? NSWorkspace.shared.notificationCenter
         self.sleepNotificationCenter = sleepCenter
-        // Complete teardown synchronously before sleep. A queued Task could otherwise
-        // leave the tap live until wake, or let a pending permission grant start capture.
-        sleepObserver = sleepCenter.addObserver(
-            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.isBusy else { return }
-                self.stop()
-                self.status = "Voice input stopped before sleep. Review any transcript; start again explicitly when ready."
-            }
+        // Tear down synchronously for lock/user switching as well as sleep. A
+        // queued Task must not leave audio live or accept late permission consent.
+        for name in WorkspaceSessionState.notifications {
+            inactiveObservers.append(sleepCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.sessionState.consume(name)
+                    guard !self.sessionState.isActive, self.isBusy else { return }
+                    self.stop()
+                    self.status = name == NSWorkspace.willSleepNotification
+                        ? "Voice input stopped before sleep. Review any transcript; start again explicitly when ready."
+                        : "Voice input stopped because this Mac session became inactive. Review any transcript; start again explicitly."
+                }
+            })
         }
     }
 
@@ -101,9 +113,15 @@ final class LocalVoiceInput {
 
     func start() async {
         guard !isBusy else { return }
+        guard sessionState.isActive else {
+            status = "Voice input is off while this Mac session is inactive. Start explicitly after unlocking."
+            return
+        }
         revision += 1
         let expected = revision
         transcript = ""
+        transcriptIsFinal = false
+        captureID = UUID()
         lastCaptureElapsedSeconds = nil
         errorMessage = nil
         phase = .requestingPermission
@@ -178,13 +196,63 @@ final class LocalVoiceInput {
         revision += 1
         endCapture()
         transcript = ""
+        transcriptIsFinal = false
+        captureID = nil
         errorMessage = nil
         phase = .idle
         status = "Voice input canceled and transcript cleared. Nothing was sent."
     }
 
+    /// End microphone input immediately, then allow a bounded on-device final
+    /// result. A partial transcript is retained for review, never auto-submitted.
+    func finishCapture(timeout: Duration = .milliseconds(1_500)) async -> Bool {
+        guard let id = beginFinishingCapture() else { return false }
+        return await finishCapture(expectedCaptureID: id, timeout: timeout)
+    }
+
+    /// Called synchronously at pointer-up so audio does not continue until an
+    /// asynchronous final-transcript task gets its next actor turn.
+    func beginFinishingCapture() -> UUID? {
+        guard let id = captureID else { return nil }
+        if phase == .stopped { return transcriptIsFinal ? id : nil }
+        if phase == .finishing { return id }
+        guard phase == .recording else { stop(); return nil }
+        phase = .finishing
+        status = "Microphone off. Finishing the on-device transcript…"
+        deadline?.cancel()
+        deadline = nil
+        backend.finish()
+        return id
+    }
+
+    func finishCapture(expectedCaptureID id: UUID, timeout: Duration = .milliseconds(1_500)) async -> Bool {
+        guard captureID == id else { return false }
+        guard !Task.isCancelled else {
+            if phase == .finishing { stop() }
+            return false
+        }
+        if phase == .stopped { return transcriptIsFinal }
+        guard phase == .finishing else { return false }
+        let expected = revision
+        let until = ContinuousClock.now.advanced(by: min(.seconds(2), max(.milliseconds(20), timeout)))
+        while revision == expected, phase == .finishing, ContinuousClock.now < until {
+            do { try await Task.sleep(for: .milliseconds(20)) }
+            catch { if captureID == id { stop() }; return false }
+        }
+        guard captureID == id else { return false }
+        guard !Task.isCancelled else {
+            if phase == .finishing { stop() }
+            return false
+        }
+        if phase == .finishing {
+            stop()
+            status = "A final transcript was not available in time. Review the captured words before sending."
+        }
+        return phase == .stopped && transcriptIsFinal
+    }
+
     private func receive(_ event: LocalSpeechEvent, revision expected: Int) {
-        guard revision == expected, phase == .recording else { return }
+        guard revision == expected, phase == .recording || phase == .finishing else { return }
         switch event {
         case .partial(let text), .final(let text):
             guard !text.unicodeScalars.contains(where: {
@@ -206,7 +274,9 @@ final class LocalVoiceInput {
                 return
             }
             transcript = text
+            transcriptIsFinal = false
             if case .final = event {
+                transcriptIsFinal = true
                 revision += 1
                 endCapture()
                 phase = .stopped
@@ -260,7 +330,7 @@ final class LocalVoiceInput {
     }
 
     isolated deinit {
-        if let sleepObserver { sleepNotificationCenter.removeObserver(sleepObserver) }
+        for observer in inactiveObservers { sleepNotificationCenter.removeObserver(observer) }
         preparation?.cancel()
         deadline?.cancel()
         backend.stop()
@@ -373,6 +443,15 @@ private final class AppleOnDeviceVoiceBackend: LocalVoiceBackend {
         recognitionTask?.cancel(); recognitionTask = nil
         engine = nil
         recognizer = nil
+    }
+
+    func finish() {
+        if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver); self.configurationObserver = nil }
+        engine?.stop()
+        if tapInstalled { engine?.inputNode.removeTap(onBus: 0); tapInstalled = false }
+        sink?.endAudio()
+        recognitionTask?.finish()
+        engine = nil
     }
 }
 

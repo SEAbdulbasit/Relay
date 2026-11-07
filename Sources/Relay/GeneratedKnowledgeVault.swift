@@ -21,6 +21,7 @@ struct GeneratedKnowledgeNote: Identifiable, Equatable {
 
 @Observable @MainActor
 final class GeneratedKnowledgeVault {
+    enum ConsolidationInvalidation: Equatable { case sourcesChanged, stopped, dismissed, saved }
     static let maximumSourcesPerRun = 8
     static let maximumCandidates = 32
     private static let maximumNoteBytes = 32_768
@@ -30,17 +31,121 @@ final class GeneratedKnowledgeVault {
     private(set) var notes: [GeneratedKnowledgeNote] = []
     private(set) var status = "Generate source highlights with your on-device model."
     private(set) var isGenerating = false
+    private(set) var consolidationDraft: CrossSourceKnowledge.Draft?
+    private(set) var consolidationInvalidation: ConsolidationInvalidation?
     @ObservationIgnored private let directoryURL: URL?
     @ObservationIgnored private var work: Task<Void, Never>?
     @ObservationIgnored private var lastAttemptedPath: String?
+    @ObservationIgnored private var consolidationRevision: UInt64 = 0
+    @ObservationIgnored private var consolidatingSources: [CrossSourceKnowledge.Revision]?
 
     init(directoryURL: URL?) { self.directoryURL = directoryURL }
 
-    func cancel() { work?.cancel() }
+    func cancel() {
+        consolidationRevision &+= 1
+        consolidationInvalidation = .stopped
+        consolidationDraft = nil
+        work?.cancel()
+    }
+
+    func dismissConsolidation() {
+        consolidationRevision &+= 1
+        consolidationInvalidation = .dismissed
+        consolidationDraft = nil
+        if consolidatingSources != nil { work?.cancel() }
+    }
+
+    /// Explicit, tool-free selection of source quotes. Nothing is written until
+    /// the user reviews a draft and creates a separate editable snapshot.
+    func consolidate(entityURL: URL, records: [KnowledgeRecord], expectedSourcePaths: [String]? = nil,
+                     isCurrent: @escaping (KnowledgeRecord) -> Bool,
+                     complete: @escaping ([ModelMessage]) async throws -> ModelReply) async {
+        guard !isGenerating else { return }
+        consolidationDraft = nil
+        consolidationInvalidation = nil
+        consolidationRevision &+= 1
+        let revision = consolidationRevision
+        let input: CrossSourceKnowledge.Input
+        do {
+            try Task.checkCancellation()
+            input = try CrossSourceKnowledge.input(entityURL: entityURL, records: records)
+            if let expectedSourcePaths {
+                guard input.entity.sourcePaths.map({ Data($0.utf8) }).sorted(by: { $0.lexicographicallyPrecedes($1) })
+                        == expectedSourcePaths.map({ Data($0.utf8) }).sorted(by: { $0.lexicographicallyPrecedes($1) }) else {
+                    throw RelayError.message("The linked source selection changed. Reopen the source brief to review its scope.")
+                }
+            }
+            guard input.sources.allSatisfy({ source in
+                records.contains(where: { source.matches($0) && isCurrent($0) })
+            }) else { throw RelayError.message("The linked sources changed or access was removed.") }
+        } catch {
+            status = error.localizedDescription
+            return
+        }
+        isGenerating = true
+        consolidatingSources = input.sources
+        status = "Selecting exact excerpts across \(input.sources.count) explicitly linked sources…"
+        let run = Task { @MainActor in
+            do {
+                try Task.checkCancellation()
+                let reply = try await complete(input.messages)
+                try Task.checkCancellation()
+                guard consolidationRevision == revision else { throw CancellationError() }
+                let draft = try input.draft(from: reply)
+                guard draft.isCurrent(records: records, isCurrent: isCurrent), consolidationRevision == revision else {
+                    throw RelayError.message("The linked sources changed or access was removed. No brief was published.")
+                }
+                try Task.checkCancellation()
+                consolidationDraft = draft
+                status = "Review the quoted source brief before saving an editable historical snapshot."
+            } catch is CancellationError {
+                status = "Source brief stopped. No editable note was written."
+            } catch {
+                // Untrusted model diagnostics are never retained in the vault.
+                status = "The source brief could not be validated. Recheck the selected sources and try again."
+            }
+        }
+        work = run
+        await withTaskCancellationHandler {
+            await run.value
+        } onCancel: {
+            run.cancel()
+        }
+        consolidatingSources = nil
+        work = nil
+        isGenerating = false
+    }
+
+    /// Revalidation and create-only save are synchronous. This never updates an
+    /// existing user note, even when rebuilding the same person/project brief.
+    func saveConsolidationDraft(id: UUID, title: String, body: String, records: [KnowledgeRecord],
+                                isCurrent: (KnowledgeRecord) -> Bool,
+                                save: (String, String) throws -> LocalMarkdownNote) throws -> LocalMarkdownNote {
+        guard !isGenerating, let draft = consolidationDraft, draft.id == id,
+              draft.isCurrent(records: records, isCurrent: isCurrent) else {
+            consolidationInvalidation = .sourcesChanged
+            consolidationDraft = nil
+            throw RelayError.message("The reviewed brief's sources changed or access was removed. Rebuild before saving.")
+        }
+        try Task.checkCancellation()
+        let note = try save(title, body)
+        consolidationDraft = nil
+        consolidationInvalidation = .saved
+        consolidationRevision &+= 1
+        status = "Saved an editable historical snapshot. Source refreshes will not overwrite your edits."
+        return note
+    }
 
     /// Generated files are a managed cache. The user’s editable notes live separately.
     /// Only files named in our cache format may be pruned. No stale note stays in the reader.
     func reconcile(records: [KnowledgeRecord]) {
+        let revisions = consolidatingSources ?? consolidationDraft?.revisions ?? []
+        if !revisions.allSatisfy({ revision in records.contains(where: revision.matches) }) {
+            consolidationRevision &+= 1
+            consolidationInvalidation = .sourcesChanged
+            consolidationDraft = nil
+            if consolidatingSources != nil { work?.cancel() }
+        }
         let expected = Dictionary(records.map { (Self.name(for: $0), $0) }, uniquingKeysWith: { first, _ in first })
         do {
             guard let directory = try directory(create: false) else { notes = []; return }
@@ -179,7 +284,7 @@ final class GeneratedKnowledgeVault {
     }
 
     static func name(for record: KnowledgeRecord) -> String {
-        let identity = [record.sourcePath, record.contentHash, record.title,
+        let identity = [record.sourcePath, record.evidenceFingerprint, record.title,
                         String(record.modifiedAt.timeIntervalSinceReferenceDate.bitPattern), record.coverageNote ?? ""]
         let digest = SHA256.hash(data: Data(identity.joined(separator: "\0").utf8))
         return "relay-summary-v1-" + digest.map { String(format: "%02x", $0) }.joined() + ".md"
@@ -215,13 +320,18 @@ final class GeneratedKnowledgeVault {
     private static func note(for record: KnowledgeRecord, ids: [Int], candidates: [String]) -> GeneratedKnowledgeNote {
         let excerpts = ids.sorted().map { candidates[$0 - 1] }
         let coverage = record.coverageNote ?? "Extracted text within Relay’s index limits."
-        let metadata = """
+        var metadata = """
             Source title: \(record.title.debugDescription)
             Original source: \(record.sourcePath.debugDescription)
             Source modified: \(record.modifiedAt.ISO8601Format())
             SHA-256 of source: \(record.contentHash)
             Coverage: \(coverage)
             """
+        if let dependencies = record.sourceDependencies, !dependencies.isEmpty {
+            metadata += "\nDependency receipts (contribute to this indexed excerpt):\n" + dependencies.sorted { $0.path < $1.path }.map {
+                $0.path.debugDescription + " · " + $0.contentHash
+            }.joined(separator: "\n")
+        }
         let body = "Model-selected verbatim excerpts from up to \(maximumCandidates) candidates in one indexed source.\n\n## Source\n\n" + fenced(metadata) +
             "\n\n## Highlights\n\n" + excerpts.map(fenced).joined(separator: "\n\n")
         return .init(id: name(for: record), sourcePath: record.sourcePath, sourceTitle: record.title,

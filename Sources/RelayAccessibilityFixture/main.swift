@@ -3,7 +3,7 @@ import Foundation
 
 /// Deliberately inert AX target. Only the test host's explicit temporary oracle path is written.
 @MainActor
-final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFieldDelegate {
+final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
     private var window: NSWindow!
     private var secondaryWindow: NSWindow?
     private var secondaryInput: NSTextView?
@@ -15,6 +15,18 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     private var draftOracleTimer: Timer?
     private var lastOracleState: OracleState?
     private var delivery: NSPopUpButton?
+    private var checkbox: NSButton?
+    private var disclosure: NSButton?
+    private var checkboxPressCount = 0
+    private var disclosurePressCount = 0
+    private var radioButtons: [NSButton] = []
+    private var radioPressCount = 0
+    private var choiceTable: NSTableView?
+    private var rowLabels = ["Alpha note", "Beta note — café", "Gamma note"]
+    private var rowSelectionCount = 0
+    private var rowActivationCount = 0
+    private var rowClickCount = 0
+    private var revertingSelection = false
     private let environment = ProcessInfo.processInfo.environment
     private var launchToken: String { environment["RELAY_FIXTURE_TOKEN"] ?? fallbackToken }
     private let fallbackToken = UUID().uuidString
@@ -22,7 +34,9 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let includeDraft = environment["RELAY_FIXTURE_INCLUDE_DRAFT"] == "1"
         let includeSelection = environment["RELAY_FIXTURE_INCLUDE_SELECTION"] == "1"
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: includeDraft ? 460 : includeSelection ? 360 : 300),
+        let includeBinary = environment["RELAY_FIXTURE_INCLUDE_BINARY_CONTROLS"] == "1"
+        let includeChoices = environment["RELAY_FIXTURE_INCLUDE_CHOICES"] == "1"
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: includeChoices ? 600 : includeDraft ? 460 : includeBinary ? 410 : includeSelection ? 360 : 300),
                           styleMask: [.titled, .closable, .miniaturizable],
                           backing: .buffered, defer: false)
         let screenMarker = environment["RELAY_FIXTURE_SCREEN_MARKER"]
@@ -89,6 +103,33 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
             selection.action = #selector(writeOracle)
             delivery = selection
             controls.append(selection)
+        }
+        if includeBinary {
+            let checkbox = NSButton(checkboxWithTitle: environment["RELAY_FIXTURE_BINARY_CONSEQUENTIAL"] == "1" ? "Disable security" : "Show fixture labels",
+                                    target: self, action: #selector(changeCheckbox))
+            checkbox.setAccessibilityIdentifier("relay.fixture.checkbox")
+            checkbox.allowsMixedState = environment["RELAY_FIXTURE_BINARY_MIXED"] == "1"
+            checkbox.state = checkbox.allowsMixedState ? .mixed : .off
+            checkbox.isEnabled = environment["RELAY_FIXTURE_BINARY_DISABLED"] != "1"
+            self.checkbox = checkbox
+            controls.append(checkbox)
+            let disclosure = NSButton(title: "Fixture details", target: self, action: #selector(changeDisclosure))
+            disclosure.bezelStyle = .disclosure
+            disclosure.setButtonType(.onOff)
+            disclosure.setAccessibilityLabel("Fixture details")
+            disclosure.setAccessibilityIdentifier("relay.fixture.disclosure")
+            self.disclosure = disclosure
+            controls.append(disclosure)
+        }
+        if includeChoices {
+            controls.append(makeRadioChoices())
+            let table = makeChoiceTable()
+            controls.append(table)
+            table.heightAnchor.constraint(equalToConstant: 130).isActive = true
+            table.widthAnchor.constraint(equalToConstant: 500).isActive = true
+            let change = NSButton(title: "Change fixture choice labels", target: self, action: #selector(changeChoiceLabels))
+            change.setAccessibilityIdentifier("relay.fixture.changeChoices")
+            controls.append(change)
         }
         if let screenMarker {
             let marker = NSTextField(labelWithString: "RELAY SCREEN CHECK " + screenMarker)
@@ -189,9 +230,116 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         return scroll
     }
 
+    private func makeRadioChoices() -> NSStackView {
+        var titles = ["Compact", "Comfortable — café", "Expanded"]
+        if environment["RELAY_FIXTURE_CHOICE_DUPLICATE"] == "1" { titles[2] = titles[1] }
+        if environment["RELAY_FIXTURE_CHOICE_CONSEQUENTIAL"] == "1" { titles[1] = "Disable security" }
+        radioButtons = titles.enumerated().map { index, title in
+            let button = NSButton(radioButtonWithTitle: title, target: self, action: #selector(selectRadio(_:)))
+            button.tag = index
+            button.state = index == 0 ? .on : .off
+            button.isEnabled = !(index == 1 && environment["RELAY_FIXTURE_CHOICE_DISABLED"] == "1")
+            button.setAccessibilityIdentifier("relay.fixture.radio.\(index)")
+            return button
+        }
+        let group = NSStackView(views: radioButtons)
+        group.orientation = .vertical
+        group.alignment = .leading
+        group.spacing = 4
+        group.setAccessibilityElement(true)
+        group.setAccessibilityRole(.radioGroup)
+        group.setAccessibilityLabel("Fixture layout choice")
+        group.setAccessibilityIdentifier("relay.fixture.radios")
+        return group
+    }
+
+    private func makeChoiceTable() -> NSScrollView {
+        if environment["RELAY_FIXTURE_ROW_DUPLICATE"] == "1" { rowLabels[2] = rowLabels[1] }
+        let table = NSTableView()
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("fixtureName"))
+        column.width = 480
+        table.addTableColumn(column)
+        table.headerView = nil
+        table.rowHeight = 28
+        table.allowsMultipleSelection = false
+        table.allowsEmptySelection = false
+        table.dataSource = self
+        table.delegate = self
+        table.target = self
+        table.action = #selector(clickRow)
+        table.doubleAction = #selector(activateRow)
+        table.setAccessibilityLabel("Fixture notes")
+        table.setAccessibilityIdentifier("relay.fixture.table")
+        choiceTable = table
+        table.reloadData()
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        rowSelectionCount = 0
+        let scroll = NSScrollView()
+        scroll.documentView = table
+        scroll.hasVerticalScroller = true
+        return scroll
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { rowLabels.count }
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let cell = NSTableCellView()
+        let label = NSTextField(labelWithString: rowLabels[row])
+        label.isEnabled = !(row == 1 && environment["RELAY_FIXTURE_ROW_DISABLED"] == "1")
+        label.translatesAutoresizingMaskIntoConstraints = false
+        cell.textField = label
+        cell.addSubview(label)
+        NSLayoutConstraint.activate([label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+            label.centerYAnchor.constraint(equalTo: cell.centerYAnchor)])
+        return cell
+    }
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let view = NSTableRowView()
+        view.setAccessibilityIdentifier("relay.fixture.row.\(row)")
+        view.setAccessibilityEnabled(!(row == 1 && environment["RELAY_FIXTURE_ROW_DISABLED"] == "1"))
+        return view
+    }
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        !(row == 1 && environment["RELAY_FIXTURE_ROW_DISABLED"] == "1")
+    }
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        guard !revertingSelection else { return }
+        rowSelectionCount += 1
+        if environment["RELAY_FIXTURE_ROW_REVERT"] == "1", choiceTable?.selectedRow != 0 {
+            revertingSelection = true
+            choiceTable?.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+            revertingSelection = false
+        }
+        writeOracle()
+    }
+    @objc private func selectRadio(_ sender: NSButton) {
+        radioPressCount += 1
+        let selection = environment["RELAY_FIXTURE_CHOICE_REVERT"] == "1" ? 0 : sender.tag
+        for button in radioButtons { button.state = button.tag == selection ? .on : .off }
+        writeOracle()
+    }
+    @objc private func clickRow() { rowClickCount += 1; writeOracle() }
+    @objc private func activateRow() { rowActivationCount += 1; writeOracle() }
+    @objc private func changeChoiceLabels() {
+        radioButtons[1].title = "Changed radio label"
+        rowLabels[1] = "Changed row content"
+        choiceTable?.reloadData()
+        writeOracle()
+    }
+
     @objc private func applyInput() {
         clickCount += 1
         result.stringValue = input.stringValue
+        writeOracle()
+    }
+
+    @objc private func changeCheckbox() {
+        checkboxPressCount += 1
+        if environment["RELAY_FIXTURE_BINARY_REVERT"] == "1" { checkbox?.state = .off }
+        writeOracle()
+    }
+
+    @objc private func changeDisclosure() {
+        disclosurePressCount += 1
         writeOracle()
     }
 
@@ -209,7 +357,13 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         let state = OracleState(input: input.stringValue, result: result.stringValue,
                                 clickCount: clickCount, launchToken: launchToken, draft: draft,
                                 secondaryInput: secondaryInput?.string, focusedWindow: NSApplication.shared.keyWindow?.title,
-                                secondaryScrollOffset: secondaryScroll.map { $0.contentView.bounds.minY }, delivery: delivery?.titleOfSelectedItem)
+                                secondaryScrollOffset: secondaryScroll.map { $0.contentView.bounds.minY }, delivery: delivery?.titleOfSelectedItem,
+                                checkboxValue: checkbox.map { $0.state.rawValue }, checkboxPressCount: checkboxPressCount,
+                                disclosureValue: disclosure.map { $0.state.rawValue }, disclosurePressCount: disclosurePressCount,
+                                radioSelection: radioButtons.first(where: { $0.state == .on })?.tag, radioPressCount: radioPressCount,
+                                selectedRow: choiceTable?.selectedRow, rowSelectionCount: rowSelectionCount,
+                                rowActivationCount: rowActivationCount, rowClickCount: rowClickCount,
+                                rowLabels: choiceTable == nil ? nil : rowLabels)
         if state == lastOracleState { return }
         do {
             let data = try JSONEncoder().encode(state)
@@ -238,6 +392,17 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         let focusedWindow: String?
         let secondaryScrollOffset: Double?
         let delivery: String?
+        let checkboxValue: Int?
+        let checkboxPressCount: Int
+        let disclosureValue: Int?
+        let disclosurePressCount: Int
+        let radioSelection: Int?
+        let radioPressCount: Int
+        let selectedRow: Int?
+        let rowSelectionCount: Int
+        let rowActivationCount: Int
+        let rowClickCount: Int
+        let rowLabels: [String]?
     }
 }
 

@@ -167,6 +167,71 @@ struct MultiAgentOrchestrationTests {
         #expect(!store.isRunning)
     }
 
+    @Test("Multi-agent Executor rejects a stale control batch before its first write")
+    func executorBatchPreflightIsAtomicBeforeAnyDesktopEffect() async {
+        var dispatched: [String] = [], roles: [String] = []
+        let store = AssistantStore(persistenceURL: nil, complete: { messages, _, _ in
+            let system = messages.first?.content ?? ""
+            if system.contains("ROLE: Planner") {
+                roles.append("planner")
+                return ModelReply(content: """
+                {"taskType":"automation","steps":[{"id":"only","role":"Executor","title":"Change one inert field"}]}
+                """, toolCalls: [])
+            }
+            roles.append("executor")
+            #expect(system.contains("ROLE: Executor"))
+            return ModelReply(content: "", toolCalls: [
+                ToolCall(name: "set_value", arguments: ["bundle_id": .string("test.inert.app"),
+                    "element_id": .string("original-input"), "value": .string("Exact Café 🌍")]),
+                ToolCall(name: "press_control", arguments: ["bundle_id": .string("test.inert.app"),
+                    "element_id": .string("original-apply")])
+            ])
+        }, execute: { call in
+            dispatched.append(call.name)
+            Issue.record("The invalid Executor batch reached dispatch.")
+            return ToolResult(summary: "Unexpected effect", evidence: "Synthetic executor", verified: true)
+        }, multiAgent: true)
+        store.draft = "Change only the inert field, then inspect its result."
+        store.send()
+        await settle(store)
+        #expect(dispatched.isEmpty && roles == ["planner", "executor"])
+        #expect(store.pendingReview == nil && store.phase == .failed)
+        #expect(store.errorMessage?.contains("No action from that reply was dispatched") == true)
+        store.stop()
+    }
+
+    @Test("Multi-agent Navigator cannot reuse a scoped reference after an earlier observation")
+    func navigatorBatchPreflightRejectsStaleScopeBeforeAnyInspection() async {
+        var dispatched: [String] = [], roles: [String] = []
+        let store = AssistantStore(persistenceURL: nil, complete: { messages, _, _ in
+            let system = messages.first?.content ?? ""
+            if system.contains("ROLE: Planner") {
+                roles.append("planner")
+                return ModelReply(content: """
+                {"taskType":"automation","steps":[{"id":"only","role":"Navigator","title":"Inspect one inert window"}]}
+                """, toolCalls: [])
+            }
+            roles.append("navigator")
+            #expect(system.contains("ROLE: Navigator"))
+            return ModelReply(content: "", toolCalls: [
+                ToolCall(name: "observe_app", arguments: ["bundle_id": .string("test.inert.app")]),
+                ToolCall(name: "observe_app", arguments: ["bundle_id": .string("test.inert.app"),
+                    "window_id": .string("already-expired-window")])
+            ])
+        }, execute: { call in
+            dispatched.append(call.name)
+            Issue.record("The invalid Navigator batch reached source inspection.")
+            return ToolResult(summary: "Unexpected source", evidence: "Synthetic executor", verified: true)
+        }, multiAgent: true)
+        store.draft = "Inspect only the selected inert window."
+        store.send()
+        await settle(store)
+        #expect(dispatched.isEmpty && roles == ["planner", "navigator"])
+        #expect(store.pendingReview == nil && store.phase == .failed)
+        #expect(store.errorMessage?.contains("No action from that reply was dispatched") == true)
+        store.stop()
+    }
+
     @Test("End-to-end multi-agent execution: Planner -> Navigator -> Executor -> Critic -> Synthesis")
     func endToEndMultiAgentHappyPath() async throws {
         var turns = 0

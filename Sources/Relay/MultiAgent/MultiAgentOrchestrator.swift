@@ -368,6 +368,7 @@ final class MultiAgentOrchestrator {
 
     private func validate(_ calls: [ToolCall], against tools: [ToolDefinition]) throws {
         for call in calls { try ToolPolicy.validate(call, against: tools) }
+        try DesktopActionBatch.validate(calls)
     }
 
     private func dispatch(_ call: ToolCall) async throws -> ToolResult {

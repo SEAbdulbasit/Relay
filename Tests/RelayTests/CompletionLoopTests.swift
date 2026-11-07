@@ -5,6 +5,80 @@ import Testing
 /// Deterministic executor tests: model replies are scripted, and no real app is controlled.
 @MainActor
 struct CompletionLoopTests {
+    @Test func aTruthfulPartialAnswerAfterAVerifiedEffectRechecksTheWholeRequest() async {
+        var turns = 0, dispatched: [String] = []
+        var sawCheckedFirstEffect = false
+        let store = AssistantStore(persistenceURL: nil, complete: { input, _, _ in
+            turns += 1
+            switch turns {
+            case 1:
+                return ModelReply(content: "", toolCalls: [ToolCall(name: "open_app", arguments: ["app": .string("test.synthetic.first")])])
+            case 2:
+                return ModelReply(content: "The first synthetic application is open.", toolCalls: [])
+            case 3:
+                #expect(input.last?.content.contains("ENTIRE current request") == true)
+                #expect(input.last?.content.contains("Open both synthetic applications once") == true)
+                #expect(input.last?.content.contains("Never repeat a completed effect") == true)
+                sawCheckedFirstEffect = input.contains { $0.role == "tool" && $0.content.contains("Independent first process oracle") }
+                return ModelReply(content: "", toolCalls: [ToolCall(name: "open_app", arguments: ["app": .string("test.synthetic.second")])])
+            default: return ModelReply(content: "Both synthetic applications are open.", toolCalls: [])
+            }
+        }, execute: { call in
+            let app = call.arguments["app"]?.string ?? ""
+            dispatched.append(app)
+            return ToolResult(summary: "Opened \(app)", evidence: app.hasSuffix("first")
+                ? "Independent first process oracle" : "Independent second process oracle", verified: true)
+        })
+        defer { store.stop() }
+        store.draft = "Open both synthetic applications once: test.synthetic.first and test.synthetic.second."
+        store.send()
+        await settle(store)
+        #expect(turns == 4 && sawCheckedFirstEffect)
+        #expect(dispatched == ["test.synthetic.first", "test.synthetic.second"])
+        #expect(store.phase == .idle && store.errorMessage == nil)
+        #expect(store.activity.filter { $0.name == "Checking requested outcome" }.count == 1)
+    }
+
+    @Test func completedEffectAuditIsBoundedAndNeverInventsAnAction() async {
+        var turns = 0, dispatches = 0
+        let store = AssistantStore(persistenceURL: nil, complete: { _, _, _ in
+            turns += 1
+            return turns == 1
+                ? ModelReply(content: "", toolCalls: [ToolCall(name: "open_app", arguments: ["app": .string("test.synthetic.first")])])
+                : ModelReply(content: "The first synthetic application is open.", toolCalls: [])
+        }, execute: { _ in
+            dispatches += 1
+            return ToolResult(summary: "First app opened", evidence: "Synthetic checked process", verified: true)
+        })
+        defer { store.stop() }
+        store.draft = "Open the first and second synthetic applications."
+        store.send()
+        await settle(store)
+        #expect(turns == 3 && dispatches == 1 && !store.isRunning)
+        #expect(store.activity.filter { $0.name == "Checking requested outcome" }.count == 1)
+        #expect(store.phase != .completed)
+    }
+
+    @Test func stopDuringCompletedEffectAuditBlocksTheReturnedMutation() async {
+        var turns = 0, dispatches = 0
+        var store: AssistantStore!
+        store = AssistantStore(persistenceURL: nil, complete: { _, _, _ in
+            turns += 1
+            if turns == 1 { return ModelReply(content: "", toolCalls: [ToolCall(name: "open_app", arguments: ["app": .string("test.synthetic.first")])]) }
+            if turns == 2 { return ModelReply(content: "The first synthetic application is open.", toolCalls: []) }
+            store.stop()
+            return ModelReply(content: "", toolCalls: [ToolCall(name: "open_app", arguments: ["app": .string("test.synthetic.second")])])
+        }, execute: { _ in
+            dispatches += 1
+            return ToolResult(summary: "First app opened", evidence: "Synthetic checked process", verified: true)
+        })
+        store.draft = "Open both synthetic applications once."
+        store.send()
+        await settle(store)
+        #expect(turns == 3 && dispatches == 1 && store.phase == .stopped)
+        #expect(store.pendingReview == nil)
+    }
+
     @Test func discoveryDoesNotEndAnAlreadyAuthorizedOpenRequest() async {
         var turns = 0
         var dispatched: [String] = []

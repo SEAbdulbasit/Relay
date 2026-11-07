@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Relay Comprehensive 4-Tier E2E Test Suite Runner
-Executes Tier 1 (Feature Coverage), Tier 2 (Boundary & Corner Cases),
-Tier 3 (Cross-Feature Combinations), and Tier 4 (Real-World Scenarios).
+Relay repository scenario checks.
+These tiers inspect source, assets and fixtures; they do not drive the native
+product end to end. Live desktop/model acceptance is in opt-in Swift tests.
 """
 
 import sys
@@ -71,7 +71,7 @@ def run_tier(tier_name: str, tier_dir: Path, pattern: str = "test_*.py", verbose
     return total, passed, failed, errors, duration
 
 def main():
-    parser = argparse.ArgumentParser(description="Relay E2E Test Suite Runner")
+    parser = argparse.ArgumentParser(description="Relay repository scenario checks")
     parser.add_argument("--tier", type=str, choices=["1", "2", "3", "4", "all"], default="all",
                         help="Specify tier to run (1, 2, 3, 4, or all)")
     parser.add_argument("--feature", type=str, default=None,
@@ -101,7 +101,8 @@ def main():
         selected_tiers = {"Tier 4: Real-World Application Scenarios": tiers["Tier 4: Real-World Application Scenarios"]}
 
     print(f"\n{BOLD}{CYAN}========================================================================{RESET}")
-    print(f"{BOLD}{CYAN}             RELAY OPAQUE-BOX E2E TEST SUITE RUNNER                     {RESET}")
+    print(f"{BOLD}{CYAN}                   RELAY REPOSITORY SCENARIO CHECKS                     {RESET}")
+    print("Source and fixture checks; this is not native product E2E qualification.")
     print(f"{BOLD}{CYAN}========================================================================{RESET}\n")
 
     summary_rows = []
@@ -124,7 +125,7 @@ def main():
 
     # Print structured report
     print(f"{BOLD}{CYAN}------------------------------------------------------------------------{RESET}")
-    print(f"{BOLD}                        E2E TEST EXECUTION SUMMARY                      {RESET}")
+    print(f"{BOLD}                       REPOSITORY CHECK SUMMARY                        {RESET}")
     print(f"{BOLD}{CYAN}------------------------------------------------------------------------{RESET}")
     print(f"{'Tier / Suite':<45} | {'Total':<6} | {'Passed':<6} | {'Failed':<6} | {'Time (s)':<8}")
     print("-" * 79)
@@ -137,7 +138,7 @@ def main():
     print(f"{BOLD}{CYAN}========================================================================{RESET}\n")
 
     if grand_failed == 0 and grand_errors == 0:
-        print(f"{BOLD}{GREEN}✓ ALL {grand_total} E2E TESTS PASSED SUCCESSFULLY!{RESET}\n")
+        print(f"{BOLD}{GREEN}✓ ALL {grand_total} REPOSITORY CHECKS PASSED!{RESET}\n")
         return 0
     else:
         print(f"{BOLD}{RED}✗ TEST RUN FAILED with {grand_failed} failures and {grand_errors} errors.{RESET}\n")

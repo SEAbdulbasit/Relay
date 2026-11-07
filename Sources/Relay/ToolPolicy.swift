@@ -88,10 +88,22 @@ enum ToolPolicy {
 /// Complete semantic inputs used by a pending AX button review. Values are not logged;
 /// only the digest is retained in the one-use authorization ticket.
 nonisolated struct AXReviewField: Codable, Sendable, Equatable {
+    enum AvailabilityEvidence: String, Codable, Sendable {
+        case writableNativeTextArea
+    }
     var identity: String
     var label: String
     var value: String
-    var enabled: Bool
+    var enabled: Bool?
+    var availabilityEvidence: AvailabilityEvidence? = nil
+
+    var availabilityDescription: String {
+        if let enabled { return "enabled=\(enabled)" }
+        if availabilityEvidence == .writableNativeTextArea {
+            return "AXEnabled not reported; text value, focus and selection are writable"
+        }
+        return "AXEnabled not reported"
+    }
 }
 
 nonisolated struct AXReviewContext: Codable, Sendable, Equatable {

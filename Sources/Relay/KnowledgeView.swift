@@ -17,6 +17,7 @@ struct KnowledgeView: View {
     @State private var showNewFolder = false
     @State private var newFolderName = ""
     @State private var noteEditor: VaultNoteEditor.Request?
+    @State private var consolidationEntity: CrossSourceKnowledge.Entity?
     @State private var vaultStatus: String?
     @State private var vaultLoadError: String?
     @State private var vaultFilter = ""
@@ -92,6 +93,20 @@ struct KnowledgeView: View {
                 fullGalaxyMode = false
                 skyModel.highlight(saved.graphURL)
             }
+        }
+        .sheet(item: $consolidationEntity) { entity in
+            ConsolidationReviewView(entity: entity, vault: store.generatedKnowledge,
+                records: { store.knowledge.records },
+                isCurrent: { store.knowledge.revalidate($0, grants: store.grants) },
+                authorizationScopeIDs: store.grants.map(\.id),
+                isAuthorized: { $0.isAuthorized(grants: store.grants) },
+                canGenerate: { !store.isRunning && !store.voice.isBusy && !store.knowledge.isIndexing && store.actionsReady },
+                generate: { await store.consolidateKnowledge(entityURL: entity.id, expectedSourcePaths: entity.sourcePaths) }) { saved in
+                    reloadVaultNotes()
+                    selectedNodeURL = saved.graphURL
+                    fullGalaxyMode = false
+                    skyModel.highlight(saved.graphURL)
+                }
         }
         .alert("New folder", isPresented: $showNewFolder) {
             TextField("Folder name", text: $newFolderName)
@@ -355,7 +370,13 @@ struct KnowledgeView: View {
                             .accessibilityIdentifier(relationshipKind.map { "knowledge.linked.\($0.rawValue)" } ?? "knowledge.readerTitle")
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    if let generated {
+                    if relationshipKind != nil,
+                       let entity = CrossSourceKnowledge.entities(in: store.knowledge.records).first(where: { $0.id == node.url }),
+                       (2...CrossSourceKnowledge.maximumSources).contains(entity.sourcePaths.count) {
+                        Button("Source brief…") { consolidationEntity = entity }
+                            .disabled(store.isRunning || store.voice.isBusy || !store.actionsReady)
+                            .accessibilityIdentifier("knowledge.consolidateEntity")
+                    } else if let generated {
                         Button("Make editable copy…") { copyGeneratedNote(generated) }
                             .accessibilityIdentifier("knowledge.copyGeneratedNote")
                     } else if let note = vaultNotes.first(where: { $0.graphURL == node.url }) {
@@ -593,7 +614,7 @@ struct KnowledgeView: View {
                     Spacer()
                     RelayMonoCaps(text: "LOCAL INDEX", color: RelayColors.accentEmerald, size: 10)
                 }
-                Text("Indexes Markdown, text, CSV, JSON, PDF, and .eml mail exports locally (up to 200 files / 10 MB). Choose a WhatsApp text export directly to include recent messages with names and times.")
+                Text("Ordinary files: up to 200 files / 10 MB. A selected SiYuan workspace: up to 1,000 documents, 32 MB of source data and 16 MB of extracted text. Assets and query embeds are omitted. Choose a WhatsApp text export directly to include names and times.")
                     .font(.system(size: 13))
                     .foregroundStyle(RelayTheme.muted)
                     .lineSpacing(3)

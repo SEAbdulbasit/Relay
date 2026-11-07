@@ -150,8 +150,8 @@ struct CodexWorkspaceTests {
         await settle(store)
 
         #expect(dispatched == [action])
-        #expect(received.count == 2)
-        let result = try #require(received.last?.last)
+        #expect(received.count == (calculation ? 2 : 3))
+        let result = try #require(received.dropFirst().first?.last)
         #expect(result.role == "tool")
         #expect(result.toolCallID == action.id)
         #expect(result.toolName == action.name)
@@ -160,6 +160,8 @@ struct CodexWorkspaceTests {
         } else {
             #expect(result.content.contains("Relay verified"))
             #expect(!result.content.contains(localDetail))
+            #expect(!received.flatMap { $0 }.contains { $0.content.contains(localDetail) })
+            #expect(received.last?.last?.content.contains("ENTIRE current request") == true)
             #expect(store.messages.last?.text.contains(localDetail) == true)
         }
         #expect(store.activity.contains { $0.name == tool && $0.status == "verified" })

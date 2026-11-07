@@ -25,9 +25,12 @@ class TestB12ProcessAndExitSignals(RelayE2ETestBase):
         self.assertIn('export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"', self.build_content)
 
     def test_b12_03_app_handles_will_terminate_notification(self):
-        """Verifies MainView stops tasks on application termination."""
-        self.assertIn("willTerminateNotification", self.main_content)
-        self.assertIn("store.stop()", self.main_content)
+        """Checks app-owned termination registration independent of workspace views."""
+        lifetime = (self.sources_relay / "AssistantApplicationLifetime.swift").read_text(encoding="utf-8")
+        store = (self.sources_relay / "AssistantStore.swift").read_text(encoding="utf-8")
+        self.assertIn("willTerminateNotification", lifetime)
+        self.assertIn("applicationLifetime = AssistantApplicationLifetime", store)
+        self.assertIn("self?.stopForTermination()", store)
 
     def test_b12_04_download_script_checks_sha256(self):
         """Verifies download-gemma.py checks SHA-256 checksum."""

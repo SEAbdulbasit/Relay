@@ -80,7 +80,7 @@ final class KnowledgeSearchCoordinator {
         let grants = currentGrants()
         let constraint = callGrants ?? grants
         let lexical = knowledge.search(query: query, grants: grants).filter { (try? ToolPolicy.scopedURL($0.sourcePath, grants: constraint)) != nil }
-        let sourceStamp = Dictionary(uniqueKeysWithValues: knowledge.records.map { ($0.sourcePath, $0.contentHash) })
+        let sourceStamp = Dictionary(uniqueKeysWithValues: knowledge.records.map { ($0.sourcePath, $0.evidenceFingerprint) })
         if sourceStamp != knownSources { invalidateSources(); knownSources = sourceStamp }
         let expected = sourceGeneration
         guard state == .ready, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return lexical }
@@ -98,7 +98,7 @@ final class KnowledgeSearchCoordinator {
         // the index and obtain grants again before either excerpts or paths are returned.
         let currentLexical = knowledge.search(query: query, grants: currentGrants()).filter { (try? ToolPolicy.scopedURL($0.sourcePath, grants: constraint)) != nil }
         let current = Dictionary(uniqueKeysWithValues: knowledge.records.map { ($0.sourcePath, $0) })
-        let currentStamp = current.mapValues(\.contentHash)
+        let currentStamp = current.mapValues(\.evidenceFingerprint)
         guard currentStamp == sourceStamp else {
             invalidateSources(); knownSources = currentStamp
             throw RelayError.message("Selected sources changed while searching. Search again with the current sources; no old passages were returned.")
@@ -113,7 +113,7 @@ final class KnowledgeSearchCoordinator {
             if seen.insert(result.sourcePath).inserted { combined.append(result) }
         }
         for hit in response.hits where hit.score > 0 {
-            guard let record = current[hit.sourcePath], record.contentHash == hit.sourceContentHash,
+            guard let record = current[hit.sourcePath], record.evidenceFingerprint == hit.sourceContentHash,
                   (try? ToolPolicy.scopedURL(hit.sourcePath, grants: constraint)) != nil,
                   seen.insert(hit.sourcePath).inserted else { continue }
             combined.append(.init(sourcePath: hit.sourcePath, title: record.title, excerpt: hit.chunk,

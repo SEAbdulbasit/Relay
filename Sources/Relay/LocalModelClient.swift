@@ -229,9 +229,8 @@ final class LocalModelClient {
         }
         // Thought/reasoning channels are intentionally not exposed to UI or persisted.
         let text = message.toString
-        guard text.utf8.count <= 128 * 1_024, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !calls.isEmpty else {
-            throw RelayError.message("Gemma returned an empty or oversized response. Check the selected package's tool-use support.")
-        }
+        guard text.utf8.count <= 128 * 1_024 else { throw RelayError.message("Gemma returned an oversized response. Check the selected package's tool-use support.") }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !calls.isEmpty else { throw ModelProtocolError.emptyResponse }
         return ModelReply(content: text, toolCalls: calls)
     }
 

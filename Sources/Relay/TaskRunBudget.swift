@@ -1,33 +1,36 @@
 import Foundation
 
-/// Monotonic run accounting. Human review consumes lifetime, never active work.
-/// Main-actor confinement makes pause/resume atomic with review presentation.
+/// Optional monotonic task limits. Ordinary tasks run until completion or Stop;
+/// individual model and tool calls retain their own deadlines. A caller may impose
+/// an explicit task limit, excluding human review from active work.
 @MainActor final class TaskRunBudget {
     enum Limit: Error, Equatable, LocalizedError {
         case activeWork, lifetime
         var errorDescription: String? {
             switch self {
-            case .activeWork: "The task reached its four-minute active-work budget. Review waiting does not count. Verified work is preserved; continue explicitly."
-            case .lifetime: "This task exceeded its 30-minute lifetime, including review waiting. Nothing further will be dispatched; inspect completed work before continuing."
+            case .activeWork: "The task reached its configured active-work limit. Review waiting does not count. Verified work is preserved."
+            case .lifetime: "The task reached its configured lifetime, including review waiting. Verified work is preserved."
             }
         }
     }
     private let now: () -> TimeInterval
     private let started: TimeInterval
-    private let activeLimit: TimeInterval
-    private let lifetimeLimit: TimeInterval
+    private let activeLimit: TimeInterval?
+    private let lifetimeLimit: TimeInterval?
     private var pausedAt: TimeInterval?
     private var pausedDuration: TimeInterval = 0
 
-    init(activeLimit: TimeInterval = 240, lifetimeLimit: TimeInterval = 1800,
+    init(activeLimit: TimeInterval? = nil, lifetimeLimit: TimeInterval? = nil,
          now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.now = now
         self.started = now()
-        self.activeLimit = max(0, activeLimit)
-        self.lifetimeLimit = max(0, lifetimeLimit)
+        self.activeLimit = activeLimit.map { $0.isFinite ? max(0, $0) : 0 }
+        self.lifetimeLimit = lifetimeLimit.map { $0.isFinite ? max(0, $0) : 0 }
     }
 
-    var remainingLifetime: TimeInterval { max(0, lifetimeLimit - max(0, now() - started)) }
+    var remainingLifetime: TimeInterval? {
+        lifetimeLimit.map { max(0, $0 - max(0, now() - started)) }
+    }
 
     func pauseForReview() { if pausedAt == nil { pausedAt = now() } }
     func resumeAfterReview() {
@@ -38,8 +41,8 @@ import Foundation
         try Task.checkCancellation()
         let instant = now()
         let lifetime = max(0, instant - started)
-        if lifetime >= lifetimeLimit { throw Limit.lifetime }
+        if let lifetimeLimit, lifetime >= lifetimeLimit { throw Limit.lifetime }
         let reviewTime = pausedAt.map { max(0, instant - $0) } ?? 0
-        if lifetime - pausedDuration - reviewTime >= activeLimit { throw Limit.activeWork }
+        if let activeLimit, lifetime - pausedDuration - reviewTime >= activeLimit { throw Limit.activeWork }
     }
 }

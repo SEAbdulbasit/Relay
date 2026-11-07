@@ -156,10 +156,6 @@ struct MainView: View {
                 store.showActivity = false
             }
         }
-        .onDisappear {
-            if !store.preparation.isPreparing { store.stop(cancelScheduledPreparation: false) }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in store.stopForTermination() }
         .task {
             await store.preparation.waitForCurrentPreparation()
             guard !Task.isCancelled, !store.workspaceActionsReady else { return }

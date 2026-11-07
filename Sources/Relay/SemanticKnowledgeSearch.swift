@@ -238,7 +238,7 @@ actor SemanticKnowledgeSearch {
         for record in records.prefix(maximumSources) {
             guard record.sourcePath.hasPrefix("/"), record.sourcePath.utf8.count <= 4_096, !record.sourcePath.contains("\0"),
                   record.sourcePath.split(separator: "/", omittingEmptySubsequences: false).dropFirst().allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
-                  !record.contentHash.isEmpty, record.contentHash.utf8.count <= 128, !record.contentHash.contains("\0"),
+                  !record.evidenceFingerprint.isEmpty, record.evidenceFingerprint.utf8.count <= 128, !record.evidenceFingerprint.contains("\0"),
                   record.text.utf8.count <= 65_536, paths.insert(record.sourcePath).inserted else { partial = true; continue }
             var cursor = record.text.startIndex
             var chunks: [Chunk] = []
@@ -257,7 +257,7 @@ actor SemanticKnowledgeSearch {
                 let text = String(record.text[cursor..<end])
                 if text.contains("\0") { partial = true }
                 else if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    chunks.append(Chunk(path: record.sourcePath, hash: record.contentHash, index: segment, text: text, coverageNote: record.coverageNote))
+                    chunks.append(Chunk(path: record.sourcePath, hash: record.evidenceFingerprint, index: segment, text: text, coverageNote: record.coverageNote))
                 }
                 cursor = end; segment += 1
             }

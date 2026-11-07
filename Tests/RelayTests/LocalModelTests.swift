@@ -87,6 +87,13 @@ struct LocalModelTests {
         #expect(reply.toolCalls.isEmpty)
     }
 
+    @Test func emptyVisibleReplyIsCorrectableButOversizedReplyRemainsAHardError() {
+        let empty = LiteRTLM.Message(" \n", role: .model, channels: ["analysis": "Hidden reasoning is not an answer."])
+        #expect(throws: ModelProtocolError.self) { try LocalModelClient.parseReply(empty, availableTools: []) }
+        let oversized = LiteRTLM.Message(String(repeating: "x", count: 128 * 1_024 + 1), role: .model)
+        #expect(throws: RelayError.self) { try LocalModelClient.parseReply(oversized, availableTools: []) }
+    }
+
     @Test func refusesEmptyAndOversizedContextWithoutDiscardingMessages() {
         #expect(throws: (any Error).self) { try LocalModelClient.prepareContext(messages: [], tools: []) }
         let oversized = ModelMessage(role: "user", content: String(repeating: "x", count: LocalModelClient.maximumContextBytes + 1))
@@ -316,7 +323,7 @@ struct GemmaProductionPromptIntegrationTests {
             }
             guard call.name == "open_app", let app = call.arguments["app"]?.string,
                   ["Calculator", "com.apple.calculator"].contains(app) else {
-                throw RelayError.message("Unexpected test action; no computer actions are executed by this test.")
+                throw RelayError.message("Unexpected synthetic test action \(call.name); no computer actions are executed by this test.")
             }
             return ToolResult(summary: "Calculator launch simulated", evidence: "Synthetic executor oracle only; no app was launched", verified: true)
         })
@@ -325,7 +332,7 @@ struct GemmaProductionPromptIntegrationTests {
         store.send()
         for _ in 0..<1800 where store.isRunning { try await Task.sleep(for: .milliseconds(100)) }
         if store.isRunning { store.stop() }
-        #expect(store.errorMessage == nil)
+        #expect(store.errorMessage == nil, Comment(rawValue: store.errorMessage ?? "No Store error"))
         #expect(dispatched.contains("open_app"))
         #expect(store.messages.last?.text.contains("Synthetic executor oracle") == true)
     }

@@ -148,8 +148,8 @@ final class ProactiveSuggestions {
         var limited = records.count > 100
         for record in records.prefix(100).sorted(by: { $0.sourcePath < $1.sourcePath }) {
             guard Self.validSource(record), totalScannedBytes < 524_288 else { limited = true; continue }
-            let canCompareCopies = Self.validDigest(record.contentHash)
-            let identityPrefix = canCompareCopies ? "copy\0" + record.contentHash : Self.sourceKey(path: record.sourcePath, hash: record.contentHash)
+            let canCompareCopies = Self.validDigest(record.evidenceFingerprint)
+            let identityPrefix = canCompareCopies ? "copy\0" + record.evidenceFingerprint : Self.sourceKey(path: record.sourcePath, hash: record.evidenceFingerprint)
             let allowance = min(32_768, 524_288 - totalScannedBytes)
             let text = Self.prefix(record.text, bytes: allowance)
             totalScannedBytes += text.utf8.count
@@ -167,7 +167,7 @@ final class ProactiveSuggestions {
                 } else {
                     groupOffsets[key] = groups.count
                     groups.append(BriefCandidate(paths: [record.sourcePath], line: line, action: action,
-                                                 contentHash: record.contentHash, dueDay: Self.explicitDueDay(in: action),
+                                                 contentHash: record.evidenceFingerprint, dueDay: Self.explicitDueDay(in: action),
                                                  copyEvidence: canCompareCopies ? key : nil))
                 }
             }
@@ -279,7 +279,7 @@ final class ProactiveSuggestions {
     func purge(records: [KnowledgeRecord], now: Date = Date()) {
         guard Self.validDate(now) else { errorMessage = "The current date is invalid; freshness was not checked."; return }
         let changedSnoozes = pruneSnoozes(records: records, now: now)
-        let current = Set(records.prefix(200).filter(Self.validSource).map { Self.sourceKey(path: $0.sourcePath, hash: $0.contentHash) })
+        let current = Set(records.prefix(1_200).filter(Self.validSource).map { Self.sourceKey(path: $0.sourcePath, hash: $0.evidenceFingerprint) })
         let before = suggestions.count
         suggestions = suggestions.compactMap { suggestion in
             let age = now.timeIntervalSince(suggestion.createdAt)
@@ -337,9 +337,9 @@ final class ProactiveSuggestions {
     }
 
     private func pruneSnoozes(records: [KnowledgeRecord], now: Date) -> Bool {
-        let validRecords = records.prefix(200).filter(Self.validSource)
-        let current = Set(validRecords.map { Self.sourceFingerprint(path: $0.sourcePath, hash: $0.contentHash) })
-        let currentHashes = Set(validRecords.map(\.contentHash))
+        let validRecords = records.prefix(1_200).filter(Self.validSource)
+        let current = Set(validRecords.map { Self.sourceFingerprint(path: $0.sourcePath, hash: $0.evidenceFingerprint) })
+        let currentHashes = Set(validRecords.map(\.evidenceFingerprint))
         let before = snoozes.count
         let dismissed = Set(dismissedIDs)
         snoozes.removeAll { snooze in
@@ -380,7 +380,7 @@ final class ProactiveSuggestions {
     nonisolated private static func validSource(_ record: KnowledgeRecord) -> Bool {
         record.sourcePath.hasPrefix("/") && !record.sourcePath.contains("\0") && record.sourcePath.utf8.count <= 4_096 &&
             record.sourcePath.split(separator: "/", omittingEmptySubsequences: false).dropFirst().allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) &&
-            !record.contentHash.isEmpty && record.contentHash.utf8.count <= 128
+            !record.evidenceFingerprint.isEmpty && record.evidenceFingerprint.utf8.count <= 128
     }
     nonisolated private static func sourceKey(path: String, hash: String) -> String { path + "\0" + hash }
     nonisolated private static func identifier(path: String, hash: String, line: String) -> String {

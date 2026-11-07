@@ -560,6 +560,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 24) {
             sectionTitle("Sidekick", detail: "Choose how to open Sidekick and draft replies from another app.")
             focusedDraftSettings
+            QuickTextActionShortcutsView(shortcuts: store.textActionShortcuts)
             sidekickInstructionsSettings
             quickAccessSettings
         }
@@ -583,7 +584,7 @@ struct SettingsView: View {
                         .disabled(shortcuts.isBusy || store.voice.isBusy)
                     }
                     Divider()
-                    sidekickToggle("Open Sidekick from the notch", detail: "On displays without a notch, open it from the top edge.",
+                    sidekickToggle("Open Sidekick on every display", detail: "Use the camera notch or the top-edge handle on each display.",
                                    identifier: "settings.pinSidekick", value: Binding(
                                     get: { sidekick.pinnedToNotch }, set: { sidekick.setPinned($0) }))
                     Divider()
@@ -596,9 +597,14 @@ struct SettingsView: View {
                                    identifier: "settings.rightCommandSidekick", value: Binding(
                                     get: { shortcuts.sidekickEnabled }, set: { store.setRightCommandSidekickEnabled($0) }))
                     Divider()
-                    sidekickToggle("Hold to dictate", detail: shortcuts.holdForVoiceEnabled ? shortcuts.voiceHoldStatus : "Dictate on this Mac and review the transcript before sending.",
+                    sidekickToggle("Hold to dictate", detail: "Hold the shared key or a Sidekick handle. Release to review the on-device transcript.",
                                    identifier: "settings.sidekickHold", value: Binding(
                                     get: { shortcuts.holdForVoiceEnabled }, set: { sidekick.setHoldForVoiceEnabled($0) }))
+                    Divider()
+                    sidekickToggle("Release the handle to send", detail: "Send a final on-device transcript on release. Keyboard dictation, ChatGPT tasks, edits and interruptions stay for review.",
+                                   identifier: "settings.sidekickReleaseVoice", value: Binding(
+                                    get: { sidekick.releaseVoiceToSend }, set: { sidekick.setReleaseVoiceToSend($0) }))
+                        .disabled(!shortcuts.holdForVoiceEnabled)
                 }
                 .padding(.horizontal, 16)
                 .relayGlassCard(cornerRadius: RelayTheme.radius)
@@ -612,6 +618,8 @@ struct SettingsView: View {
                                    detail: "Put the caret at the end of a supported reply field, then tap \(shortcuts.shortcutKey.title) twice. Relay leaves the draft there for your review.",
                                    identifier: "settings.focusedDraft", value: Binding(
                                     get: { shortcuts.enabled }, set: { store.setFocusedDraftEnabled($0) }))
+                    Text("Uses the nearby conversation, approved style, and relevant passages from your indexed selected sources. Nothing is sent automatically.")
+                        .font(.relayCaption).foregroundStyle(RelayColors.textSecondary).padding(.bottom, 12)
                     if shortcuts.enabled {
                         Text(shortcuts.status)
                             .font(.relayCaption)

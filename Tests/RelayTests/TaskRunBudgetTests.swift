@@ -4,9 +4,70 @@ import Testing
 
 @Suite("Monotonic task run budgets")
 @MainActor struct TaskRunBudgetTests {
+    @Test func ordinaryTaskHasNoArtificialActiveOrReviewLifetimeCutoff() throws {
+        var time = 0.0
+        let budget = TaskRunBudget(now: { time })
+        time = 86_400
+        try budget.check()
+        budget.pauseForReview()
+        time += 86_400
+        try budget.check()
+        budget.resumeAfterReview()
+        time += 86_400
+        try budget.check()
+        #expect(budget.remainingLifetime == nil)
+    }
+
+    @Test func productiveTaskContinuesBeyondTwentyTurnsAndThirtyMinutes() async {
+        var time = 0.0, turns = 0, dispatched: [Int] = []
+        let store = AssistantStore(persistenceURL: nil, complete: { input, _, _ in
+            turns += 1
+            time += 120
+            #expect(input.contains { $0.role == "user" && $0.content.contains("all 24 synthetic checks") })
+            if turns > 24 { return ModelReply(content: "The 24 synthetic checks finished.", toolCalls: []) }
+            return ModelReply(content: "", toolCalls: [ToolCall(name: "calculate", arguments: ["expression": .string("\(turns)+0")])])
+        }, execute: { call in
+            let ordinal = Int(call.arguments["expression"]?.string?.split(separator: "+").first ?? "") ?? -1
+            dispatched.append(ordinal)
+            return ToolResult(summary: "Check \(ordinal)", evidence: "Synthetic executor receipt \(ordinal)", verified: true)
+        }, runBudgetFactory: { TaskRunBudget(now: { time }) })
+        defer { store.stop() }
+        store.draft = "Finish all 24 synthetic checks."
+        store.send()
+        for _ in 0..<20_000 where store.isRunning { await Task.yield() }
+        #expect(!store.isRunning && store.phase == .idle, Comment(rawValue: store.errorMessage ?? "Task did not finish"))
+        #expect(store.errorMessage == nil)
+        #expect(turns == 25 && dispatched == Array(1...24))
+        #expect(time > 1_800 && store.activity.filter { $0.name == "calculate" && $0.status == "verified" }.count == 24)
+    }
+
+    @Test func stopStillCancelsAProductiveTaskBeyondTwentyTurns() async {
+        var turns = 0, dispatched = 0
+        let store = AssistantStore(persistenceURL: nil, complete: { _, _, _ in
+            turns += 1
+            if turns > 24 {
+                while !Task.isCancelled { try await Task.sleep(for: .milliseconds(50)) }
+                throw CancellationError()
+            }
+            return ModelReply(content: "", toolCalls: [ToolCall(name: "calculate", arguments: ["expression": .string("\(turns)+0")])])
+        }, execute: { _ in
+            dispatched += 1
+            return ToolResult(summary: "Checked", evidence: "Synthetic executor only", verified: true)
+        })
+        defer { store.stop() }
+        store.draft = "Continue the synthetic checks until I stop."
+        store.send()
+        for _ in 0..<20_000 where turns < 25 && store.isRunning { await Task.yield() }
+        #expect(turns == 25 && dispatched == 24 && store.isRunning)
+        store.stop()
+        for _ in 0..<2_000 where store.isRunning { await Task.yield() }
+        #expect(!store.isRunning && store.phase == .stopped && store.pendingReview == nil)
+        #expect(dispatched == 24)
+    }
+
     @Test func longHumanReviewDoesNotConsumeActiveBudget() throws {
         var time = 100.0
-        let budget = TaskRunBudget(now: { time })
+        let budget = TaskRunBudget(activeLimit: 240, lifetimeLimit: 1800, now: { time })
         time += 200
         budget.pauseForReview()
         time += 900
@@ -20,7 +81,7 @@ import Testing
 
     @Test func hardLifetimeStillExpiresDuringReview() {
         var time = 0.0
-        let budget = TaskRunBudget(now: { time })
+        let budget = TaskRunBudget(lifetimeLimit: 1800, now: { time })
         budget.pauseForReview()
         time = 1800
         #expect(budget.remainingLifetime == 0)
@@ -82,7 +143,7 @@ import Testing
         }, execute: { _ in
             dispatches += 1
             return ToolResult(summary: "Fixture write", evidence: "Scripted result; no real overwrite", verified: true)
-        }, runBudgetFactory: { TaskRunBudget(now: { time }) })
+        }, runBudgetFactory: { TaskRunBudget(activeLimit: 240, lifetimeLimit: 1800, now: { time }) })
         store.grants = [ScopeGrant(path: folder.path, writable: true)]
         store.draft = "Replace budget-review.txt"
         store.send()

@@ -185,14 +185,14 @@ private struct RelayScrollControlTool: RelaySchemaTool {
 
 private struct RelayPressControlTool: RelaySchemaTool {
     static let name = "press_control"
-    static let description = "Use action=focus with a fresh window element_id from mode=windows to switch to that exact window and verify focus. Use click for a named button. Non-routine buttons require review. Send/Submit/Publish, destructive, financial and security controls remain manual. Observe after a press to verify the outcome."
+    static let description = "Use focus with a fresh window ID, click for a named button, or select with exact visible text for a supported dropdown, native radio choice or native table row. Row selection never presses or activates the row. Native checkboxes support check, uncheck and toggle; disclosure triangles support expand/collapse. Qualified state changes verify exact readback. Named changes require review. Sending, submission, publishing, destructive, financial, permission and security controls are unsupported. Observe after mutation."
     @ToolParam(description: "Observed bundle identifier")
     var bundle_id: String
     @ToolParam(description: "Fresh observed control ID or @snapshot:eN ref")
     var element_id: String
-    @ToolParam(description: "Optional: click, focus for a window, or select/toggle/check/uncheck/expand/collapse for a supported @ref")
+    @ToolParam(description: "Optional: click, focus, select, toggle, check, uncheck, expand, or collapse")
     var action: String = "click"
-    @ToolParam(description: "Required for select: exact visible option text; omit for other actions")
+    @ToolParam(description: "Required for select: exact visible option/radio title or observed AXRow description; omit for other actions")
     var value: String = ""
     init() {}
 }

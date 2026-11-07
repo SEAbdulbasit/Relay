@@ -5,8 +5,9 @@ from e2e_tests.common.test_base import RelayE2ETestBase
 class TestB10ExtremePayloadsAndRepetition(RelayE2ETestBase):
     """
     Boundary B10: Extreme Payloads & Action Repetition Guards
-    Verifies that tool call repetitions are limited to <= 3,
-    oversized payloads (>64KB) are blocked, and memory limits are protected.
+    Repository checks for scoped recovery, bounded arguments and model memory.
+    Actual recovery and long-task behavior is exercised by TaskRecoveryBudgetTests,
+    TaskRecoveryStoreTests and TaskRunBudgetTests in the Swift suite.
     """
 
     def setUp(self):
@@ -15,10 +16,14 @@ class TestB10ExtremePayloadsAndRepetition(RelayE2ETestBase):
         self.store_content = self.store_file.read_text(encoding="utf-8")
         self.client_content = self.client_file.read_text(encoding="utf-8")
 
-    def test_b10_01_repetition_guard_threshold(self):
-        """Verifies infinite tool loop guard restricts repeated calls to <= 3."""
-        self.assertIn("repetitions", self.store_content)
-        self.assertIn("3", self.store_content)
+    def test_b10_01_recovery_is_scoped_to_unresolved_errors(self):
+        """Checks that error recovery replaces the obsolete cumulative success cap."""
+        recovery = (self.sources_relay / "TaskRecoveryBudget.swift").read_text(encoding="utf-8")
+        self.assertIn("recovery.recordFailure(recoveryKey)", self.store_content)
+        self.assertIn("recovery.recordVerifiedSuccess(recoveryKey)", self.store_content)
+        self.assertIn("observedScope", recovery)
+        self.assertIn("failures.count >= 128", recovery)
+        self.assertNotIn("repetitions[signature", self.store_content)
 
     def test_b10_02_oversized_tool_arguments_rejected(self):
         """Verifies tool arguments exceeding maximumToolArgumentsBytes are rejected."""
@@ -28,9 +33,12 @@ class TestB10ExtremePayloadsAndRepetition(RelayE2ETestBase):
         """Verifies context budgeting prevents feeding oversized payloads to LiteRT-LM."""
         self.assertIn("maximumContextBytes", self.client_content)
 
-    def test_b10_04_turn_limit_guard_in_agent_loop(self):
-        """Verifies agent loop enforces a maximum turn iteration bound."""
-        self.assertIn("for _ in 0..<", self.store_content)
+    def test_b10_04_long_tasks_retain_cancellation_and_per_call_budgets(self):
+        """Checks the long-task contract without a fixed planning-turn cutoff."""
+        self.assertIn("while true", self.store_content)
+        self.assertIn("try gate(expected)", self.store_content)
+        self.assertIn("try budget.check()", self.store_content)
+        self.assertNotIn("The task reached its 20-step limit", self.store_content)
 
     def test_b10_05_single_model_inference_concurrency_guard(self):
         """Verifies LiteRT-LM enforces guard !generating to prevent GPU context thrashing."""

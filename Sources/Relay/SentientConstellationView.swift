@@ -121,6 +121,9 @@ struct SkyGraph {
                     let index = add(record.title, String(preview.prefix(140)), body, domain: domain,
                                     url: URL(fileURLWithPath: record.sourcePath))
                     sourceIndices[record.sourcePath] = index
+                    // Exact revision targets keep duplicate titles unambiguous and
+                    // stop resolving after any source change or scope revocation.
+                    indices[wikiKey(CrossSourceKnowledge.Revision(record).citationTarget), default: []].append(index)
                     documentText[index] = (record.text, URL(fileURLWithPath: record.sourcePath).pathExtension.lowercased() == "md")
                     link(hub, index)
                 }

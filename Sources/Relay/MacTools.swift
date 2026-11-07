@@ -10,8 +10,9 @@ final class MacTools {
     var grants: [ScopeGrant] = []
     private struct ElementRecord {
         var element: AXUIElement
-        var bundleID: String
-        var pid: pid_t
+        var target: DesktopApplicationIdentity
+        var bundleID: String { target.bundleID }
+        var pid: pid_t { target.processID }
         var fingerprint: String
         var observed: Date
         var window: AXUIElement?
@@ -19,14 +20,50 @@ final class MacTools {
     }
     private struct AgentDesktopRefRecord {
         var ref: String
-        var bundleID: String
-        var pid: pid_t
+        var target: DesktopApplicationIdentity
+        var bundleID: String { target.bundleID }
+        var pid: pid_t { target.processID }
         var role: String
         var title: String
         var value: String
         var enabled: Bool
         var observed: Date
         var fingerprint: String
+        var windowBinding: HelperWindowBinding? = nil
+        var recoveryPath: String? = nil
+    }
+    private struct HelperWindowBinding {
+        let window: AXUIElement
+        let title: String
+        let documentFingerprint: String
+    }
+    /// A one-use read capability for the exact window already observed before
+    /// a UI action. Models cannot create this ticket or broaden its AX scope.
+    @MainActor final class MutationReadbackScope {
+        let call: ToolCall
+        fileprivate let owner: UUID
+        fileprivate let actionID: String
+        fileprivate let actionFingerprint: String
+        fileprivate let target: DesktopApplicationIdentity
+        fileprivate let window: AXUIElement
+        fileprivate let documentFingerprint: String
+        fileprivate let browserTarget: BrowserPageReader.CurrentDocumentTarget?
+        fileprivate let preparedAt: Date
+        fileprivate let effectGeneration: UInt64
+        fileprivate let observationGeneration: UInt64
+        fileprivate var consumed = false
+
+        fileprivate init(call: ToolCall, owner: UUID, action: ToolCall, target: DesktopApplicationIdentity,
+                         window: AXUIElement, documentFingerprint: String,
+                         browserTarget: BrowserPageReader.CurrentDocumentTarget?,
+                         effectGeneration: UInt64, observationGeneration: UInt64) {
+            self.call = call; self.owner = owner; actionID = action.id
+            actionFingerprint = ToolPolicy.fingerprint(action)
+            self.target = target; self.window = window; self.documentFingerprint = documentFingerprint
+            self.browserTarget = browserTarget
+            preparedAt = Date(); self.effectGeneration = effectGeneration
+            self.observationGeneration = observationGeneration
+        }
     }
     private struct Approval {
         var fingerprint: String
@@ -34,12 +71,14 @@ final class MacTools {
     }
     private var effectGeneration: UInt64 = 0
     private var observationGeneration: UInt64 = 0
+    private let readbackOwner = UUID()
     private var movePreviews: [String: ScopedFileOperations.MovePreview] = [:]
     private var elements: [String: ElementRecord] = [:]
     private var agentDesktopRefs: [String: AgentDesktopRefRecord] = [:]
     private var approvals: [String: Approval] = [:]
     private var preparedReviews: [String: Approval] = [:]
     private var displayedContexts: [String: (callFingerprint: String, context: AXReviewContext)] = [:]
+    private var displayedContextFailures: [String: String] = [:]
     private var displayedAttachmentReviews: [String: Approval] = [:]
     let desktopSession = AgentDesktopSession()
     private let workspace = NSWorkspace.shared
@@ -49,6 +88,127 @@ final class MacTools {
     private let mailTools: MailWorkflowTools
     init(mailWorkflow: MailWorkflow? = nil) {
         mailTools = MailWorkflowTools(workflow: mailWorkflow ?? MailWorkflow())
+    }
+
+    /// Cached identity only: this never reads AX, refreshes a reference, changes
+    /// scope or authorizes another attempt. Software-issued IDs are excluded so
+    /// observing the same unchanged control cannot reset its recovery counter.
+    func recoveryScopeFingerprint(for call: ToolCall) -> String? {
+        guard let bundle = call.arguments["bundle_id"]?.string else { return nil }
+        let references = ["element_id", "root_ref", "window_id"].compactMap { call.arguments[$0]?.string }
+        guard references.count == 1, let reference = references.first else { return nil }
+        func identity(_ target: DesktopApplicationIdentity) -> [String] {
+            [target.bundleID, String(target.processID), String(target.launchedAt.timeIntervalSince1970), target.bundleURL.path]
+        }
+        let components: [String]
+        if let record = elements[reference], record.bundleID == bundle,
+           let window = record.window, let windowFingerprint = record.windowFingerprint {
+            components = ["native"] + identity(record.target) + [String(CFHash(window)), windowFingerprint,
+                String(CFHash(record.element)), record.fingerprint]
+        // Browser helper trees do not yet cache an exact tab/document identity.
+        // A native window title and absent AXURL cannot resolve another tab's issue.
+        } else if !["com.google.Chrome", "com.apple.Safari"].contains(bundle),
+                  let record = agentDesktopRefs[reference], record.bundleID == bundle,
+                  let window = record.windowBinding, let path = record.recoveryPath {
+            components = ["helper"] + identity(record.target) + [String(CFHash(window.window)), window.title,
+                window.documentFingerprint, path, record.role, record.title, record.value, String(record.enabled)]
+        } else { return nil }
+        return SHA256.hash(data: Data(components.joined(separator: "\u{0}").utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Call immediately before dispatch, after any required review. Missing
+    /// helper window provenance leaves the ordinary action path unchanged.
+    func prepareMutationReadback(for call: ToolCall) throws -> MutationReadbackScope? {
+        guard ["set_value", "press_control", "scroll_control"].contains(call.name) else { return nil }
+        try Task.checkCancellation()
+        try ToolPolicy.validate(call, against: Self.definitions)
+        let target: DesktopApplicationIdentity
+        let window: AXUIElement
+        if try text("element_id", call).hasPrefix("@") {
+            let record = try freshAgentDesktopRef(call)
+            guard let binding = record.windowBinding else { return nil }
+            target = record.target; window = binding.window
+            guard windowDocumentFingerprint(window) == binding.documentFingerprint else {
+                throw RelayError.message("The helper's original document changed before action readback was prepared.")
+            }
+        } else {
+            let record = try freshRecord(call)
+            guard let originalWindow = record.window else { return nil }
+            target = record.target; window = originalWindow
+        }
+        guard let app = resolveRunningApplication(target.bundleID), DesktopApplicationTarget.matches(target, application: app),
+              windowIsAttached(window, to: target.processID),
+              (attribute(window, kAXMinimizedAttribute) as? Bool) != true else {
+            throw RelayError.message("The original app or window changed before action readback was prepared.")
+        }
+        let root = AXUIElementCreateApplication(target.processID)
+        AXUIElementSetMessagingTimeout(root, 0.15)
+        let isFocus = call.name == "press_control" && controlAction(call) == "focus"
+        guard isFocus || accessibilityElement(root, kAXFocusedWindowAttribute).map({ CFEqual($0, window) }) == true else {
+            return nil
+        }
+        let browserTarget: BrowserPageReader.CurrentDocumentTarget?
+        if ["com.google.Chrome", "com.apple.Safari"].contains(target.bundleID) {
+            guard let pinned = try? BrowserPageReader.captureCurrentTarget(application: app),
+                  (try? BrowserPageReader.validateCurrentTarget(pinned, expectedWindow: window)) != nil else { return nil }
+            browserTarget = pinned
+        } else { browserTarget = nil }
+        let observation = ToolCall(name: "observe_app", arguments: ["bundle_id": .string(target.bundleID),
+            "mode": .string("full"), "window_id": .string(UUID().uuidString)])
+        return MutationReadbackScope(call: observation, owner: readbackOwner, action: call, target: target,
+            window: window, documentFingerprint: windowDocumentFingerprint(window),
+            browserTarget: browserTarget,
+            effectGeneration: effectGeneration, observationGeneration: observationGeneration)
+    }
+
+    /// Reads through the ordinary observe_app adapter with a fresh internal
+    /// window reference. There is no activation, write, approval or write retry.
+    func readback(_ scope: MutationReadbackScope, after action: ToolCall) async throws -> ToolResult {
+        guard scope.owner == readbackOwner, !scope.consumed else {
+            throw RelayError.message("This action readback belongs to another executor or was already consumed.")
+        }
+        scope.consumed = true
+        do {
+            try Task.checkCancellation()
+            guard scope.actionID == action.id, scope.actionFingerprint == ToolPolicy.fingerprint(action),
+                  observationGeneration == scope.observationGeneration || observationGeneration == scope.observationGeneration &+ 1 else {
+                throw RelayError.message("Another observation or action replaced this readback scope.")
+            }
+            try validateMutationReadback(scope)
+            let fingerprint = stateFingerprint(scope.window)
+            let windowID = try text("window_id", scope.call)
+            elements[windowID] = ElementRecord(element: scope.window, target: scope.target, fingerprint: fingerprint,
+                observed: Date(), window: scope.window, windowFingerprint: fingerprint)
+            let result = try await observe(scope.call)
+            try Task.checkCancellation()
+            try validateMutationReadback(scope)
+            return ToolResult(summary: result.summary,
+                evidence: result.evidence + " Automatic readback was restricted to the action's original process and document window, revalidated before and after capture. This observation does not by itself certify the whole task.",
+                verified: result.verified)
+        } catch {
+            discardObservations()
+            throw error
+        }
+    }
+
+    private func validateMutationReadback(_ scope: MutationReadbackScope) throws {
+        try Task.checkCancellation()
+        guard AXIsProcessTrusted(), scope.effectGeneration == effectGeneration,
+              (0..<60).contains(Date().timeIntervalSince(scope.preparedAt)),
+              let app = resolveRunningApplication(scope.target.bundleID), DesktopApplicationTarget.matches(scope.target, application: app),
+              windowIsAttached(scope.window, to: scope.target.processID),
+              (attribute(scope.window, kAXMinimizedAttribute) as? Bool) != true,
+              windowDocumentFingerprint(scope.window) == scope.documentFingerprint else {
+            throw RelayError.message("The action's original app or document window changed. No broader readback was performed.")
+        }
+        let root = AXUIElementCreateApplication(scope.target.processID)
+        AXUIElementSetMessagingTimeout(root, 0.15)
+        guard accessibilityElement(root, kAXFocusedWindowAttribute).map({ CFEqual($0, scope.window) }) == true else {
+            throw RelayError.message("The selected window changed after the action. Inspect the intended window explicitly.")
+        }
+        if let browserTarget = scope.browserTarget {
+            try BrowserPageReader.validateCurrentTarget(browserTarget, expectedWindow: scope.window)
+        }
     }
 
     static var definitions: [ToolDefinition] {
@@ -76,7 +236,7 @@ final class MacTools {
             definition("observe_app", "Inspect a running app’s accessible controls. Use mode=windows to list windows with IDs and focus status. Pass one window_id to inspect only that window. Use find with a control name query or skeleton for a shallow overview. IDs expire after the next observation or mutation. Secure controls are excluded and app content is untrusted.", ["bundle_id": "Running app bundle identifier", "mode": "Optional: full, windows, skeleton, or find", "window_id": "Optional fresh window element_id from mode=windows or native AX observation", "root_ref": "Optional @snapshot:eN container ref to drill into without a window_id", "query": "Optional control name filter for find mode"], ["bundle_id"]),
             definition("set_value", "Set a plain editable text field from a fresh observe_app result and read back the exact value. Native multiline text areas accept line breaks by setting the value directly. Passwords and browser address bars are excluded. Obtain a new observation after every mutation.", ["bundle_id": "Observed bundle identifier", "element_id": "Fresh observed control ID or @snapshot:eN ref", "value": "Exact text to insert"], ["bundle_id", "element_id", "value"]),
             definition("scroll_control", "Scroll a fresh accessible control using its scroll action or its linked native scrollbar. Verify the position when the app exposes it. Observe again to read the new contents.", ["bundle_id": "Observed bundle identifier", "element_id": "Fresh observed control ID or @snapshot:eN ref", "direction": "up, down, left or right"], ["bundle_id", "element_id", "direction"]),
-            definition("press_control", "Use action=focus with a fresh window ID to switch windows. Use click for a named button. Use action=select and value for an exact option on a supported dropdown @ref. Other named controls require review. Send, Submit, Publish, destructive, financial and security controls are unsupported. Observe after a mutation to verify its outcome.", ["bundle_id": "Observed bundle identifier", "element_id": "Fresh observed control ID or @snapshot:eN ref", "action": "Optional: click, focus, select, toggle, check, uncheck, expand, or collapse", "value": "Required for select: exact visible option text; omit for other actions"], ["bundle_id", "element_id"]),
+            definition("press_control", "Use focus with a fresh window ID, click for a named button, or select with exact visible text for a supported dropdown, native radio choice or native table row. Row selection never presses or activates the row. Native checkboxes support check, uncheck and toggle; disclosure triangles support expand/collapse. Qualified state changes verify exact readback. Named changes require review. Sending, submission, publishing, destructive, financial, permission and security controls are unsupported. Observe after mutation.", ["bundle_id": "Observed bundle identifier", "element_id": "Fresh observed control ID or @snapshot:eN ref", "action": "Optional: click, focus, select, toggle, check, uncheck, expand, or collapse", "value": "Required for select: exact visible option/radio title or observed AXRow description; omit for other actions"], ["bundle_id", "element_id"]),
             definition("browser_navigate", "Navigate to a reviewed HTTP/HTTPS destination in Chrome or Safari. Uses a new tab with target-bound address entry when supported, otherwise a supported URL-opening request. Verification covers the selected URL/title only; read page contents separately. Uncertain results, redirects and authentication require inspection.", ["url": "Exact HTTP/HTTPS destination", "browser": "Google Chrome or Safari name or bundle identifier"], ["url", "browser"]),
             definition("search_web", "Search the web in Chrome or Safari using DuckDuckGo. Requires review of the exact query, browser and HTTPS destination before network access. Verification covers the selected URL/title; read the resulting page before answering. A new tab is not guaranteed.", ["query": "Exact single-line search text", "browser": "Google Chrome or Safari name or bundle identifier"], ["query", "browser"]),
             definition("open_url", "Open an explicit HTTP/HTTPS website in Google Chrome by default. Requires review of destination before network access. Browser launch is not evidence the page loaded.", ["url": "Exact website URL"], ["url"])
@@ -105,6 +265,7 @@ final class MacTools {
         approvals.removeAll()
         preparedReviews.removeAll()
         displayedContexts.removeAll()
+        displayedContextFailures.removeAll()
         displayedAttachmentReviews.removeAll()
         discardObservations()
     }
@@ -128,6 +289,7 @@ final class MacTools {
             return "Enter the path \(target.file.path) in the open file chooser for \(target.appName) (\(target.bundleID)).\n\nYou will choose the file yourself."
         case "press_control":
             displayedContexts.removeValue(forKey: call.id)
+            displayedContextFailures.removeValue(forKey: call.id)
             preparedReviews.removeValue(forKey: call.id)
             approvals.removeValue(forKey: call.id)
             if isRoutineMediaPress(call) || isWindowFocus(call) { return nil }
@@ -136,20 +298,42 @@ final class MacTools {
                 let option = actionName == "select" ? "\nExact option: \(String(reflecting: call.arguments["value"]?.string ?? ""))" : ""
                 return "Execute \(actionName) on “\(refRecord.title)” (\(refRecord.ref)) in \(refRecord.bundleID).\(option)\n\nThis review applies only to this exact snapshot ref (\(refRecord.ref)). Sending, submission, publishing, destructive, financial and security actions are not enabled by approval."
             }
-            guard let record = try? freshRecord(call), let context = try? reviewContext(record) else {
-                return "This control cannot be reviewed safely because a complete current window and editable-field context is unavailable. Refresh the app state or perform the action directly."
+            let record: ElementRecord
+            let context: AXReviewContext
+            do {
+                record = try freshRecord(call)
+                context = try reviewContext(record)
+            } catch {
+                displayedContextFailures[call.id] = Self.boundedText(error.localizedDescription, utf8Limit: 1_024)
+                return "This control cannot be reviewed safely because a complete current window and editable-field context is unavailable. \(error.localizedDescription)"
             }
             if controlAction(call) == "select" {
+                if ["AXRadioButton", "AXRow"].contains(attribute(record.element, kAXRoleAttribute) as? String ?? "") {
+                    guard let selection = try? nativeChoiceSelection(record, call: call), selection.fingerprint == context.buttonFingerprint else {
+                        return "The exact native choice and its complete peer state could not be reviewed together. Observe the current form again."
+                    }
+                    displayedContexts[call.id] = (ToolPolicy.fingerprint(call), context)
+                    let fields = context.fields.isEmpty ? "None" : context.fields.map { "\($0.label): \($0.value) [\($0.availabilityDescription)]" }.joined(separator: "\n")
+                    return "Select “\(selection.label)” in “\(selection.containerLabel)” in \(record.bundleID), window “\(context.title)”.\n\nCurrent choices:\n\(selection.reviewText)\n\nCurrent form fields and selection state:\n\(fields)\n\nThis approval applies to this exact choice, peer state and form. A table row is selected only; it is never pressed, opened or activated."
+                }
                 guard let selection = try? nativePopupSelection(record, call: call),
                       selection.state.fingerprint == context.buttonFingerprint else {
                     return "The popup and its exact option could not be reviewed together. Observe the current form and try again."
                 }
                 displayedContexts[call.id] = (ToolPolicy.fingerprint(call), context)
-                let fields = context.fields.isEmpty ? "None" : context.fields.map { "\($0.label) — \($0.value) [enabled=\($0.enabled)]" }.joined(separator: "\n")
+                let fields = context.fields.isEmpty ? "None" : context.fields.map { "\($0.label) — \($0.value) [\($0.availabilityDescription)]" }.joined(separator: "\n")
                 return "Choose “\(selection.value)” in “\(controlLabel(record.element))” in \(record.bundleID), window “\(context.title)”.\n\nCurrent selection is “\(selection.state.value)”.\n\nCurrent form fields\n\(fields)\n\nThis approval applies to this exact requested text, popup and current form fields."
             }
+            if Self.binaryControlActions.contains(controlAction(call)) {
+                guard let change = try? nativeBinaryControl(record, call: call) else {
+                    return "This control has no supported, unambiguous current state. Observe it again or change it directly."
+                }
+                displayedContexts[call.id] = (ToolPolicy.fingerprint(call), context)
+                let fields = context.fields.isEmpty ? "None" : context.fields.map { "\($0.label): \($0.value) [\($0.availabilityDescription)]" }.joined(separator: "\n")
+                return "Set “\(controlLabel(record.element))” to \(change.label(change.desired)) in \(record.bundleID), window “\(context.title)”.\n\nCurrent state: \(change.label(change.current)).\n\nCurrent editable fields:\n\(fields)\n\nThis approval applies only to this exact state change and these field values."
+            }
             displayedContexts[call.id] = (ToolPolicy.fingerprint(call), context)
-            return "Press “\(controlLabel(record.element))” in \(record.bundleID), window “\(context.title)”.\n\nCurrent editable fields:\n\(context.fields.isEmpty ? "None" : context.fields.map { "\($0.label): \($0.value) [enabled=\($0.enabled)]" }.joined(separator: "\n"))\n\nThis review applies only to this exact window and these field values. Sending, submission, publishing, destructive, financial and security actions are not enabled by approval."
+            return "Press “\(controlLabel(record.element))” in \(record.bundleID), window “\(context.title)”.\n\nCurrent editable fields:\n\(context.fields.isEmpty ? "None" : context.fields.map { "\($0.label): \($0.value) [\($0.availabilityDescription)]" }.joined(separator: "\n"))\n\nThis review applies only to this exact window and these field values. Sending, submission, publishing, destructive, financial and security actions are not enabled by approval."
         case "browser_navigate", "search_web":
             guard let destination = try? BrowserAutomation.destination(for: call) else { return "Review this browser request. Its browser and destination must pass validation before anything opens." }
             let query = call.name == "search_web" ? "Search query: \(call.arguments["query"]?.string ?? "")\n" : ""
@@ -196,6 +380,10 @@ final class MacTools {
         }
         if call.name == "press_control", requiresReview(call), (try? freshAgentDesktopRef(call)) == nil {
             preparedReviews.removeValue(forKey: call.id)
+            if let failure = displayedContextFailures.removeValue(forKey: call.id) {
+                displayedContexts.removeValue(forKey: call.id)
+                throw RelayError.message("The current review could not be prepared: " + failure)
+            }
             guard let shown = displayedContexts.removeValue(forKey: call.id), shown.callFingerprint == ToolPolicy.fingerprint(call),
                   shown.context.fingerprint == (try effectFingerprint(call)) else {
                 throw RelayError.message("Relay could not bind this review to the window and fields shown. Observe and review the current window again.")
@@ -499,11 +687,11 @@ final class MacTools {
         guard !trimmed.isEmpty else { return nil }
         let exact = NSRunningApplication.runningApplications(withBundleIdentifier: trimmed).filter { !$0.isTerminated }
         if !exact.isEmpty {
-            return exact.count == 1 ? exact.first : nil
+            return DesktopApplicationTarget.select(exact, foreground: workspace.frontmostApplication?.processIdentifier)
         }
         if let aliasID = Self.applicationAliasBundleID(trimmed) {
             let aliases = NSRunningApplication.runningApplications(withBundleIdentifier: aliasID).filter { !$0.isTerminated }
-            if !aliases.isEmpty { return aliases.count == 1 ? aliases.first : nil }
+            if !aliases.isEmpty { return DesktopApplicationTarget.select(aliases, foreground: workspace.frontmostApplication?.processIdentifier) }
         }
         let normalized = Self.normalizedApplicationName(trimmed)
         let matches = workspace.runningApplications.filter { app in
@@ -516,7 +704,7 @@ final class MacTools {
             }
             return false
         }
-        return matches.count == 1 ? matches.first : nil
+        return DesktopApplicationTarget.select(matches, foreground: workspace.frontmostApplication?.processIdentifier)
     }
 
     static func webAppFallbackURL(_ name: String) -> URL? {
@@ -713,9 +901,10 @@ final class MacTools {
     private func observe(_ call: ToolCall) async throws -> ToolResult {
         let rawBundleID = try text("bundle_id", call)
         guard AXIsProcessTrusted() else { throw Self.accessibilityError() }
-        guard let app = resolveRunningApplication(rawBundleID), let bundleID = app.bundleIdentifier else {
-            throw RelayError.message("The app is closed, has no bundle identifier, or matches more than one running process. Specify one running app by its bundle identifier.")
+        guard let app = resolveRunningApplication(rawBundleID), let target = DesktopApplicationTarget.identity(of: app) else {
+            throw RelayError.message("The app is closed or its process is ambiguous. Bring the intended app or browser profile to the foreground, then inspect its bundle identifier again.")
         }
+        let bundleID = target.bundleID
         let mode = call.arguments["mode"]?.string.flatMap { $0.isEmpty ? nil : $0.lowercased() } ?? "full"
         let rootRef = call.arguments["root_ref"]?.string.flatMap { $0.isEmpty ? nil : $0 }
         let query = call.arguments["query"]?.string.flatMap { $0.isEmpty ? nil : $0 }
@@ -741,17 +930,22 @@ final class MacTools {
         discardObservations()
         let generation = observationGeneration
         let appName = app.localizedName ?? bundleID
-        let hasUniqueHelperName = workspace.runningApplications.filter { $0.localizedName == appName }.count == 1
+        let hasUniqueHelperName = hasUniqueHelperTarget(app)
         if rootRef != nil, !hasUniqueHelperName { throw RelayError.message("The helper target app name is no longer unique. List windows before inspecting again.") }
         let useHelper = hasUniqueHelperName && mode != "windows" && scopedWindow == nil && (rootRef != nil || query != nil
             || ["skeleton", "find"].contains(mode) || ["com.google.Chrome", "com.apple.Safari"].contains(bundleID))
         if useHelper {
             do {
+                let originalHelperWindow = candidateHelperWindow(app)
                 let envelope = try await helperObservation(app: appName, mode: mode, rootRef: rootRef, query: query)
-                try checkObservation(generation, app: app)
+                try checkObservation(generation, app: app, target: target)
+                guard hasUniqueHelperTarget(app) else {
+                    throw RelayError.message("The helper app name became ambiguous. The selected process requires a new native observation.")
+                }
                 if envelope.ok {
                     let summary = Self.boundedText(envelope.formattedSummary, utf8Limit: 11_500)
-                    cacheAgentDesktopRefs(from: envelope.rawJSON, summary: summary, bundleID: bundleID, pid: app.processIdentifier)
+                    let binding = originalHelperWindow.flatMap { confirmedHelperWindow($0, rawJSON: envelope.rawJSON, app: app) }
+                    cacheAgentDesktopRefs(from: envelope.rawJSON, summary: summary, target: target, windowBinding: binding)
                     return ToolResult(summary: summary,
                                       evidence: "Fresh agent-desktop (\(mode)) accessibility observation of \(bundleID), process \(app.processIdentifier). Use only current snapshot refs.", verified: true)
                 }
@@ -761,13 +955,39 @@ final class MacTools {
             } catch {
                 // A helper ref cannot be translated to a native window or element safely.
                 if rootRef != nil { throw error }
-                try checkObservation(generation, app: app)
-                return try await observeNative(app: app, bundleID: bundleID, mode: mode, scopedWindow: nil,
+                try checkObservation(generation, app: app, target: target)
+                return try await observeNative(app: app, target: target, mode: mode, scopedWindow: nil,
                                                query: query, generation: generation, usedFallback: true)
             }
         }
-        return try await observeNative(app: app, bundleID: bundleID, mode: mode, scopedWindow: scopedWindow,
+        return try await observeNative(app: app, target: target, mode: mode, scopedWindow: scopedWindow,
                                        query: query, generation: generation, usedFallback: false)
+    }
+
+    private func candidateHelperWindow(_ app: NSRunningApplication) -> HelperWindowBinding? {
+        let root = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(root, 0.15)
+        guard let windows = attribute(root, kAXWindowsAttribute) as? [AXUIElement], windows.count == 1,
+              let window = windows.first,
+              accessibilityElement(root, kAXFocusedWindowAttribute).map({ CFEqual($0, window) }) == true,
+              (attribute(window, kAXMinimizedAttribute) as? Bool) != true,
+              let title = attribute(window, kAXTitleAttribute) as? String, !title.isEmpty else { return nil }
+        return HelperWindowBinding(window: window, title: title, documentFingerprint: windowDocumentFingerprint(window))
+    }
+
+    private func confirmedHelperWindow(_ original: HelperWindowBinding, rawJSON: String,
+                                       app: NSRunningApplication) -> HelperWindowBinding? {
+        guard let current = candidateHelperWindow(app), CFEqual(original.window, current.window),
+              original.title.utf16.elementsEqual(current.title.utf16),
+              original.documentFingerprint == current.documentFingerprint,
+              let data = rawJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let payload = object["data"] as? [String: Any],
+              let tree = payload["tree"] as? [String: Any],
+              let role = tree["role"] as? String, ["axwindow", "window"].contains(role.lowercased()),
+              let title = tree["name"] as? String,
+              title.utf16.elementsEqual(original.title.utf16) else { return nil }
+        return original
     }
 
     private func helperObservation(app: String, mode: String, rootRef: String?, query: String?) async throws -> AgentDesktopEnvelope {
@@ -785,15 +1005,20 @@ final class MacTools {
         return try await read()
     }
 
-    private func observeNative(app: NSRunningApplication, bundleID: String, mode: String, scopedWindow: AXUIElement?,
+    private func observeNative(app: NSRunningApplication, target: DesktopApplicationIdentity, mode: String, scopedWindow: AXUIElement?,
                                query: String?, generation: UInt64, usedFallback: Bool) async throws -> ToolResult {
+        let bundleID = target.bundleID
+        if mode != "windows" {
+            try await BrowserAccessibility.prepareContent(for: app)
+            try checkObservation(generation, app: app, target: target)
+        }
         let root = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(root, 0.15)
         var windows = attribute(root, kAXWindowsAttribute) as? [AXUIElement] ?? []
         if windows.isEmpty && scopedWindow == nil {
             for delay in [150, 300] {
                 try await Task.sleep(for: .milliseconds(delay))
-                try checkObservation(generation, app: app)
+                try checkObservation(generation, app: app, target: target)
                 windows = attribute(root, kAXWindowsAttribute) as? [AXUIElement] ?? []
                 if !windows.isEmpty { break }
             }
@@ -843,7 +1068,8 @@ final class MacTools {
             let containingWindow = isWindow ? element : inheritedWindow
             let windowFingerprint = isWindow ? stateFingerprint(element) : inheritedFingerprint
             let title = attribute(element, kAXTitleAttribute) as? String ?? ""
-            let description = attribute(element, kAXDescriptionAttribute) as? String ?? ""
+            let rawDescription = attribute(element, kAXDescriptionAttribute) as? String ?? ""
+            let description = role == "AXRow" ? (try? NativeChoiceControls.rowLabel(element, pid: app.processIdentifier)) ?? rawDescription : rawDescription
             let identifier = attribute(element, kAXIdentifierAttribute) as? String ?? ""
             let matches = query.map { query in [title, description, identifier].contains { $0.localizedCaseInsensitiveContains(query) } } ?? true
             let meaningful = !["AXGroup", "AXLayoutArea", "unknown"].contains(role)
@@ -851,7 +1077,7 @@ final class MacTools {
                 let id = isWindow ? (windowID ?? UUID().uuidString) : UUID().uuidString
                 let identity = describe(element, role: role, title: title, description: description, identifier: identifier)
                 let fingerprint = isWindow ? (windowFingerprint ?? "") : stateFingerprint(element)
-                let record = ElementRecord(element: element, bundleID: bundleID, pid: app.processIdentifier, fingerprint: fingerprint,
+                let record = ElementRecord(element: element, target: target, fingerprint: fingerprint,
                                            observed: observed, window: containingWindow, windowFingerprint: windowFingerprint)
                 let location: String
                 if isWindow {
@@ -862,7 +1088,7 @@ final class MacTools {
                 let priority: Int
                 if isWindow { priority = 0 }
                 else if ["AXTextField", "AXTextArea", "AXComboBox"].contains(role) { priority = 1 }
-                else if ["AXButton", "AXCheckBox", "AXRadioButton", "AXPopUpButton", "AXLink", "AXScrollArea"].contains(role) { priority = 2 }
+                else if ["AXButton", "AXCheckBox", "AXRadioButton", "AXRow", "AXPopUpButton", "AXLink", "AXScrollArea"].contains(role) { priority = 2 }
                 else { priority = 3 }
                 candidates.append((id, record, "element_id=\(id) \(identity)\(location)", priority))
             }
@@ -875,7 +1101,7 @@ final class MacTools {
                 if depth == depthLimit || children.count > capacity { omitted = true }
             }
         }
-        try checkObservation(generation, app: app)
+        try checkObservation(generation, app: app, target: target)
         if let scopedWindow, !windowIsAttached(scopedWindow, to: app.processIdentifier) {
             throw RelayError.message("The selected window closed while it was being inspected. List windows again.")
         }
@@ -911,14 +1137,21 @@ final class MacTools {
         agentDesktopRefs.removeAll()
     }
 
-    private func checkObservation(_ generation: UInt64, app: NSRunningApplication) throws {
+    private func checkObservation(_ generation: UInt64, app: NSRunningApplication, target: DesktopApplicationIdentity) throws {
         try Task.checkCancellation()
         guard generation == observationGeneration else { throw CancellationError() }
         guard AXIsProcessTrusted() else { throw Self.accessibilityError() }
-        guard !app.isTerminated else { throw RelayError.message("The application closed during observation. Open it before inspecting again.") }
+        guard DesktopApplicationTarget.matches(target, application: app),
+              let selected = resolveRunningApplication(target.bundleID),
+              DesktopApplicationTarget.matches(target, application: selected) else {
+            throw RelayError.message("The selected application process or foreground profile changed during observation. Inspect the intended app again.")
+        }
     }
 
-    private func cacheAgentDesktopRefs(from rawJSON: String, summary: String, bundleID: String, pid: pid_t) {
+    private func cacheAgentDesktopRefs(from rawJSON: String, summary: String, target: DesktopApplicationIdentity,
+                                       windowBinding: HelperWindowBinding? = nil) {
+        let bundleID = target.bundleID
+        let pid = target.processID
         guard let data = rawJSON.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let payload = obj["data"] as? [String: Any] else { return }
@@ -927,7 +1160,7 @@ final class MacTools {
             guard line.hasPrefix("element_id="), let token = line.split(separator: " ").first else { return nil }
             return String(token.dropFirst("element_id=".count))
         })
-        func walkNode(_ node: [String: Any]) {
+        func walkNode(_ node: [String: Any], path: String?) {
             guard !AgentDesktopBridge.isProtectedObservationNode(node) else { return }
             if let ref = node["ref_id"] as? String, exposedRefs.contains(ref) {
                 let role = (node["role"] as? String) ?? "unknown"
@@ -939,25 +1172,26 @@ final class MacTools {
                 let fp = SHA256.hash(data: Data(fpInput.utf8)).map { String(format: "%02x", $0) }.joined()
                 agentDesktopRefs[ref] = AgentDesktopRefRecord(
                     ref: ref,
-                    bundleID: bundleID,
-                    pid: pid,
+                    target: target,
                     role: role,
                     title: title,
                     value: value,
                     enabled: enabled,
                     observed: now,
-                    fingerprint: fp
+                    fingerprint: fp,
+                    windowBinding: windowBinding,
+                    recoveryPath: path
                 )
             }
             if let children = node["children"] as? [[String: Any]] {
-                for child in children { walkNode(child) }
+                for (index, child) in children.enumerated() { walkNode(child, path: path.map { $0 + "." + String(index) }) }
             }
         }
         if let tree = payload["tree"] as? [String: Any] {
-            walkNode(tree)
+            walkNode(tree, path: "0")
         }
         if let matches = payload["matches"] as? [[String: Any]] {
-            for match in matches { walkNode(match) }
+            for match in matches { walkNode(match, path: nil) }
         }
     }
 
@@ -967,12 +1201,24 @@ final class MacTools {
         guard AXIsProcessTrusted(), id.hasPrefix("@"),
               let record = agentDesktopRefs[id],
               let app = resolveRunningApplication(rawBundleID), app.bundleIdentifier == record.bundleID,
-              app.processIdentifier == record.pid,
+              DesktopApplicationTarget.matches(record.target, application: app),
               (0..<60).contains(Date().timeIntervalSince(record.observed)),
               record.enabled else {
             throw RelayError.message("The agent-desktop @ref is stale, disabled or belongs to another app. Observe again before acting.")
         }
+        guard hasUniqueHelperTarget(app) else {
+            throw RelayError.message("The helper app name is ambiguous. Observe the intended foreground profile again for native controls.")
+        }
         return record
+    }
+
+    private func hasUniqueHelperTarget(_ app: NSRunningApplication) -> Bool {
+        guard let name = app.localizedName, let bundleID = app.bundleIdentifier,
+              NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).filter({ !$0.isTerminated }).count == 1 else { return false }
+        let matches = workspace.runningApplications.filter {
+            !$0.isTerminated && $0.localizedName?.caseInsensitiveCompare(name) == .orderedSame
+        }
+        return matches.count == 1 && matches.first?.processIdentifier == app.processIdentifier
     }
 
     static func boundedText(_ text: String, utf8Limit: Int) -> String {
@@ -1022,9 +1268,26 @@ final class MacTools {
         let role = attribute(element, kAXRoleAttribute) as? String ?? ""
         var fields = [kAXSubroleAttribute, kAXTitleAttribute, kAXDescriptionAttribute, kAXIdentifierAttribute, kAXValueAttribute, kAXEnabledAttribute]
         if role == "AXWindow" { fields += [kAXDocumentAttribute, kAXURLAttribute, kAXMinimizedAttribute] }
-        let values = [role] + fields.map {
+        if role == "AXRow" { fields.append(kAXSelectedAttribute) }
+        var values = [role] + fields.map {
             String(describing: attribute(element, $0) ?? "" as CFString)
         }
+        if role == "AXRow" {
+            var pid: pid_t = 0
+            values.append(AXUIElementGetPid(element, &pid) == .success ? (try? NativeChoiceControls.rowLabel(element, pid: pid)) ?? "unreadable-row" : "unreadable-row")
+        }
+        return SHA256.hash(data: Data(values.joined(separator: "\u{0}").utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func controlIdentityFingerprint(_ element: AXUIElement) -> String {
+        let fields = [kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute, kAXDescriptionAttribute, kAXIdentifierAttribute, kAXEnabledAttribute]
+        let values = fields.map { String(describing: attribute(element, $0) ?? "" as CFString) }
+        return SHA256.hash(data: Data(values.joined(separator: "\u{0}").utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func windowDocumentFingerprint(_ element: AXUIElement) -> String {
+        let fields = [kAXIdentifierAttribute, kAXDocumentAttribute, kAXURLAttribute]
+        let values = fields.map { String(describing: attribute(element, $0) ?? "" as CFString) }
         return SHA256.hash(data: Data(values.joined(separator: "\u{0}").utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
@@ -1033,7 +1296,7 @@ final class MacTools {
         let rawBundleID = try text("bundle_id", call)
         guard AXIsProcessTrusted(), let record = elements[id],
               let app = resolveRunningApplication(rawBundleID), app.bundleIdentifier == record.bundleID,
-              app.processIdentifier == record.pid, (0..<60).contains(Date().timeIntervalSince(record.observed)),
+              DesktopApplicationTarget.matches(record.target, application: app), (0..<60).contains(Date().timeIntervalSince(record.observed)),
               !isSecure(record.element), (attribute(record.element, "AXHidden") as? Bool) != true,
               stateFingerprint(record.element) == record.fingerprint,
               (attribute(record.element, kAXEnabledAttribute) as? Bool) != false else {
@@ -1056,7 +1319,7 @@ final class MacTools {
         }
         let bounds = try? await AgentDesktopBridge.bounds(ref: record.ref, sessionID: desktopSession.id)
         try Task.checkCancellation()
-        guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == record.bundleID,
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == record.pid,
               let bounds else { return }
         RelayActionPointer.shared.show(axRect: bounds, label: label)
     }
@@ -1107,9 +1370,15 @@ final class MacTools {
         guard !NativeAttachmentStaging.isChooserControl(record.element) else {
             throw RelayError.message("Use stage_attachment to stage a selected local file path in a standard chooser.")
         }
+        guard let window = record.window, controlStillAttached(record) else {
+            throw RelayError.message("A plain editable control attached to the observed native window is required. Observe the intended window again.")
+        }
         var settable = DarwinBoolean(false)
         guard AXUIElementIsAttributeSettable(record.element, kAXValueAttribute as CFString, &settable) == .success, settable.boolValue else { throw RelayError.message("This control does not support accessibility text entry.") }
         let value = try Self.validatedEditableText(textAllowingEmpty("value", call), multiline: role == "AXTextArea")
+        let identity = controlIdentityFingerprint(record.element)
+        let document = windowDocumentFingerprint(window)
+        let generation = effectGeneration
         try Task.checkCancellation()
         AXUIElementSetMessagingTimeout(record.element, 0.5)
         RelayActionPointer.shared.show(element: record.element, label: "Type")
@@ -1117,12 +1386,26 @@ final class MacTools {
         discardObservations()
         let result = AXUIElementSetAttributeValue(record.element, kAXValueAttribute as CFString, value as CFString)
         guard result == .success else { throw RelayError.message("Text entry failed (AX error \(result.rawValue)). Observe again before retrying; effects may be uncertain.") }
-        let observed = attribute(record.element, kAXValueAttribute) as? String
-        guard let observed, observed.utf8.elementsEqual(value.utf8),
-              record.window.map({ windowIsAttached($0, to: record.pid) }) ?? true else {
-            throw RelayError.message("Text was dispatched, but exact readback did not match the same window. Observe current state before retrying.")
+        // Chromium can acknowledge a renderer write before publishing its new AX
+        // value. Inspect that exact object for a bounded interval; never write again.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        AXUIElementSetMessagingTimeout(record.element, 0.05)
+        for attempt in 0..<12 {
+            try Task.checkCancellation()
+            guard generation == effectGeneration else { throw CancellationError() }
+            guard let app = resolveRunningApplication(record.bundleID), DesktopApplicationTarget.matches(record.target, application: app),
+                  windowIsAttached(window, to: record.pid), (attribute(window, kAXMinimizedAttribute) as? Bool) != true,
+                  windowDocumentFingerprint(window) == document, controlStillAttached(record),
+                  controlIdentityFingerprint(record.element) == identity else {
+                throw RelayError.message("Text was dispatched, but its process, window or control changed before readback. Inspect current state before another action.")
+            }
+            if let observed = attribute(record.element, kAXValueAttribute) as? String, observed.utf8.elementsEqual(value.utf8) {
+                return ToolResult(summary: "Entered text in \(record.bundleID).", evidence: "Read back the exact \(value.utf8.count) UTF-8 bytes from the same observed control, process and window after one value write. No button or key was pressed.", verified: true)
+            }
+            guard attempt < 11, ContinuousClock.now < deadline else { break }
+            try await Task.sleep(for: .milliseconds(50))
         }
-        return ToolResult(summary: "Entered text in \(record.bundleID).", evidence: "Read back the exact \(value.utf8.count) UTF-8 bytes from the observed control. No button or key was pressed.", verified: true)
+        throw RelayError.message("Text was dispatched once, but exact readback was not confirmed in the same window. Inspect current state before another action. No retry was sent.")
     }
 
     static func validatedEditableText(_ value: String, multiline: Bool) throws -> String {
@@ -1189,11 +1472,17 @@ final class MacTools {
             throw RelayError.message("Choose or cancel a file in the native file chooser yourself. Relay can stage an approved local file path.")
         }
         if controlAction(call) == "select" {
-            _ = try nativePopupSelection(record, call: call)
+            if ["AXRadioButton", "AXRow"].contains(attribute(record.element, kAXRoleAttribute) as? String ?? "") {
+                _ = try nativeChoiceSelection(record, call: call)
+            } else { _ = try nativePopupSelection(record, call: call) }
             return
         }
         if let value = call.arguments["value"]?.string, !value.isEmpty {
             throw RelayError.message("An option value is supported only for the select action.")
+        }
+        if Self.binaryControlActions.contains(controlAction(call)) {
+            _ = try nativeBinaryControl(record, call: call)
+            return
         }
         guard controlAction(call) == "click" else {
             throw RelayError.message("This native control does not support the requested action. Use focus for an observed window or click for a named button.")
@@ -1208,7 +1497,8 @@ final class MacTools {
     }
 
     /// Complete semantic review context. It deliberately excludes volatile static labels,
-    /// timestamps and geometry, but includes all non-hidden editable values in this window.
+    /// timestamps and geometry, but includes non-hidden editable values and qualified
+    /// native selection states, including controls whose value is changed by AXPress.
     /// An incomplete/slow/oversized scan refuses instead of weakening the approval binding.
     private func reviewContext(_ record: ElementRecord) throws -> AXReviewContext {
         guard let window = record.window,
@@ -1249,14 +1539,51 @@ final class MacTools {
             let textRole = ["AXTextField", "AXTextArea", "AXComboBox"].contains(role)
             let settableResult = AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable)
             if textRole && settableResult != .success { throw RelayError.message("An input could not be inspected completely for review.") }
-            if settableResult == .success && settable.boolValue {
-                guard let value = attribute(element, kAXValueAttribute), let enabled = attribute(element, kAXEnabledAttribute) as? Bool else {
-                    throw RelayError.message("An editable field lacks a reliable current value or enabled state.")
+            var reviewedField: AXReviewField?
+            if ["AXRadioButton", "AXRow"].contains(role) {
+                let state = try NativeChoiceControls.reviewState(element, pid: record.pid)
+                let identifier = attribute(element, kAXIdentifierAttribute) as? String ?? ""
+                reviewedField = AXReviewField(identity: path + "|" + identifier + "|" + role, label: state.label, value: state.value, enabled: state.enabled)
+            } else if ["AXCheckBox", "AXDisclosureTriangle", "AXPopUpButton"].contains(role) {
+                guard let enabled = attribute(element, kAXEnabledAttribute) as? Bool else {
+                    throw RelayError.message("A native selection control exposes no reliable enabled state for review.")
+                }
+                let value: String
+                if role == "AXPopUpButton" {
+                    guard let selection = attribute(element, kAXValueAttribute) as? String else {
+                        throw RelayError.message("A native popup exposes no reliable current selection for review.")
+                    }
+                    value = selection
+                } else {
+                    guard let selected = binaryControlValue(element) else {
+                        throw RelayError.message("A native selection control exposes no unambiguous current state for review.")
+                    }
+                    value = (role == "AXCheckBox" ? "checked=" : "expanded=") + String(selected)
                 }
                 let label = controlLabel(element)
                 let identifier = attribute(element, kAXIdentifierAttribute) as? String ?? ""
-                let field = AXReviewField(identity: path + "|" + identifier + "|" + role, label: label.isEmpty ? (identifier.isEmpty ? role : identifier) : label, value: String(describing: value), enabled: enabled)
-                totalBytes += field.identity.utf8.count + field.label.utf8.count + field.value.utf8.count + 32
+                reviewedField = AXReviewField(identity: path + "|" + identifier + "|" + role,
+                    label: label.isEmpty ? (identifier.isEmpty ? role : identifier) : label, value: value, enabled: enabled)
+            } else if settableResult == .success && settable.boolValue {
+                guard let value = attribute(element, kAXValueAttribute) else {
+                    throw RelayError.message("A writable \(Self.boundedText(role, utf8Limit: 80)) exposes no reliable current value for review.")
+                }
+                let enabled = attribute(element, kAXEnabledAttribute) as? Bool
+                var availabilityEvidence: AXReviewField.AvailabilityEvidence?
+                if enabled == nil {
+                    guard role == "AXTextArea" else {
+                        throw RelayError.message("A writable \(Self.boundedText(role, utf8Limit: 80)) exposes no enabled state for review.")
+                    }
+                    availabilityEvidence = try NativeTextAreaReviewAvailability.inspect(element, value: value, in: window, processID: record.pid)
+                }
+                let label = controlLabel(element)
+                let identifier = attribute(element, kAXIdentifierAttribute) as? String ?? ""
+                reviewedField = AXReviewField(identity: path + "|" + identifier + "|" + role, label: label.isEmpty ? (identifier.isEmpty ? role : identifier) : label,
+                    value: String(describing: value), enabled: enabled, availabilityEvidence: availabilityEvidence)
+            }
+            if let field = reviewedField {
+                totalBytes += field.identity.utf8.count + field.label.utf8.count + field.value.utf8.count
+                    + (field.availabilityEvidence?.rawValue.utf8.count ?? 0) + 32
                 guard totalBytes <= 12_000, fields.count < 60 else { throw RelayError.message("The complete editable-field review is too large. Perform this click directly.") }
                 fields.append(field)
             }
@@ -1267,12 +1594,16 @@ final class MacTools {
                 guard queue.count + children.count <= 500 else { throw RelayError.message("The window exceeds the complete 500-node review limit. Perform the click directly.") }
                 queue.append(contentsOf: children.enumerated().map { ($0.element, path + "." + String($0.offset)) })
             } else if childResult != .attributeUnsupported && childResult != .noValue {
-                throw RelayError.message("The window tree changed or could not be read completely during review.")
+                throw RelayError.message("The \(Self.boundedText(role, utf8Limit: 80)) child list could not be read completely during review (AX error \(childResult.rawValue)).")
             }
         }
         guard foundTarget else { throw RelayError.message("The button is no longer present in the complete window tree.") }
-        let targetFingerprint = (attribute(record.element, kAXRoleAttribute) as? String) == "AXPopUpButton"
-            ? try nativePopupState(record).fingerprint : stateFingerprint(record.element)
+        let targetFingerprint: String
+        switch attribute(record.element, kAXRoleAttribute) as? String {
+        case "AXPopUpButton": targetFingerprint = try nativePopupState(record).fingerprint
+        case "AXRadioButton", "AXRow": targetFingerprint = try NativeChoiceControls.snapshot(record.element, pid: record.pid).fingerprint
+        default: targetFingerprint = stateFingerprint(record.element)
+        }
         return AXReviewContext(windowIdentity: windowIdentity, title: title, buttonFingerprint: targetFingerprint, fields: fields)
     }
 
@@ -1346,11 +1677,79 @@ final class MacTools {
         return (state, value)
     }
 
+    private func nativeChoiceSelection(_ record: ElementRecord, call: ToolCall) throws -> NativeChoiceControls.Snapshot {
+        let value = try Self.validatedEditableText(text("value", call), multiline: false)
+        let selection = try NativeChoiceControls.snapshot(record.element, pid: record.pid)
+        try Self.validateBinaryControlContext(bundleID: record.bundleID, label: selection.label)
+        guard let window = record.window, windowIsAttached(window, to: record.pid), controlStillAttached(record),
+              value.utf8.elementsEqual(selection.label.utf8), !Self.isExcludedControlLabel(selection.containerLabel) else {
+            throw RelayError.message("Selection requires this exact current radio/row label and a named non-consequential container in the observed window.")
+        }
+        return selection
+    }
+
     static func isExcludedControlLabel(_ label: String) -> Bool {
         let value = label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let phrases = ["send", "submit", "publish", "post", "buy now", "purchase", "checkout", "pay now", "make payment", "transfer money", "send money", "change password", "reset password", "delete", "remove account", "close account", "erase", "empty trash", "format disk", "disable security", "two-factor", "2-factor", "revoke access", "grant access"]
         let words = Set(value.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty })
         return !words.isDisjoint(with: ["send", "submit", "publish", "post", "pay", "buy", "purchase", "checkout", "payment", "delete", "erase", "password", "security", "transfer", "uninstall", "login", "authenticate", "revoke"]) || phrases.contains { value == $0 || value.hasPrefix($0 + " ") || value.hasSuffix(" " + $0) } || ["pay", "buy", "unsubscribe"].contains(value)
+    }
+
+    private static let binaryControlActions: Set<String> = ["check", "uncheck", "toggle", "expand", "collapse"]
+
+    private struct NativeBinaryControl {
+        let current: Bool
+        let desired: Bool
+        let disclosure: Bool
+        func label(_ value: Bool) -> String { disclosure ? (value ? "expanded" : "collapsed") : (value ? "checked" : "unchecked") }
+    }
+
+    static func binaryControlTarget(role: String, action: String, current: Bool) throws -> Bool {
+        switch (role, action) {
+        case ("AXCheckBox", "check"), ("AXDisclosureTriangle", "expand"): return true
+        case ("AXCheckBox", "uncheck"), ("AXDisclosureTriangle", "collapse"): return false
+        case ("AXCheckBox", "toggle"): return !current
+        default: throw RelayError.message("Use check, uncheck or toggle for a native checkbox, or expand/collapse for a native disclosure triangle. This action is unsupported for the observed role.")
+        }
+    }
+
+    private func binaryControlValue(_ element: AXUIElement) -> Bool? {
+        guard let value = attribute(element, kAXValueAttribute) else { return nil }
+        if CFGetTypeID(value) == CFBooleanGetTypeID() { return value as? Bool }
+        guard CFGetTypeID(value) == CFNumberGetTypeID(), let number = value as? NSNumber else { return nil }
+        switch number.doubleValue {
+        case 0: return false
+        case 1: return true
+        default: return nil // An indeterminate or nonbinary value cannot be toggled reliably.
+        }
+    }
+
+    private func nativeBinaryControl(_ record: ElementRecord, call: ToolCall) throws -> NativeBinaryControl {
+        let role = attribute(record.element, kAXRoleAttribute) as? String ?? ""
+        let label = controlLabel(record.element)
+        try Self.validateBinaryControlContext(bundleID: record.bundleID, label: label)
+        guard let window = record.window, windowIsAttached(window, to: record.pid),
+              !label.isEmpty, !Self.isExcludedControlLabel(label),
+              let current = binaryControlValue(record.element) else {
+            throw RelayError.message("A named, non-consequential control with an unambiguous binary state and native window is required.")
+        }
+        let desired = try Self.binaryControlTarget(role: role, action: controlAction(call), current: current)
+        var actions: CFArray?
+        guard AXUIElementCopyActionNames(record.element, &actions) == .success,
+              (actions as? [String])?.contains(kAXPressAction) == true else {
+            throw RelayError.message("This native control does not advertise a press action. No fallback input was sent.")
+        }
+        return NativeBinaryControl(current: current, desired: desired, disclosure: role == "AXDisclosureTriangle")
+    }
+
+    static func validateBinaryControlContext(bundleID: String, label: String) throws {
+        // A privacy grant checkbox can be named only after its target app ("Relay"),
+        // so checking the label alone cannot qualify permission-provider controls.
+        let permissionProviders: Set<String> = ["com.apple.systempreferences", "com.apple.securityagent", "com.apple.tccui",
+            "com.apple.loginwindow", "com.apple.coreservicesuiagent", "com.apple.passwords"]
+        guard !permissionProviders.contains(bundleID.lowercased()), !label.isEmpty, !Self.isExcludedControlLabel(label) else {
+            throw RelayError.message("Security, permission-provider and consequential state controls remain manual/unsupported.")
+        }
     }
 
     private func scroll(_ call: ToolCall) async throws -> ToolResult {
@@ -1483,7 +1882,13 @@ final class MacTools {
             return try await focusWindow(record)
         }
         if controlAction(call) == "select" {
+            if ["AXRadioButton", "AXRow"].contains(attribute(record.element, kAXRoleAttribute) as? String ?? "") {
+                return try await selectNativeChoice(record, call: call, reviewedEffectFingerprint: reviewedEffectFingerprint)
+            }
             return try await selectNativePopup(record, call: call, reviewedEffectFingerprint: reviewedEffectFingerprint)
+        }
+        if Self.binaryControlActions.contains(controlAction(call)) {
+            return try await changeNativeBinaryControl(record, call: call, reviewedEffectFingerprint: reviewedEffectFingerprint)
         }
         var actions: CFArray?
         guard AXUIElementCopyActionNames(record.element, &actions) == .success, let names = actions as? [String], names.contains(kAXPressAction) else { throw RelayError.message("This control does not offer a press action.") }
@@ -1497,6 +1902,113 @@ final class MacTools {
         let result = AXUIElementPerformAction(record.element, kAXPressAction as CFString)
         guard result == .success else { throw RelayError.message("Press returned AX error \(result.rawValue). Its effects are uncertain; observe before retrying.") }
         return ToolResult(summary: "Pressed the approved control in \(record.bundleID).", evidence: "Accessibility accepted AXPress. The resulting app state has not been verified. Call observe_app and inspect the required outcome before claiming success.", verified: false)
+    }
+
+    private func changeNativeBinaryControl(_ record: ElementRecord, call: ToolCall, reviewedEffectFingerprint: String?) async throws -> ToolResult {
+        let change = try nativeBinaryControl(record, call: call)
+        guard let reviewedEffectFingerprint, try reviewContext(record).fingerprint == reviewedEffectFingerprint else {
+            throw RelayError.message("The control or its form changed after approval. Observe and review the exact state again.")
+        }
+        let label = controlLabel(record.element)
+        let identity = controlIdentityFingerprint(record.element)
+        if change.current == change.desired {
+            return ToolResult(summary: "“\(label)” is already \(change.label(change.desired)).",
+                evidence: "The reviewed native control already read back the requested state. No action was dispatched.", verified: true)
+        }
+        let generation = effectGeneration
+        try Task.checkCancellation()
+        guard let app = resolveRunningApplication(record.bundleID), DesktopApplicationTarget.matches(record.target, application: app),
+              try reviewContext(record).fingerprint == reviewedEffectFingerprint,
+              stateFingerprint(record.element) == record.fingerprint else {
+            throw RelayError.message("The reviewed process, window or control state changed before dispatch. Nothing was pressed.")
+        }
+        RelayActionPointer.shared.show(element: record.element, label: change.label(change.desired))
+        defer { RelayActionPointer.shared.finishAction() }
+        discardObservations()
+        AXUIElementSetMessagingTimeout(record.element, 0.5)
+        let result = AXUIElementPerformAction(record.element, kAXPressAction as CFString)
+        guard result == .success else {
+            throw RelayError.message("The state change returned AX error \(result.rawValue). Its effects are uncertain; inspect the current state before another action. No retry was sent.")
+        }
+        for _ in 0..<10 {
+            try Task.checkCancellation()
+            guard generation == effectGeneration else { throw CancellationError() }
+            guard let currentApp = resolveRunningApplication(record.bundleID),
+                  DesktopApplicationTarget.matches(record.target, application: currentApp),
+                  let window = record.window, windowIsAttached(window, to: record.pid),
+                  stateFingerprint(window) == record.windowFingerprint,
+                  controlStillAttached(record), controlIdentityFingerprint(record.element) == identity else {
+                throw RelayError.message("The process, window or control changed after the press. Its effects are uncertain; inspect before retrying.")
+            }
+            if binaryControlValue(record.element) == change.desired {
+                return ToolResult(summary: "Set “\(label)” to \(change.label(change.desired)).",
+                    evidence: "One AXPress was accepted, then the same native control in the same process and window read back the exact requested state. No second press or fallback input was sent.", verified: true)
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw RelayError.message("One press was accepted, but the exact requested control state was not confirmed. Inspect it before another action. No retry was sent.")
+    }
+
+    private func controlStillAttached(_ record: ElementRecord) -> Bool {
+        guard let window = record.window else { return false }
+        var current: AXUIElement? = record.element
+        var visited: [AXUIElement] = []
+        for _ in 0..<24 {
+            guard let element = current, !visited.contains(where: { CFEqual($0, element) }) else { return false }
+            visited.append(element)
+            AXUIElementSetMessagingTimeout(element, 0.025)
+            var pid: pid_t = 0
+            guard AXUIElementGetPid(element, &pid) == .success, pid == record.pid else { return false }
+            if CFEqual(element, window) { return true }
+            current = accessibilityElement(element, kAXParentAttribute)
+        }
+        return false
+    }
+
+    private func selectNativeChoice(_ record: ElementRecord, call: ToolCall, reviewedEffectFingerprint: String?) async throws -> ToolResult {
+        let before = try nativeChoiceSelection(record, call: call)
+        guard let reviewedEffectFingerprint, try reviewContext(record).fingerprint == reviewedEffectFingerprint else {
+            throw RelayError.message("The native choices or whole-window form state changed after review. Inspect and review them again.")
+        }
+        if before.alreadySelected {
+            return ToolResult(summary: "“\(before.label)” is already selected.",
+                evidence: "The reviewed native container already read back this one exact selection. No action was dispatched.", verified: true)
+        }
+        let generation = effectGeneration
+        try Task.checkCancellation()
+        guard let app = resolveRunningApplication(record.bundleID), DesktopApplicationTarget.matches(record.target, application: app),
+              try reviewContext(record).fingerprint == reviewedEffectFingerprint else {
+            throw RelayError.message("The reviewed process, window or selection changed before dispatch. Nothing was selected.")
+        }
+        RelayActionPointer.shared.show(element: record.element, label: "Select")
+        defer { RelayActionPointer.shared.finishAction() }
+        discardObservations()
+        let result = try NativeChoiceControls.performOnce(before)
+        guard result == .success else {
+            throw RelayError.message("One native selection request returned AX error \(result.rawValue). Its effects are uncertain. Inspect before another action; no retry was sent.")
+        }
+        for _ in 0..<10 {
+            try Task.checkCancellation()
+            guard generation == effectGeneration else { throw CancellationError() }
+            guard let app = resolveRunningApplication(record.bundleID), DesktopApplicationTarget.matches(record.target, application: app),
+                  let window = record.window, windowIsAttached(window, to: record.pid),
+                  stateFingerprint(window) == record.windowFingerprint, controlStillAttached(record) else {
+                throw RelayError.message("The native process or window changed after selection. Inspect the current state; no retry was sent.")
+            }
+            if let after = try? NativeChoiceControls.snapshot(record.element, pid: record.pid) {
+                guard before.sameIdentity(as: after) else {
+                    throw RelayError.message("Native choice labels, row contents or identities changed after dispatch. Inspect the current state; no retry was sent.")
+                }
+                if after.alreadySelected {
+                    return ToolResult(summary: "Selected “\(before.label)” in “\(before.containerLabel)”.",
+                        evidence: before.kind == .row
+                            ? "One AXSelectedRows write selected this exact native row. The same container, complete row content and exactly one selected row read back correctly. No row press, click, open or activation action was dispatched."
+                            : "One AXPress selected this exact native radio choice. The same complete peer group read back exactly this one selected option. No retry or fallback input was sent.", verified: true)
+                }
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw RelayError.message("One native selection was dispatched, but its exact selected state was not verified. Inspect before another action; no retry was sent.")
     }
 
     private func selectNativePopup(_ record: ElementRecord, call: ToolCall, reviewedEffectFingerprint: String?) async throws -> ToolResult {
@@ -1581,7 +2093,7 @@ final class MacTools {
 
     private func focusWindow(_ record: ElementRecord) async throws -> ToolResult {
         let window = record.element
-        guard let app = NSRunningApplication(processIdentifier: record.pid), app.bundleIdentifier == record.bundleID else {
+        guard let app = NSRunningApplication(processIdentifier: record.pid), DesktopApplicationTarget.matches(record.target, application: app) else {
             throw RelayError.message("The observed application closed. Open it and list its windows again.")
         }
         let title = Self.boundedText(attribute(window, kAXTitleAttribute) as? String ?? "", utf8Limit: 200)
@@ -1605,7 +2117,7 @@ final class MacTools {
         }
         let generation = observationGeneration
         for _ in 0..<12 {
-            try checkObservation(generation, app: app)
+            try checkObservation(generation, app: app, target: record.target)
             if focusMatches() {
                 return ToolResult(summary: "Focused \(label) in \(record.bundleID).",
                                   evidence: "The frontmost process and its AX focused window matched the observed window. Observe again before acting.", verified: true)

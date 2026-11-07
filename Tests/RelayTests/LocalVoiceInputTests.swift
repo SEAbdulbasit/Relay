@@ -32,6 +32,20 @@ struct LocalVoiceInputTests {
         #expect(voice.lastCaptureElapsedSeconds == nil)
     }
 
+    @Test func alreadyCancelledFinalWaitTearsDownOnlyItsFinishingCapture() async throws {
+        let backend = VoiceBackendFixture()
+        let voice = LocalVoiceInput(backend: backend, sleepNotificationCenter: NotificationCenter())
+        await voice.start()
+        let capture = try #require(voice.beginFinishingCapture())
+        #expect(voice.phase == .finishing && !backend.running)
+        let pending = Task { await voice.finishCapture(expectedCaptureID: capture) }
+        pending.cancel()
+        #expect(await pending.value == false)
+        #expect(!voice.isBusy && voice.phase == .stopped && !backend.running)
+        #expect(voice.captureID == capture && !voice.transcriptIsFinal)
+        voice.cancel()
+    }
+
     @Test func recordingLimitAcceptsOnlyFiniteBoundsAndIsNotPersistedAcrossControllers() {
         let voice = LocalVoiceInput(backend: VoiceBackendFixture())
         for invalid in [0.0, -1, 60.01, .infinity, -.infinity, .nan] {
@@ -320,6 +334,56 @@ struct LocalVoiceInputTests {
         await pending.value
         #expect(backend.starts == 0)
         #expect(voice.status.contains("before sleep"))
+    }
+
+    @Test(arguments: [NSWorkspace.sessionDidResignActiveNotification, NSWorkspace.screensDidSleepNotification])
+    func inactiveSessionStopsAudioAndRejectsLateRecognition(name: Notification.Name) async throws {
+        let backend = VoiceBackendFixture(), notifications = NotificationCenter()
+        let voice = LocalVoiceInput(backend: backend, sleepNotificationCenter: notifications)
+        await voice.start()
+        backend.emit(.partial("Review this retained draft."))
+        let stale = try #require(backend.callback)
+        notifications.post(name: name, object: nil)
+        #expect(!backend.running && !voice.isBusy)
+        #expect(voice.status.contains("inactive"))
+        stale(.final("A late final must not replace the draft."))
+        #expect(voice.transcript == "Review this retained draft." && !voice.transcriptIsFinal)
+        voice.cancel()
+    }
+
+    @Test(arguments: [NSWorkspace.sessionDidResignActiveNotification, NSWorkspace.screensDidSleepNotification])
+    func inactiveSessionInvalidatesPermissionWaitWithoutAutomaticResume(name: Notification.Name) async {
+        let backend = VoiceBackendFixture(), notifications = NotificationCenter()
+        backend.holdPermissions = true
+        let voice = LocalVoiceInput(backend: backend, sleepNotificationCenter: notifications)
+        let pending = Task { await voice.start() }
+        for _ in 0..<1_000 where backend.permissionRequests == 0 { await Task.yield() }
+        notifications.post(name: name, object: nil)
+        backend.completePermissions()
+        await pending.value
+        notifications.post(name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
+        notifications.post(name: NSWorkspace.screensDidWakeNotification, object: nil)
+        #expect(backend.starts == 0 && !backend.running && !voice.isBusy)
+        voice.cancel()
+    }
+
+    @Test func deferredVoiceStartWaitsForEverySessionInterruptionAndExplicitRestart() async {
+        let backend = VoiceBackendFixture(), notifications = NotificationCenter()
+        let voice = LocalVoiceInput(backend: backend, sleepNotificationCenter: notifications)
+        notifications.post(name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
+        notifications.post(name: NSWorkspace.willSleepNotification, object: nil)
+        notifications.post(name: NSWorkspace.screensDidSleepNotification, object: nil)
+        await voice.start()
+        #expect(backend.permissionRequests == 0 && backend.starts == 0)
+        notifications.post(name: NSWorkspace.didWakeNotification, object: nil)
+        notifications.post(name: NSWorkspace.screensDidWakeNotification, object: nil)
+        await voice.start()
+        #expect(backend.permissionRequests == 0 && backend.starts == 0)
+        notifications.post(name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
+        #expect(backend.starts == 0, "Resuming the session cannot automatically start audio.")
+        await voice.start()
+        #expect(backend.starts == 1 && backend.running)
+        voice.cancel()
     }
 }
 

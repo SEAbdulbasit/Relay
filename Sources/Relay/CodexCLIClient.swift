@@ -42,8 +42,8 @@ nonisolated enum CodexCLIError: LocalizedError {
     private static let maximumAnswerBytes = 12_000
     private static let maximumArgumentBytes = 32_000
     private static let planningModel = "gpt-6.1-terra"
-    // Exact signed arm64 CLI build exercised against the no-native-tools loopback fixture.
-    private static let approvedCodeHashes: Set<String> = ["20db7eba01a37068717d74b387c37a516d20372e"]
+    // Exact signed arm64 CLI builds exercised against the no-native-tools loopback fixture.
+    private static let approvedCodeHashes: Set<String> = ["20db7eba01a37068717d74b387c37a516d20372e", "a11ce3314a7adeaca2a1283051ee2f0b41070d5a"]
     private static let plannerInstructions = "You are Relay’s hosted text planner. Use only the supplied request, answer in the required JSON schema, and never take actions directly. Relay validates proposals and controls its own tools."
 
     private static let disabledFeatures = [
@@ -121,7 +121,7 @@ nonisolated enum CodexCLIError: LocalizedError {
         return .failure(foundSignedCLI ? .unsupported : .unavailable)
     }
 
-    private static func signedCodeHash(_ url: URL) -> String? {
+    static func signedCodeHash(_ url: URL) -> String? {
         guard FileManager.default.isExecutableFile(atPath: url.path),
               (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { return nil }
         var code: SecStaticCode?
@@ -209,6 +209,13 @@ nonisolated enum CodexCLIError: LocalizedError {
     }
 
     private static func sandboxArguments(cli: URL, context: ProcessContext, localOnly: Bool) -> [String] {
+        sandboxArguments(cli: cli, userHome: context.user, codexHome: context.codexHome, auth: context.auth,
+                         workspace: context.workspace, localOnly: localOnly)
+    }
+
+    /// Shared by production and the credential-free loopback capability gate.
+    static func sandboxArguments(cli: URL, userHome: URL, codexHome: URL, auth: URL,
+                                 workspace: URL, localOnly: Bool) -> [String] {
         // The signed CLI can run in place. It cannot spawn helpers, read home data other than auth,
         // or persist changes to the user’s files. Readiness and catalog inspection are offline.
         let profile = """
@@ -224,9 +231,9 @@ nonisolated enum CodexCLIError: LocalizedError {
         (allow file-write* (subpath (param "RelayCodexWorkspace")))
         """ + (localOnly ? "\n(deny network-outbound)" : "")
         return ["-p", profile, "-D", "RelayCodexBinary=\(cli.path)",
-                "-D", "RelayUserHome=\(context.user.path)", "-D", "RelayCodexHome=\(context.codexHome.path)",
-                "-D", "RelayCodexAuth=\(context.auth.path)",
-                "-D", "RelayCodexWorkspace=\(context.workspace.path)", cli.path]
+                "-D", "RelayUserHome=\(userHome.path)", "-D", "RelayCodexHome=\(codexHome.path)",
+                "-D", "RelayCodexAuth=\(auth.path)",
+                "-D", "RelayCodexWorkspace=\(workspace.path)", cli.path]
     }
 
     private static func bundledPlanningCatalog(cli: URL, context: ProcessContext, workspace: URL) async throws -> Data {
