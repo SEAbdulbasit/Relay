@@ -3,6 +3,44 @@ import Testing
 @testable import Relay
 
 struct ActiveContextCompactionTests {
+    @Test func windowInventoryGuidanceSurvivesWhileOnlyExpiredExecutableRowsLoseReferences() throws {
+        let id = "C562D460-2852-43EC-9729-C23709B61A05"
+        let footer = "Window inventory only; child controls were not inspected. Inspect the intended window using observe_app mode=full with window_id equal to its element_id above. Window IDs are for inspection or focus, never set_value."
+        let row = "element_id=\(id) role=AXWindow title=Fixture description= identifier=window value= enabled=unknown focused=true minimized=false"
+        let call = ToolCall(name: "observe_app", arguments: ["bundle_id": .string("dev.relay.fixture"), "mode": .string("windows")])
+        let source = ModelMessage(role: "tool", content: JSONValue.object(["summary": .string(row + "\n" + footer),
+            "evidence": .string("Native AX observation of dev.relay.fixture, process 123."), "verified": .bool(true)]).pretty,
+            toolCallID: call.id, toolName: call.name)
+        let initial = [ModelMessage(role: "user", content: "Inspect this window before entering text."),
+            ModelMessage(role: "assistant", content: "", toolCalls: [call]), source]
+        let fresh = try ContextWindow.prepare(initial, activeStart: 0, budget: 4_000)
+        #expect(fresh.messages.last?.content.utf8.elementsEqual(source.content.utf8) == true)
+        let next = ToolCall(name: "observe_app", arguments: ["bundle_id": .string("dev.relay.fixture"),
+            "mode": .string("full"), "window_id": .string(id)])
+        let history = initial + [ModelMessage(role: "assistant", content: "", toolCalls: [next]), result(next, "Fresh child controls", verified: true)]
+        let prepared = try ContextWindow.prepare(history, activeStart: 0, budget: 4_000)
+        let payload = try JSONDecoder().decode([String: JSONValue].self, from: Data(prepared.messages[2].content.utf8))
+        let expired = try #require(payload["summary"]?.string)
+        #expect(expired.hasPrefix("expired_control role=AXWindow ") && expired.hasSuffix(footer))
+        #expect(!expired.contains(id) && payload["reference_status"]?.string?.contains("Expired") == true)
+        #expect(prepared.messages.flatMap(\.toolCalls) == history.flatMap(\.toolCalls))
+        #expect(ContextWindow.isWellFormed(prepared.messages))
+    }
+
+    @Test func byteDistinctObservationIDsExpireOnlyTheirOwnOriginalReferences() throws {
+        let old = ToolCall(id: "caf\u{e9}", name: "observe_app", arguments: ["bundle_id": .string("dev.relay.first")])
+        let fresh = ToolCall(id: "cafe\u{301}", name: "observe_app", arguments: ["bundle_id": .string("dev.relay.second")])
+        let history = [ModelMessage(role: "user", content: "Keep the fresh snapshot."),
+            ModelMessage(role: "assistant", content: "", toolCalls: [old, fresh]),
+            result(old, "Historical exact source", verified: true),
+            result(fresh, "Fresh exact source", verified: true)]
+        let window = try ContextWindow.prepare(history, activeStart: 0, budget: 4_000)
+        let previous = try JSONDecoder().decode([String: JSONValue].self, from: Data(window.messages[2].content.utf8))
+        #expect(previous["reference_status"]?.string?.contains("Expired") == true)
+        #expect(window.messages[3].content.utf8.elementsEqual(history[3].content.utf8))
+        #expect(ContextWindow.isWellFormed(window.messages))
+    }
+
     @Test func sequentialReusedCallIDsTrackTheirOwnObservationOrderWithoutLosingTheFreshResult() throws {
         let observe = ToolCall(id: "shared-observe-id", name: "observe_app", arguments: ["bundle_id": .string("dev.relay.fixture")])
         let changed = ToolCall(id: "change", name: "set_value", arguments: ["bundle_id": .string("dev.relay.fixture"),

@@ -147,7 +147,7 @@ final class TargetBoundNativeObservation {
                 onCancel: { task.cancel() }
             try requireCurrent(expectedRevision)
             try request.preparation.validate()
-            guard !result.isError else { throw Failure.nativeError }
+            guard !result.isError else { throw NativeReadProviderError(result: result) }
             let nativeText = try Self.stateText(result)
             let header = try Self.parseHeader(nativeText)
             try Self.validate(header, preparation: request.preparation)
@@ -163,6 +163,7 @@ final class TargetBoundNativeObservation {
             return snapshot
         } catch {
             if revision == expectedRevision { invalidateSnapshot() }
+            if let transport = error as? OwnedNativeComputerUseClient.Failure { throw NativeReadTransportError(transport) }
             throw error
         }
     }

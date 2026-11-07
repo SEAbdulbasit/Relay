@@ -62,6 +62,7 @@ struct ProductionContextCapacityTests {
             try #require(call.name == "observe_app")
             return ToolResult(summary: snapshot, evidence: "Synthetic native fixture observation; no desktop controlled.", verified: true)
         })
+        store.configuration = ModelConfiguration(modelPath: "/synthetic/context-capacity.litertlm")
         store.draft = goal
         store.send()
         for _ in 0..<2_000 where store.isRunning { await Task.yield() }

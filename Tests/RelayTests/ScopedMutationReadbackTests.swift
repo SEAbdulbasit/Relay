@@ -16,6 +16,46 @@ struct ScopedMutationReadbackTests {
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["RELAY_RUN_SCOPED_READBACK_TEST"] == "1"))
+    func windowInventoryRequiresExplicitControlInspectionAndRejectsWindowTextEntry() async throws {
+        try await DesktopFixtureProcess.withLaunch(path: DesktopFixtureProcess.bundledPath,
+            environment: ["RELAY_FIXTURE_INCLUDE_DRAFT": "1"]) { fixture in
+            let tools = MacTools()
+            let initial = try oracle(fixture)
+            let draft = try #require((initial["draft"] as? [String: Any])?["text"] as? String)
+            let windows = try await observe(tools, mode: "windows")
+            #expect(windows.verified && windows.evidence.hasPrefix("Native AX observation"))
+            #expect(windows.summary.contains("Window inventory only; child controls were not inspected."))
+            #expect(windows.summary.contains("observe_app mode=full with window_id"))
+            #expect(windows.summary.contains("Window IDs are for inspection or focus, never set_value."))
+            let rows = windows.summary.split(separator: "\n").filter { $0.hasPrefix("element_id=") }
+            #expect(rows.count == 1 && rows.allSatisfy { $0.contains(" role=AXWindow ") })
+            #expect(!windows.summary.contains("identifier=relay.fixture.input"))
+            let window = try ref(containing: " role=AXWindow title=Relay Accessibility Fixture description=", in: windows.summary)
+            RelayActionPointer.shared.hide()
+            let wrongTarget = ToolCall(name: "set_value", arguments: ["bundle_id": .string(bundle),
+                "element_id": .string(window), "value": .string("Never enter this in a window")])
+            do {
+                _ = try await tools.execute(wrongTarget)
+                Issue.record("A window inventory ID must never accept text entry.")
+            } catch {
+                #expect(error.localizedDescription.contains("Only plain editable text controls are supported"))
+            }
+            #expect(!NSApplication.shared.windows.contains { $0.title == "Relay Action Pointer" && $0.isVisible })
+            // The existing wrong-role refusal happens before discardObservations.
+            // An explicit full read may still use that unchanged fresh window ID.
+            let full = try await tools.execute(ToolCall(name: "observe_app", arguments: ["bundle_id": .string(bundle),
+                "mode": .string("full"), "window_id": .string(window)]))
+            #expect(full.verified && !full.summary.contains("Window inventory only;"))
+            _ = try AccessibilityCheckRunner.controlID("relay.fixture.input", in: full.summary)
+            _ = try AccessibilityCheckRunner.controlID("relay.fixture.apply", in: full.summary)
+            let final = try oracle(fixture)
+            #expect((final["input"] as? String)?.isEmpty == true && final["result"] as? String == "Not applied")
+            #expect(final["clickCount"] as? Int == 0 && final["editingInput"] == nil)
+            #expect((final["draft"] as? [String: Any])?["text"] as? String == draft)
+        }
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["RELAY_RUN_SCOPED_READBACK_TEST"] == "1"))
     func cachedRecoveryIdentitySurvivesFreshIDsAndDistinguishesDifferentControls() async throws {
         try await DesktopFixtureProcess.withLaunch(path: DesktopFixtureProcess.bundledPath) { fixture in
             let tools = MacTools()

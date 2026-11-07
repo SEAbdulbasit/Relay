@@ -49,12 +49,33 @@ nonisolated struct ModelReply: Sendable {
     var content: String
     var toolCalls: [ToolCall]
 }
-nonisolated enum LocalBackend: String, Codable, CaseIterable, Sendable { case liteRTLM }
-nonisolated struct ModelConfiguration: Codable, Sendable {
+nonisolated enum LocalBackend: String, Codable, CaseIterable, Hashable, Sendable { case liteRTLM, lmStudio }
+nonisolated struct ModelConfiguration: Codable, Equatable, Sendable {
     var backend: LocalBackend = .liteRTLM
     var modelPath: String = ""
     var computeBackend: String = "cpu"
     var model: String = ""
+    var lmStudio: LMStudioConfiguration? = nil
+    init(backend: LocalBackend = .liteRTLM, modelPath: String = "", computeBackend: String = "cpu",
+         model: String = "", lmStudio: LMStudioConfiguration? = nil) {
+        self.backend = backend; self.modelPath = modelPath; self.computeBackend = computeBackend
+        self.model = model; self.lmStudio = lmStudio
+    }
+    private enum CodingKeys: String, CodingKey { case backend, modelPath, computeBackend, model, lmStudio }
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        if values.contains(.backend) { backend = try values.decode(LocalBackend.self, forKey: .backend) }
+        else { backend = .liteRTLM }
+        modelPath = try values.decodeIfPresent(String.self, forKey: .modelPath) ?? ""
+        computeBackend = try values.decodeIfPresent(String.self, forKey: .computeBackend) ?? "cpu"
+        model = try values.decodeIfPresent(String.self, forKey: .model) ?? ""
+        lmStudio = try values.decodeIfPresent(LMStudioConfiguration.self, forKey: .lmStudio)
+    }
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.backend == rhs.backend && LMStudioProtocolID.same(lhs.modelPath, rhs.modelPath)
+            && LMStudioProtocolID.same(lhs.computeBackend, rhs.computeBackend)
+            && LMStudioProtocolID.same(lhs.model, rhs.model) && lhs.lmStudio == rhs.lmStudio
+    }
 }
 nonisolated struct ToolResult: Codable, Sendable {
     var summary: String

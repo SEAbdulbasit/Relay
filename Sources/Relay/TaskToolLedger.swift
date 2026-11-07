@@ -22,7 +22,9 @@ nonisolated enum TaskToolLedger {
                 && name.utf8.allSatisfy { (97...122).contains($0) || (48...57).contains($0) || $0 == 95 }
         }.sorted().prefix(64))
         var counts: [String: Counts] = [:]
-        var pending: [String: Pending] = [:]
+        // Opaque protocol identifiers are byte sequences. Swift String equality
+        // would alias canonically equivalent, but distinct, request IDs.
+        var pending: [Data: Pending] = [:]
         var inconsistent = false
         for message in history {
             if message.role == "assistant" {
@@ -33,36 +35,39 @@ nonisolated enum TaskToolLedger {
                         inconsistent = true
                         continue
                     }
-                    if var overlap = pending[call.id] {
+                    let requestID = Data(call.id.utf8)
+                    if var overlap = pending[requestID] {
                         if !overlap.ambiguous {
                             for (name, count) in overlap.names { counts[name, default: Counts()].ambiguous += count }
                         }
                         overlap.ambiguous = true
                         overlap.names[call.name, default: 0] += 1
                         counts[call.name, default: Counts()].ambiguous += 1
-                        pending[call.id] = overlap
+                        pending[requestID] = overlap
                         inconsistent = true
                     } else {
                         // Completed IDs may be reused by a later native reply.
-                        pending[call.id] = Pending(names: [call.name: 1])
+                        pending[requestID] = Pending(names: [call.name: 1])
                     }
                 }
             }
             guard message.role == "tool", let id = message.toolCallID,
-                  var request = pending[id] else { continue }
+                  !id.isEmpty, id.utf8.count <= 256 else { continue }
+            let requestID = Data(id.utf8)
+            guard var request = pending[requestID] else { continue }
             guard let name = message.toolName, let outstanding = request.names[name], outstanding > 0 else {
                 if !request.ambiguous {
                     for (name, count) in request.names { counts[name, default: Counts()].ambiguous += count }
                 }
                 request.ambiguous = true
-                pending[id] = request
+                pending[requestID] = request
                 inconsistent = true
                 continue
             }
             if outstanding == 1 { request.names.removeValue(forKey: name) }
             else { request.names[name] = outstanding - 1 }
-            if request.names.isEmpty { pending.removeValue(forKey: id) }
-            else { pending[id] = request }
+            if request.names.isEmpty { pending.removeValue(forKey: requestID) }
+            else { pending[requestID] = request }
             guard !request.ambiguous else { continue }
             if let result = try? JSONDecoder().decode(ToolResult.self, from: Data(message.content.utf8)) {
                 if result.verified { counts[name, default: Counts()].verified += 1 }

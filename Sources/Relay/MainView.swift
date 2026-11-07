@@ -169,7 +169,7 @@ struct MainView: View {
         .task {
             await store.preparation.waitForCurrentPreparation()
             guard !Task.isCancelled, !store.workspaceActionsReady else { return }
-            if store.configuration.modelPath.isEmpty,
+            if store.configuration.backend == .liteRTLM, store.configuration.modelPath.isEmpty,
                let installed = ModelManifest.catalog.first(where: { ModelManifest.resolveInstalledURL(for: $0) != nil }) {
                 await store.selectCatalogModel(installed)
             } else {
@@ -180,6 +180,7 @@ struct MainView: View {
 
     private var activeModelDisplayName: String {
         if store.workspaceUsesCodex { return "ChatGPT via Codex CLI" }
+        if store.configuration.backend == .lmStudio { return store.configuration.localModelDisplayName }
         let filename = URL(fileURLWithPath: store.configuration.modelPath).lastPathComponent
         if let match = ModelManifest.catalog.first(where: { $0.filename == filename }) {
             return match.displayName
@@ -413,7 +414,7 @@ struct MainView: View {
                 } else if store.phase == .thinking {
                     Text("Planning the next step…").font(.system(size: 14)).foregroundStyle(RelayTheme.muted)
                 } else {
-                    Text(store.isPreparingModel ? "Preparing local model…" : store.accessibilityCheckRunning ? "Checking Mac controls…" : store.focusedDraft.isBusy ? "Drafting in the source app…" : store.isAuxiliaryBusy ? "Finishing current work…" : store.workspaceUsesCodex ? "Working on your request…" : "Thinking on this Mac…")
+                    Text(store.isPreparingModel ? "Preparing local model…" : store.accessibilityCheckRunning ? "Checking Mac controls…" : store.focusedDraft.isBusy ? "Drafting in the source app…" : store.isAuxiliaryBusy ? "Finishing current work…" : store.workspaceUsesCodex ? "Working on your request…" : store.configuration.backend == .lmStudio ? "Working with LM Studio…" : "Thinking on this Mac…")
                         .font(.system(size: 14)).foregroundStyle(RelayTheme.muted)
                 }
             }
@@ -635,7 +636,7 @@ struct MainView: View {
                                       icon: store.workspaceUsesCodex ? "cloud" : "desktopcomputer") {
                     showComposerModelPopover.toggle()
                 }
-                .help(store.workspaceUsesCodex ? "ChatGPT receives the messages you send here." : "Choose a model that runs on this Mac.")
+                .help(store.workspaceUsesCodex ? "ChatGPT receives the messages you send here." : "Choose the model for this workspace.")
                 .popover(isPresented: $showComposerModelPopover, arrowEdge: .top) {
                     WorkspaceModelOptions(store: store, modelName: activeModelDisplayName, close: {
                         showComposerModelPopover = false
@@ -808,7 +809,7 @@ private struct WorkspaceModelOptions: View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(ModelManifest.catalog, id: \.filename) { manifest in
                 if ModelManifest.resolveInstalledURL(for: manifest) != nil {
-                    let selected = !store.workspaceUsesCodex && modelName == manifest.displayName
+                    let selected = !store.workspaceUsesCodex && store.configuration.backend == .liteRTLM && modelName == manifest.displayName
                     Button {
                         close()
                         store.selectWorkspaceLocal()

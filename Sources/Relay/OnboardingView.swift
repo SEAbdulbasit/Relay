@@ -249,7 +249,7 @@ struct OnboardingView: View {
                 RelayEngineTab(
                     label: "Custom file",
                     selected: modelTab == .custom,
-                    active: !store.configuration.modelPath.isEmpty && store.actionsReady
+                    active: store.configuration.backend == .liteRTLM && !store.configuration.modelPath.isEmpty && store.actionsReady
                 ) {
                     store.selectWorkspaceLocal()
                     withAnimation(.easeInOut(duration: 0.2)) { modelTab = .custom }
@@ -283,11 +283,17 @@ struct OnboardingView: View {
     }
 
     private func localModelCard(hasE4B: Bool, hasInstalledModel: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        let embeddedReady = store.configuration.backend == .liteRTLM && store.actionsReady
+        return VStack(alignment: .leading, spacing: 16) {
+            if store.configuration.backend == .lmStudio {
+                Text("LM Studio is selected. Check its model in Settings, or choose an embedded package below to switch providers.")
+                    .font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if modelTab == .managed {
                 HStack(alignment: .center, spacing: 12) {
                     RelayHealthDot(
-                        color: store.actionsReady
+                        color: embeddedReady
                             ? RelayColors.accentEmerald
                             : (hasInstalledModel ? RelayHealthDot.warnAmber : RelayColors.accentAmethyst)
                     )
@@ -301,10 +307,10 @@ struct OnboardingView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
-                    Text(store.actionsReady ? "ACTIVE" : (hasInstalledModel ? "DOWNLOADED" : "ON-DEVICE"))
+                    Text(embeddedReady ? "ACTIVE" : (hasInstalledModel ? "DOWNLOADED" : "ON-DEVICE"))
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .tracking(1.4)
-                        .foregroundStyle(store.actionsReady ? RelayColors.accentEmerald : RelayColors.textBright)
+                        .foregroundStyle(embeddedReady ? RelayColors.accentEmerald : RelayColors.textBright)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
                         .background(Color.white.opacity(0.05), in: Capsule())
@@ -337,7 +343,7 @@ struct OnboardingView: View {
                 HStack(spacing: 12) {
                     if !coordinator.download.isBusy {
                         if hasInstalledModel {
-                            Button(coordinator.isPreparingModel ? "Verifying…" : (store.actionsReady ? "Reload Model" : "Activate Model")) {
+                            Button(coordinator.isPreparingModel ? "Verifying…" : (embeddedReady ? "Reload Model" : "Activate Model")) {
                                 useDownloadedModel()
                             }
                             .buttonStyle(RelayPrimaryButtonStyle())
@@ -364,7 +370,7 @@ struct OnboardingView: View {
                         .buttonStyle(RelaySecondaryButtonStyle())
                     }
 
-                    if store.actionsReady {
+                    if embeddedReady {
                         HStack(spacing: 8) {
                             RelayHealthDot(color: RelayColors.accentEmerald)
                             Text("Verified and ready on this Mac")
@@ -376,7 +382,7 @@ struct OnboardingView: View {
                 }
             } else {
                 HStack(alignment: .center, spacing: 12) {
-                    RelayHealthDot(color: store.actionsReady ? RelayColors.accentEmerald : RelayColors.accentBlue)
+                    RelayHealthDot(color: embeddedReady ? RelayColors.accentEmerald : RelayColors.accentBlue)
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Custom LiteRT-LM Package (.litertlm)")
                             .font(.system(size: 16, weight: .medium))
@@ -407,7 +413,7 @@ struct OnboardingView: View {
                     }
                     .buttonStyle(RelayPrimaryButtonStyle())
 
-                    if !store.configuration.modelPath.isEmpty && !store.actionsReady {
+                    if !store.configuration.modelPath.isEmpty && !embeddedReady {
                         Button(coordinator.isPreparingModel ? "Loading…" : "Load & Verify") {
                             loadModel()
                         }

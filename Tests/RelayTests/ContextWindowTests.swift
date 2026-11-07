@@ -49,4 +49,22 @@ struct ContextWindowTests {
     @Test func orphanToolResultsAreNotTreatedAsACompleteProtocol() {
         #expect(!ContextWindow.isWellFormed([ModelMessage(role: "tool", content: "old", toolCallID: "missing", toolName: "list_apps")]))
     }
+
+    @Test func opaqueIDsMatchExactBytesAndTheirOriginalToolNames() throws {
+        let first = ToolCall(id: "caf\u{e9}", name: "observe_app", arguments: [:])
+        let second = ToolCall(id: "cafe\u{301}", name: "calculate", arguments: [:])
+        let history = [ModelMessage(role: "user", content: "Keep both results."),
+            ModelMessage(role: "assistant", content: "", toolCalls: [first, second]),
+            ModelMessage(role: "tool", content: "Second result", toolCallID: second.id, toolName: second.name),
+            ModelMessage(role: "tool", content: "First result", toolCallID: first.id, toolName: first.name)]
+        let window = try ContextWindow.prepare(history, activeStart: 0, budget: 4_000)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        #expect(try encoder.encode(window.messages) == encoder.encode(history))
+        #expect(ContextWindow.isWellFormed(window.messages))
+        let call = ModelMessage(role: "assistant", content: "", toolCalls: [first])
+        #expect(!ContextWindow.isWellFormed([call,
+            ModelMessage(role: "tool", content: "Wrong ID", toolCallID: second.id, toolName: first.name)]))
+        #expect(!ContextWindow.isWellFormed([call,
+            ModelMessage(role: "tool", content: "Wrong name", toolCallID: first.id, toolName: second.name)]))
+    }
 }

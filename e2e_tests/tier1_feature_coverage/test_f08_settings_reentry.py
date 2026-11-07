@@ -41,8 +41,11 @@ class TestF08SettingsReentry(RelayE2ETestBase):
         self.assertIn(".keyboardShortcut(.cancelAction)", self.content)
 
     def test_f08_06_settings_explain_local_and_optional_hosted_models(self):
-        """Verifies the model page describes account-free local inference and the optional hosted provider."""
-        self.assertIn("Gemma and Relay’s private sources work on this Mac without an account.", self.content)
+        """Source contract for local, local-service and optional hosted choices; not rendered UI proof."""
+        self.assertTrue("No Relay account is needed." in self.content,
+                        "Local provider settings must retain the account-free Relay contract")
+        self.assertTrue("whose own privacy settings apply" in self.content,
+                        "Settings must explain the separately configured local service boundary")
         self.assertIn("WorkspaceCodexOption(store:", self.content)
         provider = (self.sources_relay / "WorkspaceCodexOption.swift").read_text(encoding="utf-8")
         self.assertIn("ChatGPT via Codex CLI", provider)

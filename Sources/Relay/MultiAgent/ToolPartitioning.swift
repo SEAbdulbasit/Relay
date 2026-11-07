@@ -15,6 +15,7 @@ nonisolated enum ToolPartitioning {
             // Read-only environment inspection & discovery.
             return [
                 "observe_app",
+                "inspect_native_window",
                 "list_apps",
                 "search_finder",
                 "list_files",
@@ -25,6 +26,7 @@ nonisolated enum ToolPartitioning {
         case .executor:
             // Concrete mutations, file operations, UI interaction, and app control.
             return [
+                "inspect_native_window",
                 "open_app",
                 "press_control",
                 "set_value",
@@ -43,6 +45,7 @@ nonisolated enum ToolPartitioning {
             // Independent verification and postcondition inspection.
             return [
                 "read_file",
+                "inspect_native_window",
                 "observe_app",
                 "read_browser_page"
             ]

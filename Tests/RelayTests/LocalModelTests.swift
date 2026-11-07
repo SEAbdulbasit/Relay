@@ -59,6 +59,17 @@ struct LocalModelTests {
         #expect(parsed.toolCalls.first?.arguments["app"] == .string("VLC"))
     }
 
+    @Test func nativeOpaqueIDsRetainDistinctUnicodeBytes() throws {
+        let ids = ["caf\u{e9}", "cafe\u{301}"]
+        let response = LiteRTLM.Message(contents: [], role: .model, toolCalls: ids.map {
+            LiteRTLM.ToolCall(name: "calculate", id: $0, arguments: ["expression": "2+2"])
+        })
+        let parsed = try LocalModelClient.parseReply(response, availableTools: ["calculate"])
+        #expect(parsed.toolCalls.count == 2)
+        #expect(parsed.toolCalls[0].id.utf8.elementsEqual(ids[0].utf8))
+        #expect(parsed.toolCalls[1].id.utf8.elementsEqual(ids[1].utf8))
+    }
+
     @Test func rejectsNonJSONAndOversizedNativeArguments() {
         let invalid = LiteRTLM.Message(contents: [], role: .model, toolCalls: [
             LiteRTLM.ToolCall(name: "open_app", id: "call_1", arguments: ["app": Date()])
@@ -101,7 +112,7 @@ struct LocalModelTests {
     }
 
     @Test func nativeSchemasMatchExecutorNamesFieldsAndRequiredArguments() throws {
-        let definitions = MacTools.definitions + [SidekickWindowText.definition]
+        let definitions = MacTools.definitions + [SidekickWindowText.definition, NativeWindowReadTool.definition]
         #expect(Set(definitions.map(\.name) + ["capability_probe"]) == LiteRTLM.RelayNativeTools.supportedNames)
         let manager = LiteRTLM.ToolManager(tools: try LiteRTLM.RelayNativeTools.makeTools(named: definitions.map(\.name)))
         let json = try JSONDecoder().decode(JSONValue.self, from: Data(manager.toolsJsonDescription.utf8))

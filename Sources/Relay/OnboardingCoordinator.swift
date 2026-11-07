@@ -97,6 +97,7 @@ final class OnboardingCoordinator {
             modelSetupError = download.errorMessage ?? (download.phase == .cancelled ? download.status : "No verified recommended model is available. Download it or import a compatible model.")
             return
         }
+        store.configuration.backend = .liteRTLM
         store.configuration.modelPath = url.path
         store.saveConfiguration()
         await loadModel(store: store)
@@ -104,7 +105,7 @@ final class OnboardingCoordinator {
 
     func loadModel(store: AssistantStore) async {
         guard !isPreparingModel, !store.isRunning, !download.isBusy else { return }
-        guard hardware.supported else { modelSetupError = hardware.summary; return }
+        guard store.configuration.backend != .liteRTLM || hardware.supported else { modelSetupError = hardware.summary; return }
         isPreparingModel = true
         modelSetupError = nil
         preparationRevision += 1

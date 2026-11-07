@@ -81,15 +81,15 @@ nonisolated enum ContextWindow {
     /// so their complete results are deliberately outside this transformation.
     private static func compactActive(_ history: [ModelMessage], budget: Int) -> (messages: [ModelMessage], count: Int) {
         var selected = history, compactedCount = 0
-        var pending: [String: (call: ToolCall, position: Int)] = [:]
+        var pending: [Data: (call: ToolCall, position: Int)] = [:]
         var observations: [(index: Int, call: ToolCall, callPosition: Int, result: ToolResult)] = []
         var nextCallPosition = 0
         for (index, message) in history.enumerated() {
             for call in message.toolCalls {
-                pending[call.id] = (call, nextCallPosition)
+                pending[Data(call.id.utf8)] = (call, nextCallPosition)
                 nextCallPosition += 1
             }
-            guard message.role == "tool", let id = message.toolCallID, let pendingCall = pending.removeValue(forKey: id) else { continue }
+            guard message.role == "tool", let id = message.toolCallID, let pendingCall = pending.removeValue(forKey: Data(id.utf8)) else { continue }
             let call = pendingCall.call
             guard call.name == "observe_app", message.toolName == call.name,
                   let result = try? JSONDecoder().decode(ToolResult.self, from: Data(message.content.utf8)) else { continue }
@@ -186,7 +186,7 @@ nonisolated enum ContextWindow {
     /// Controls and opaque/action receipts are never candidates. Evidence and
     /// verification remain whole; listings stop only at complete source lines.
     private static func boundedReadSource(_ message: ModelMessage, maximumBytes: Int) -> ModelMessage? {
-        let textTools: Set<String> = ["read_file", "read_sidekick_window"]
+        let textTools: Set<String> = ["read_file", "read_sidekick_window", "inspect_native_window"]
         let lineTools: Set<String> = ["list_apps", "list_files", "search_files", "read_calendar", "read_browser_page", "search_knowledge"]
         guard message.role == "tool", let tool = message.toolName, textTools.contains(tool) || lineTools.contains(tool),
               maximumBytes >= 256,
@@ -232,11 +232,16 @@ nonisolated enum ContextWindow {
         return String(decoding: result, as: UTF8.self)
     }
     static func isWellFormed(_ messages: [ModelMessage]) -> Bool {
-        var pending = Set<String>()
+        var pending: [Data: String] = [:]
         for message in messages {
-            for call in message.toolCalls { guard pending.insert(call.id).inserted else { return false } }
+            for call in message.toolCalls {
+                guard !call.id.isEmpty, call.id.utf8.count <= 512,
+                      pending.updateValue(call.name, forKey: Data(call.id.utf8)) == nil else { return false }
+            }
             if message.role == "tool" {
-                guard let id = message.toolCallID, pending.remove(id) != nil else { return false }
+                guard let id = message.toolCallID, id.utf8.count <= 512,
+                      let expected = pending.removeValue(forKey: Data(id.utf8)),
+                      let name = message.toolName, expected.utf8.elementsEqual(name.utf8) else { return false }
             }
         }
         return pending.isEmpty

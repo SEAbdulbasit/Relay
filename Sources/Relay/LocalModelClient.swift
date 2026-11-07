@@ -41,6 +41,9 @@ final class LocalModelClient {
     var isLoaded: Bool { runtime != nil && loadedIdentity != nil }
 
     static func validatedModelURL(_ configuration: ModelConfiguration) throws -> URL {
+        guard configuration.backend == .liteRTLM else {
+            throw RelayError.message("The selected provider is LM Studio. Use its local connection instead of opening an embedded model package.")
+        }
         guard !configuration.modelPath.isEmpty, configuration.modelPath.hasPrefix("/"),
               !configuration.modelPath.contains("\0"),
               ["cpu", "gpu"].contains(configuration.computeBackend) else {
@@ -71,7 +74,7 @@ final class LocalModelClient {
         try Task.checkCancellation()
         let url = try Self.validatedModelURL(configuration)
         let identity = "\(url.path)|\(configuration.computeBackend)" + (mode == .vision ? "|native-vision" : "")
-        if loadedIdentity == identity, runtime != nil { return }
+        if let loadedIdentity, LMStudioProtocolID.same(loadedIdentity, identity), runtime != nil { return }
         guard !generating else { throw RelayError.message("Stop the current inference before replacing its model.") }
         guard !loading else { throw RelayError.message("A local model is already loading. Wait for initialization to finish.") }
         loading = true
@@ -273,7 +276,7 @@ final class LocalModelClient {
                 throw ModelProtocolError.invalidAction("Arguments must be a structured JSON object. \(diagnostic)")
             }
             let id = call.id.isEmpty ? "litert_\(UUID().uuidString)" : call.id
-            guard id.utf8.count <= 256, !calls.contains(where: { $0.id == id }) else {
+            guard id.utf8.count <= 256, !calls.contains(where: { $0.id.utf8.elementsEqual(id.utf8) }) else {
                 throw ModelProtocolError.invalidAction("Invalid or duplicated native action identity. \(diagnostic)")
             }
             calls.append(ToolCall(id: id, name: call.name, arguments: arguments))

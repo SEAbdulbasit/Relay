@@ -83,6 +83,7 @@ struct NativeModelWorkflowIntegrationTests {
             let initial = try oracle(fixture)
             try #require(initial.input.isEmpty && initial.result == "Not applied" && initial.clickCount == 0)
             let untouchedDraft = try #require(initial.draft?.text)
+            try await activateOwnedFixtureForInitialInference(fixture)
             let client = LocalModelClient()
             let trace = WorkflowTrace()
             let store = AssistantStore(persistenceURL: nil, complete: { messages, definitions, configuration in
@@ -91,25 +92,32 @@ struct NativeModelWorkflowIntegrationTests {
                 // This callback preserves the production prompt and full native
                 // schemas. It restricts returned actions before Store can dispatch,
                 // without replacing its private MacTools instance or review cache.
-                try #require(Set(definitions.map(\.name)) == Set(MacTools.definitions.map(\.name)))
+                try #require(Set(definitions.map(\.name)) == Set((MacTools.definitions + [NativeWindowReadTool.definition]).map(\.name)))
                 try #require(messages.first?.content.contains("You are Relay, a personal macOS assistant.") == true)
                 trace.generations += 1
                 let systemBytes = messages.filter { $0.role == "system" }.reduce(0) { $0 + $1.content.utf8.count }
                 let schemaBytes = try JSONEncoder().encode(definitions).count
                 print("Native model budget turn \(trace.generations): systemBytes=\(systemBytes), schemaBytes=\(schemaBytes), historyBytes=\(ContextWindow.bytes(messages.filter { $0.role != "system" })), historyBudget=\(LocalModelClient.maximumContextBytes - systemBytes - schemaBytes).")
                 let foregroundBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier == fixture.application.processIdentifier
+                if trace.generations == 1 {
+                    try #require(foregroundBefore,
+                        "Setup requires the exact owned fixture to remain foreground before the first inference. No task proposal was dispatched.")
+                }
                 trace.rememberSyntheticRows(messages)
+                if let diagnostic = trace.observationDiagnostic(messages) { print(diagnostic) }
                 let inferenceStart = ContinuousClock.now
                 let reply = try await client.complete(messages: messages, tools: definitions, configuration: configuration)
                 let elapsed = inferenceStart.duration(to: ContinuousClock.now).components
                 let seconds = Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1_000_000_000_000_000_000
-                print("Native model turn timing: turn=\(trace.generations), seconds=\(seconds), fixtureForegroundBefore=\(foregroundBefore), fixtureForegroundAfter=\(NSWorkspace.shared.frontmostApplication?.processIdentifier == fixture.application.processIdentifier).")
+                let foregroundAfter = NSWorkspace.shared.frontmostApplication?.processIdentifier == fixture.application.processIdentifier
+                print("Native model turn timing: turn=\(trace.generations), seconds=\(seconds), fixtureForegroundBefore=\(foregroundBefore), fixtureForegroundAfter=\(foregroundAfter), focusDriftDuringInference=\(foregroundBefore != foregroundAfter).")
                 try Task.checkCancellation()
                 try fixture.requireExclusiveProcess()
                 guard trace.proposedCalls.count + reply.toolCalls.count <= 12 else {
                     throw RelayError.message("Native model gate exceeded twelve bounded fixture calls.")
                 }
                 for call in reply.toolCalls {
+                    print(trace.proposalDiagnostic(call))
                     print(trace.targetDiagnostic(call, messages: messages))
                     try validate(call, messages: messages, expected: expected)
                 }
@@ -318,6 +326,41 @@ struct NativeModelWorkflowIntegrationTests {
         return ["", "click"].contains(action) && (call.arguments["value"]?.string ?? "").isEmpty
     }
 
+    @Test func boundedProposalDiagnosticsRetainScopeAndCoverageWithoutTextValues() throws {
+        let trace = WorkflowTrace()
+        let call = ToolCall(name: "observe_app", arguments: ["bundle_id": .string(AccessibilityCheckRunner.fixtureBundleID),
+            "mode": .string("windows"), "window_id": .string("EXACT-window-ref"), "value": .string("PRIVATE_VALUE"),
+            "query": .string("PRIVATE_QUERY")])
+        let proposal = trace.proposalDiagnostic(call)
+        #expect(proposal.contains("EXACT-window-ref") && proposal.contains("windows"))
+        #expect(!proposal.contains("PRIVATE_VALUE") && !proposal.contains("PRIVATE_QUERY"))
+        let row = "element_id=EXACT-window-ref role=AXWindow title=Fixture description= identifier=window value=PRIVATE_VALUE enabled=unknown focused=true minimized=false"
+        let content = JSONValue.object(["summary": .string(row + "\nWindow inventory only; child controls were not inspected."),
+            "evidence": .string("Native AX observation of synthetic fixture."), "verified": .bool(true)]).pretty
+        let history = [ModelMessage(role: "assistant", content: "", toolCalls: [call]),
+            ModelMessage(role: "tool", content: content, toolCallID: call.id, toolName: call.name)]
+        let source = try #require(trace.observationDiagnostic(history))
+        #expect(source.contains("rowUTF8Bytes") && source.contains("inventoryOnly") && source.contains("windows"))
+        #expect(!source.contains("PRIVATE_VALUE") && !source.contains("PRIVATE_QUERY"))
+        let huge = trace.proposalDiagnostic(ToolCall(name: String(repeating: "n", count: 1000), arguments: [
+            "bundle_id": .string(String(repeating: "b", count: 1000)), "element_id": .string(String(repeating: "e", count: 1000))]))
+        #expect(huge.utf8.count <= 3000 && huge.contains("false"), "Bounded fields explicitly report incomplete diagnostic coverage.")
+    }
+
+    private func activateOwnedFixtureForInitialInference(_ fixture: DesktopFixtureProcess) async throws {
+        try fixture.requireExclusiveProcess()
+        let accepted = fixture.application.activate()
+        for _ in 0..<40 {
+            try Task.checkCancellation()
+            try fixture.requireExclusiveProcess()
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == fixture.application.processIdentifier { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let foreground = NSWorkspace.shared.frontmostApplication?.processIdentifier == fixture.application.processIdentifier
+        print("Native fixture setup: activationAccepted=\(accepted), exactOwnedProcessForeground=\(foreground), maximumWaitMilliseconds=2000. No mid-task reactivation is performed.")
+        try #require(foreground, "The exact owned fixture did not become foreground within the bounded setup wait.")
+    }
+
     private struct Oracle: Decodable {
         let input: String
         let editingInput: String?
@@ -340,6 +383,59 @@ struct NativeModelWorkflowIntegrationTests {
         var observedResults: [String] = []
         var latestWriteReceipt: ToolResult?
         private var knownRows: [String: String] = [:]
+
+        func proposalDiagnostic(_ call: ToolCall) -> String {
+            var payload: [String: JSONValue] = ["name": Self.field(call.name, limit: 256)]
+            for (key, limit) in [("bundle_id", 255), ("app", 255), ("mode", 32), ("window_id", 160),
+                                 ("element_id", 160), ("root_ref", 160), ("action", 80), ("direction", 80)] {
+                if let value = call.arguments[key]?.string { payload[key] = Self.field(value, limit: limit) }
+                else { payload[key] = .object(["present": .bool(call.arguments[key] != nil), "isString": .bool(false)]) }
+            }
+            payload["argumentCount"] = .number(Double(call.arguments.count))
+            return "Native fixture structured proposal: " + Self.encoded(payload)
+        }
+
+        func observationDiagnostic(_ messages: [ModelMessage]) -> String? {
+            guard let source = messages.last(where: { $0.role == "tool" && $0.toolName == "observe_app" }),
+                  let result = try? JSONDecoder().decode(ToolResult.self, from: Data(source.content.utf8)) else { return nil }
+            let rows = result.summary.split(separator: "\n").filter { $0.hasPrefix("element_id=") }
+            let sourceCall = messages.reversed().flatMap(\.toolCalls).first {
+                source.toolCallID?.utf8.elementsEqual($0.id.utf8) == true && $0.name == source.toolName
+            }
+            let sourcePayload = try? JSONDecoder().decode([String: JSONValue].self, from: Data(source.content.utf8))
+            var payload: [String: JSONValue] = [
+                "toolContentUTF8Bytes": .number(Double(source.content.utf8.count)),
+                "summaryUTF8Bytes": .number(Double(result.summary.utf8.count)),
+                "evidenceUTF8Bytes": .number(Double(result.evidence.utf8.count)),
+                "rowCount": .number(Double(rows.count)),
+                "windowRows": .number(Double(rows.filter { $0.contains(" role=AXWindow ") }.count)),
+                "fixtureInputRows": .number(Double(rows.filter { $0.contains(" identifier=relay.fixture.input ") || $0.contains(" role=textfield title=Fixture input ") }.count)),
+                "rowUTF8Bytes": .array(rows.prefix(16).map { .number(Double($0.utf8.count)) }),
+                "rowLengthsComplete": .bool(rows.count <= 16),
+                "summaryLineCount": .number(Double(result.summary.split(separator: "\n", omittingEmptySubsequences: false).count)),
+                "inventoryOnly": .bool(result.summary.contains("Window inventory only;")),
+                "observationLimitMarker": .bool(result.summary.contains("[Some controls were outside the observation limits.")),
+                "contextProjectionPresent": .bool(sourcePayload?["context_coverage"] != nil || sourcePayload?["coverage"] != nil),
+                "referenceStatusPresent": .bool(sourcePayload?["reference_status"] != nil),
+                "modeAbsentDefaultsToFull": .bool(sourceCall != nil && sourceCall?.arguments["mode"] == nil),
+                "verified": .bool(result.verified)
+            ]
+            for key in ["mode", "window_id", "root_ref"] {
+                if let value = sourceCall?.arguments[key]?.string { payload[key] = Self.field(value, limit: 160) }
+                else { payload[key] = .object(["present": .bool(false)]) }
+            }
+            return "Native fixture observation shape: " + Self.encoded(payload)
+        }
+
+        private static func field(_ value: String, limit: Int) -> JSONValue {
+            .object(["value": .string(MacTools.boundedText(value, utf8Limit: limit)),
+                     "utf8Bytes": .number(Double(value.utf8.count)), "complete": .bool(value.utf8.count <= limit)])
+        }
+
+        private static func encoded(_ payload: [String: JSONValue]) -> String {
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            return String(decoding: (try? encoder.encode(JSONValue.object(payload))) ?? Data("{\"diagnosticEncodingFailed\":true}".utf8), as: UTF8.self)
+        }
 
         func rememberSyntheticRows(_ messages: [ModelMessage]) {
             latestWriteReceipt = messages.last(where: { $0.role == "tool" && $0.toolName == "set_value" }).flatMap {

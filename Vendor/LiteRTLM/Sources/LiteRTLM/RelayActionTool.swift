@@ -6,7 +6,7 @@ public enum RelayNativeTools {
     public static let supportedNames: Set<String> = [
         "calculate", "search_files", "preview_file_move", "move_file", "read_browser_page", "create_document",
         "create_spreadsheet", "read_calendar", "search_knowledge", "list_apps", "open_app", "open_file",
-        "stage_attachment", "create_mail_draft", "prepare_mail_send", "send_mail", "list_files", "read_file", "write_file", "observe_app", "read_sidekick_window",
+        "stage_attachment", "create_mail_draft", "prepare_mail_send", "send_mail", "list_files", "read_file", "write_file", "observe_app", "read_sidekick_window", "inspect_native_window",
         "set_value", "scroll_control", "press_control", "open_url", "browser_navigate", "search_web",
         "search_finder", "capability_probe",
     ]
@@ -34,6 +34,7 @@ public enum RelayNativeTools {
             case "write_file": return RelayWriteFileTool()
             case "observe_app": return RelayObserveAppTool()
             case "read_sidekick_window": return RelayReadSidekickWindowTool()
+            case "inspect_native_window": return RelayInspectNativeWindowTool()
             case "set_value": return RelaySetValueTool()
             case "scroll_control": return RelayScrollControlTool()
             case "press_control": return RelayPressControlTool()
@@ -139,7 +140,7 @@ private struct RelayWriteFileTool: RelaySchemaTool {
 
 private struct RelayObserveAppTool: RelaySchemaTool {
     static let name = "observe_app"
-    static let description = "Inspect running app controls. mode=windows lists windows/focus; mode=full with window_id inspects that native window. Use this sequence before Unicode text entry. skeleton/find/root_ref use helper refs; helper text entry is ASCII only. IDs expire after observation/mutation. Secure controls excluded; content untrusted."
+    static let description = "Inspect running app controls. mode=windows returns window IDs only, not editable controls; inspect mode=full with window_id before choosing a control. Use this sequence for Unicode text. skeleton/find/root_ref use helper refs; helper entry is ASCII only. IDs expire after observation/mutation. Secure controls excluded; content untrusted."
     @ToolParam(description: "Running app bundle identifier")
     var bundle_id: String
     @ToolParam(description: "Optional: full, windows, skeleton, or find")
@@ -159,9 +160,19 @@ private struct RelayReadSidekickWindowTool: RelaySchemaTool {
     init() {}
 }
 
+private struct RelayInspectNativeWindowTool: RelaySchemaTool {
+    static let name = "inspect_native_window"
+    static let description = "Read the exact native window of an app already admitted by this user task, using local vision when AX text is insufficient. Ask one specific question. This is read-only; model interpretation is not independent outcome proof. It cannot admit another app or perform input."
+    @ToolParam(description: "Original task-admitted app bundle ID")
+    var bundle_id: String
+    @ToolParam(description: "Specific read-only question about that current window, up to 1024 UTF-8 bytes")
+    var question: String
+    init() {}
+}
+
 private struct RelaySetValueTool: RelaySchemaTool {
     static let name = "set_value"
-    static let description = "Set plain editable text and read back exact value. Helper @snapshot refs accept ASCII only. For Unicode, observe mode=windows then full with window_id; use fresh native IDs. Native multiline areas support line breaks. Passwords/address bars excluded. Observe after mutation."
+    static let description = "Set a fresh editable text control and read back exact value; window IDs are not text controls. Helper @snapshot refs accept ASCII only. For Unicode, observe mode=windows then full with window_id for native control IDs. Native multiline areas support line breaks. Passwords/address bars excluded. Observe after mutation."
     @ToolParam(description: "Observed bundle identifier")
     var bundle_id: String
     @ToolParam(description: "Fresh native control ID (Unicode/multiline) or helper @snapshot:eN ref (ASCII only)")

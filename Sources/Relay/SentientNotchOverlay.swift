@@ -1037,7 +1037,8 @@ struct NotchOverlayBar: View {
                 SpinningLogo(size: 16)
                 Text("Sidekick").font(.system(size: 13, weight: .semibold))
                 Spacer()
-                Label(store.workspaceUsesCodex ? "ChatGPT" : "On-device", systemImage: store.workspaceUsesCodex ? "cloud" : "desktopcomputer")
+                Label(store.workspaceUsesCodex ? "ChatGPT" : store.configuration.localProviderName,
+                    systemImage: store.workspaceUsesCodex ? "cloud" : store.configuration.backend == .lmStudio ? "server.rack" : "desktopcomputer")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(store.workspaceUsesCodex ? RelayColors.accentBlue : RelayColors.textSecondary)
                 collapseButton

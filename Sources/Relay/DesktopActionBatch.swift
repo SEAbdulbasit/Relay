@@ -8,7 +8,7 @@ nonisolated enum DesktopActionBatch {
     // These mirror the entry points that discard MacTools' native/helper cache.
     // File writes invalidate too: a document change can replace its open UI.
     private static let referenceInvalidators: Set<String> = controlChanges.union([
-        "observe_app", "stage_attachment", "open_app", "open_file", "search_finder", "move_file",
+        "observe_app", "inspect_native_window", "stage_attachment", "open_app", "open_file", "search_finder", "move_file",
         "browser_navigate", "search_web", "open_url", "write_file", "create_document", "create_spreadsheet"
     ])
 

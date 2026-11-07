@@ -183,11 +183,22 @@ struct SettingsView: View {
     // MARK: - Model Settings
     private var modelSettings: some View {
         VStack(alignment: .leading, spacing: 22) {
-            sectionTitle("Workspace intelligence", detail: "Choose on-device Gemma or use your existing ChatGPT sign-in for workspace tasks.")
+            sectionTitle("Workspace intelligence", detail: "Choose a local provider or use your existing ChatGPT sign-in for workspace tasks.")
 
             WorkspaceCodexOption(store: store)
 
-            sectionTitle("Your local intelligence", detail: "Gemma and Relay’s private sources work on this Mac without an account.")
+            sectionTitle("Your local intelligence", detail: "Choose an embedded model or your local LM Studio service. No Relay account is needed.")
+
+            Picker("Local provider", selection: Binding(get: { store.configuration.backend }, set: { store.selectLocalProvider($0) })) {
+                Text("On this Mac").tag(LocalBackend.liteRTLM)
+                Text("LM Studio").tag(LocalBackend.lmStudio)
+            }
+            .pickerStyle(.segmented)
+            .disabled(store.isPreparingModel || store.checkingCodex)
+
+            if store.configuration.backend == .lmStudio {
+                LMStudioSettingsView(store: store)
+            } else {
 
             VStack(alignment: .leading, spacing: 18) {
                 HStack(alignment: .top, spacing: 14) {
@@ -329,7 +340,8 @@ struct SettingsView: View {
             .padding(20)
             .relayLitCard(accent: RelayColors.accentEmerald, cornerRadius: RelayTheme.radius)
 
-            note("Gemma runs on this Mac. Model downloads, ChatGPT, and user-requested browser tasks use the internet.", icon: "desktopcomputer")
+            }
+            note("Embedded Gemma runs on this Mac. LM Studio requests go to your selected local service, whose own privacy settings apply. Model downloads, ChatGPT and browser tasks can use the internet.", icon: "desktopcomputer")
 
             DisclosureGroup("Computer-use engine · advanced") {
             VStack(alignment: .leading, spacing: 14) {
@@ -633,7 +645,7 @@ struct SettingsView: View {
                             .padding(.bottom, 12)
                     }
                     Divider()
-                    DraftModelSettingsView(preferences: store.draftModel, busy: store.isRunning)
+                    DraftModelSettingsView(preferences: store.draftModel, busy: store.isRunning, activeConfiguration: store.configuration)
                         .padding(.vertical, 14)
                 }
                 .padding(.horizontal, 16)

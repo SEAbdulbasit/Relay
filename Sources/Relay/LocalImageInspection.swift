@@ -64,6 +64,7 @@ nonisolated struct InspectionImage: Sendable {
 @MainActor
 enum LocalImageInference {
     static func inspect(_ image: InspectionImage, question: String, configuration: ModelConfiguration) async throws -> String {
+        guard configuration.backend == .liteRTLM else { throw LocalInferenceFailure.unsupportedImageInspection }
         let question = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, question.utf8.count <= 2_000 else {
             throw RelayError.message("Enter a question of up to 2,000 UTF-8 bytes.")
@@ -103,6 +104,7 @@ enum LocalImageInference {
 
 @Observable @MainActor
 final class ImageInspectionController: NSObject {
+    var generate: (@MainActor (InspectionImage, String, ModelConfiguration, @escaping @MainActor @Sendable () -> Bool) async throws -> String)?
     var question = "What do you see in this image?"
     private(set) var image: InspectionImage?
     private(set) var answer: String?
@@ -146,16 +148,21 @@ final class ImageInspectionController: NSObject {
 
     func inspect(configuration: ModelConfiguration, textModelIsLoaded: Bool) {
         guard !isBusy, let image else { return }
-        if textModelIsLoaded, ProcessInfo.processInfo.physicalMemory < 16 * 1_024 * 1_024 * 1_024 {
+        if configuration.backend == .liteRTLM, textModelIsLoaded, ProcessInfo.processInfo.physicalMemory < 16 * 1_024 * 1_024 * 1_024 {
             status = "Unload the chat model in Settings before inspecting an image on this Mac."
             return
         }
         let question = self.question
-        start(status: "Inspecting locally…", keepImage: true) { controller in
-            let answer = try await LocalImageInference.inspect(image, question: question, configuration: configuration)
+        start(status: configuration.backend == .lmStudio ? "Inspecting with LM Studio…" : "Inspecting locally…", keepImage: true) { controller in
+            let expected = controller.revision
+            let current: @MainActor @Sendable () -> Bool = { [weak controller] in controller?.revision == expected }
+            let answer: String
+            if let generate = controller.generate { answer = try await generate(image, question, configuration, current) }
+            else { answer = try await LocalImageInference.inspect(image, question: question, configuration: configuration) }
             try Task.checkCancellation()
+            guard current() else { throw CancellationError() }
             controller.answer = answer
-            controller.status = "Local image analysis. Check details against the image."
+            controller.status = configuration.backend == .lmStudio ? "LM Studio image analysis. Check details against the image." : "Local image analysis. Check details against the image."
         }
     }
 

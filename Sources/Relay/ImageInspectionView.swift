@@ -21,6 +21,11 @@ struct ImageInspectionView: View {
             Text("Inspect an image or window").font(.title2.weight(.semibold))
             Text("Use the local model to describe one image or window. You can review the description before using it in a local task.")
                 .font(.callout).foregroundStyle(.secondary)
+            if configuration.backend == .lmStudio {
+                Text("LM Studio first checks a synthetic marker for this model. Your selected image is sent only after that check and while this request remains active.")
+                    .font(.callout).foregroundStyle(RelayColors.accentGold)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack {
                 Button("Choose image…", systemImage: "photo") { pickerError = nil; showFiles = true }
                 Button("Choose window…", systemImage: "macwindow") { pickerError = nil; inspection.chooseWindow() }
@@ -74,7 +79,8 @@ struct ImageInspectionView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(otherWorkInProgress || inspection.isBusy || inspection.image == nil
-                          || configuration.modelPath.isEmpty || inspection.question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                          || !configuration.hasConfiguredInferenceModel
+                          || inspection.question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(22)

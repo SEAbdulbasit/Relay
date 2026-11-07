@@ -4,6 +4,38 @@ import Testing
 
 @MainActor
 struct ExecutorTests {
+    @Test func interruptedByteDistinctCallsKeepSeparateSettledAndUnconfirmedReceipts() async throws {
+        let first = ToolCall(id: "caf\u{e9}", name: "calculate", arguments: ["expression": .string("1+1")])
+        let second = ToolCall(id: "cafe\u{301}", name: "calculate", arguments: ["expression": .string("2+2")])
+        var turn = 0, dispatches = 0
+        var release: CheckedContinuation<Void, Never>?
+        var resumedInput: [ModelMessage] = []
+        let store = AssistantStore(persistenceURL: nil, complete: { input, _, _ in
+            turn += 1
+            if turn == 1 { return ModelReply(content: "", toolCalls: [first, second]) }
+            resumedInput = input
+            return ModelReply(content: "Only the first result settled. The second request remains unconfirmed.", toolCalls: [])
+        }, execute: { _ in
+            dispatches += 1
+            await withCheckedContinuation { release = $0 }
+            return ToolResult(summary: "First result settled", evidence: "Synthetic result only", verified: true)
+        })
+        store.draft = "Calculate both synthetic expressions once."
+        store.send()
+        for _ in 0..<500 where release == nil { await Task.yield() }
+        let pending = try #require(release)
+        store.stop()
+        store.resume()
+        pending.resume()
+        for _ in 0..<1000 where resumedInput.isEmpty || store.isRunning { await Task.yield() }
+        #expect(dispatches == 1)
+        #expect(!resumedInput.isEmpty && ContextWindow.isWellFormed(resumedInput))
+        let settled = resumedInput.filter { $0.role == "tool" && $0.toolCallID?.utf8.elementsEqual(first.id.utf8) == true }
+        let interrupted = resumedInput.filter { $0.role == "tool" && $0.toolCallID?.utf8.elementsEqual(second.id.utf8) == true }
+        #expect(settled.count == 1 && settled[0].content.contains("First result settled"))
+        #expect(interrupted.count == 1 && interrupted[0].content.contains("Interrupted; not confirmed executed"))
+    }
+
     @Test func customStorePersistenceIsolatesAllSourceAndStyleState() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

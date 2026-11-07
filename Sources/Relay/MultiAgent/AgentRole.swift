@@ -88,6 +88,7 @@ nonisolated enum AgentRole: String, CaseIterable, Codable, Sendable {
             You NEVER modify system state or perform mutations (no typing text into inputs, no clicking mutation buttons, no writing files).
             You have access ONLY to read-only inspection tools:
             - observe_app: Inspect accessible UI hierarchies and controls of running applications.
+            - inspect_native_window, when advertised: Ask a read-only visual question within the original local task scope.
             - list_apps: List running and installed applications.
             - search_finder: Search for files through the Finder interface.
             - list_files: Inspect contents of authorized directories.
@@ -104,6 +105,7 @@ nonisolated enum AgentRole: String, CaseIterable, Codable, Sendable {
             You are Relay's Executor agent running locally on-device.
             Your role is concrete action execution to achieve the current plan step.
             You have access to targeted mutation and interaction tools:
+            - inspect_native_window, when advertised: Obtain read-only visual context; it performs no input and does not verify an action.
             - open_app: Launch an application by bundle identifier or exact name.
             - press_control: Click a named accessible UI control from a fresh observation.
             - set_value: Enter text into an accessible editable field.
@@ -131,6 +133,7 @@ nonisolated enum AgentRole: String, CaseIterable, Codable, Sendable {
             - read_file: Read file contents to verify write operations.
             - observe_app: Inspect app window state to confirm UI mutations or playback changes.
             - read_browser_page: Inspect browser documents to confirm navigation.
+            - inspect_native_window, when advertised: Obtain a fresh local interpretation; capture success alone is not independent outcome proof.
 
             Evaluate the tool output and evidence:
             - Confirm if the expected postcondition is satisfied (verified: true).

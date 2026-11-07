@@ -64,6 +64,33 @@ struct TaskToolLedgerTests {
         #expect(summary.contains("overlapping IDs are ambiguous"))
     }
 
+    @Test(arguments: [false, true])
+    func canonicallyEquivalentResultCannotVerifyADifferentLiteralRequestID(reversed: Bool) throws {
+        let ids = reversed ? ["cafe\u{301}", "caf\u{e9}"] : ["caf\u{e9}", "cafe\u{301}"]
+        let call = ToolCall(id: ids[0], name: "press_control", arguments: [:])
+        let receipt = try encoded(ToolResult(summary: "Different request", evidence: "", verified: true))
+        let history = [ModelMessage(role: "assistant", content: "", toolCalls: [call]),
+            ModelMessage(role: "tool", content: receipt, toolCallID: ids[1], toolName: call.name)]
+        let summary = TaskToolLedger.summary(history: history[...], toolNames: [call.name])
+        #expect(summary.contains("press_control: requests=1, verified_receipts=0"))
+        #expect(summary.contains("lack an unambiguous completed receipt"))
+    }
+
+    @Test func byteDistinctCanonicalIDsKeepTheirIndependentReceipts() throws {
+        let read = ToolCall(id: "caf\u{e9}", name: "observe_app", arguments: [:])
+        let write = ToolCall(id: "cafe\u{301}", name: "set_value", arguments: [:])
+        let checked = try encoded(ToolResult(summary: "Read checked", evidence: "", verified: true))
+        let uncertain = try encoded(ToolResult(summary: "Write uncertain", evidence: "", verified: false))
+        let history = [ModelMessage(role: "assistant", content: "", toolCalls: [read, write]),
+            ModelMessage(role: "tool", content: uncertain, toolCallID: write.id, toolName: write.name),
+            ModelMessage(role: "tool", content: checked, toolCallID: read.id, toolName: read.name)]
+        let summary = TaskToolLedger.summary(history: history[...], toolNames: [read.name, write.name])
+        #expect(summary.contains("observe_app: requests=1, verified_receipts=1, uncertain_receipts=0"))
+        #expect(summary.contains("set_value: requests=1, verified_receipts=0, uncertain_receipts=1"))
+        #expect(!summary.contains("lack an unambiguous"))
+        #expect(!summary.contains("ambiguous_requests=1"))
+    }
+
     @Test func byteBoundPreservesCompleteLinesAndNeverRelabelsOmittedRequestsAsZero() throws {
         let names = (0..<64).map { "tool_" + String(format: "%03d", $0) + "_" + String(repeating: "x", count: 40) }
         let requested = Array(names.prefix(40))
