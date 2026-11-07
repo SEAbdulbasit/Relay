@@ -5,6 +5,7 @@ import ImageIO
 import Testing
 @preconcurrency import LiteRTLM
 @testable import Relay
+@testable import RelayJournal
 
 /// Requires the ignored Store/SDK patch. These tests have not run yet. All
 /// native state is inert, while Store scheduling and scoped file IO are real.
@@ -197,6 +198,40 @@ struct NativeWindowReadStoreIntegrationTests {
         #expect(turns == 1 && store.phase == .stopped)
         #expect(!store.activity.contains { $0.detail.contains(runtime.answer) })
         #expect(!store.messages.contains { $0.text.contains(runtime.answer) })
+        client.unload()
+    }
+
+    @Test(arguments: [false, true]) func nativeKnownResultSaveFailureKeepsExactlyOnePairWithoutReplayingRead(_ multi: Bool) async throws {
+        let fixture = NativeReadTaskFixture(), runtime = NativeReadTaskRuntime()
+        let client = LocalModelClient(runtimeFactory: { _,_,_ in runtime }, visionRuntimeFactory: { _,_,_ in runtime })
+        let folder = try fixture.folder(); defer { try? FileManager.default.removeItem(at: folder) }
+        let model = folder.appendingPathComponent("synthetic.litertlm"); try Data([1]).write(to: model)
+        let history = AssistantConversationHistory(stateURL: folder.appendingPathComponent("state.json"))
+        let core = try await history.journalForTesting()
+        runtime.pauseBeforeReply = { await core.injectFault(.beforeCommit) }
+        var turns = 0, resumed: [ModelMessage] = []
+        let store = AssistantStore(persistenceURL: nil, complete: { messages,_,_ in
+            turns += 1
+            if multi && turns == 1 { return .init(content: #"{"steps":[{"role":"Navigator","title":"Read the chosen window"}]}"#, toolCalls: []) }
+            if turns == (multi ? 2 : 1) { return .init(content: "", toolCalls: [fixture.readCall(id: "known-native")]) }
+            resumed = messages
+            return .init(content: "The previously captured read remains known.", toolCalls: [])
+        }, conversationHistory: history, modelClient: client, multiAgent: multi, nativeWindowBackendFactory: { _ in fixture.backend() })
+        store.configuration = .init(modelPath: model.path)
+        store.draft = "Read the owned synthetic window once."
+        store.send(nativeReadRestrictions: [fixture.admission]); await store.waitForConversationTaskToSettle()
+        #expect(store.phase == .failed && fixture.captures == 1 && runtime.imagePayloads.count == 1)
+        #expect(store.activity.contains { $0.detail.contains(runtime.answer) })
+        // Switch to the ordinary loop so the exact global protocol is inspected;
+        // this catches both an orphan ordinary-multi result and duplicate native pairs.
+        store.multiAgentEnabled = false; store.resume(); await store.waitForConversationTaskToSettle()
+        #expect(fixture.captures == 1 && runtime.imagePayloads.count == 1)
+        #expect(!resumed.isEmpty && ContextWindow.isWellFormed(resumed))
+        let results = resumed.filter { $0.role == "tool" && $0.toolCallID?.utf8.elementsEqual("known-native".utf8) == true }
+        #expect(results.count == 1 && results.first?.content.contains(runtime.answer) == true)
+        let scope = try await core.scope()
+        let records = try await core.page(expectedScope: scope)
+        #expect(records.records.filter { if case .result = $0.event.payload { true } else { false } }.count == 1)
         client.unload()
     }
 

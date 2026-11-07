@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import Observation
 import UniformTypeIdentifiers
+import RelayJournal
 
 @Observable @MainActor
 final class AssistantStore {
@@ -9,7 +10,8 @@ final class AssistantStore {
     var activity: [ActivityEntry] = []
     var grants: [ScopeGrant] = []
     var memories: [MemoryItem] = []
-    var draft = ""
+    var draft = "" { didSet { draftRevision &+= 1 } }
+    @ObservationIgnored private var draftRevision = 0
     var configuration = ModelConfiguration()
     var availableModels: [String] = []
     let knowledge: LocalKnowledge
@@ -86,8 +88,29 @@ final class AssistantStore {
     @ObservationIgnored private var modelMessages: [ModelMessage] = []
     @ObservationIgnored private var verifiedResults: [ToolResult] = []
     @ObservationIgnored private var activeObjective = ""
+    @ObservationIgnored private var directAttemptTaskID: UUID?
+    @ObservationIgnored private var directKnownResult: ToolResult?
     @ObservationIgnored private var activeWindowObservation: String?
     @ObservationIgnored private var activeSidekickContext: SidekickTaskContext?
+    @ObservationIgnored private let conversationHistory: AssistantConversationHistory
+    @ObservationIgnored private var historyRestoreTask: Task<Void, Never>?
+    @ObservationIgnored private var historyRestoreEpoch = 0
+    @ObservationIgnored private var historyFailure: (any Error)?
+    @ObservationIgnored private var journalRuns: [Int: AssistantConversationHistory.Run] = [:]
+    @ObservationIgnored private var currentJournalRun: AssistantConversationHistory.Run?
+    @ObservationIgnored private var nextJournalRun: AssistantConversationHistory.Run?
+    @ObservationIgnored private var pendingUserDelivery: [UUID: ChatMessage] = [:]
+    private enum SubmissionOrigin: Equatable { case workspace(Int); case external(UUID, Int) }
+    private struct PendingSubmission { let ticket: ConversationSubmission; let origin: SubmissionOrigin; let runID: UUID }
+    @ObservationIgnored private var submissions: [UUID: PendingSubmission] = [:]
+    @ObservationIgnored private var pendingVisibleMessageIDs: Set<UUID> = []
+    @ObservationIgnored private var historyRestorationFinished = false
+    @ObservationIgnored private var newJournalMessageIDs: Set<UUID> = []
+    @ObservationIgnored private var restoredTaskNeedsNewInvocation = false
+    @ObservationIgnored private var preferencesBlocked = false
+    var historyNotice: String?
+    var canResumeCurrentTask: Bool { !restoredTaskNeedsNewInvocation && !activeObjective.isEmpty && currentJournalRun != nil }
+    @ObservationIgnored private var visibleMessageOrder: [UUID] = []
     @ObservationIgnored private var nativeTaskID = UUID()
     @ObservationIgnored private var nativeTaskReadAuthority: NativeLocalTaskReadAuthority?
     @ObservationIgnored private var activeNativeReader: (revision: Int, service: NativeWindowReadService)?
@@ -104,6 +127,7 @@ final class AssistantStore {
 
     init(persistenceURL: URL? = AssistantStore.defaultStateURL,
          complete: (([ModelMessage], [ToolDefinition], ModelConfiguration) async throws -> ModelReply)? = nil,
+         conversationHistory: AssistantConversationHistory? = nil,
          execute: ((ToolCall) async throws -> ToolResult)? = nil,
          voiceInput: LocalVoiceInput? = nil,
          speechOutput: LocalSpeechOutput? = nil,
@@ -125,6 +149,7 @@ final class AssistantStore {
             guard readiness.isReady else { throw RelayError.message(readiness.message) }
         }
         self.persistenceURL = persistenceURL
+        self.conversationHistory = conversationHistory ?? AssistantConversationHistory(stateURL: persistenceURL)
         self.multiAgentEnabled = multiAgent
         self.makeRunBudget = runBudgetFactory
         self.makeNativeWindowBackend = nativeWindowBackendFactory ?? { try await .openReadOnly(ownership: $0) }
@@ -144,6 +169,7 @@ final class AssistantStore {
         completeOverride = complete
         executeOverride = execute
         restore()
+        beginHistoryRestoration()
         knowledgeSearch.currentGrants = { [weak self] in self?.grants ?? [] }
         knowledge.purgeStale(grants: grants)
         generatedKnowledge.reconcile(records: knowledge.records)
@@ -453,32 +479,50 @@ final class AssistantStore {
         return directApps.contains(appID) ? appID : nil
     }
 
+    @discardableResult
     func send(useMultiAgent: Bool? = nil, useWorkspaceProvider: Bool = false, windowObservation: String? = nil, sidekickContext: SidekickTaskContext? = nil,
-              nativeReadRestrictions: [NativeWindowTaskAdapter.ApplicationAdmission]? = nil) {
-        guard !isAuxiliaryBusy else { errorMessage = "Wait for the current operation or stop it first. Your draft is preserved."; return }
-        guard !checkingCodex else { errorMessage = "Wait for the Codex CLI check to finish. Your draft is preserved."; return }
+              nativeReadRestrictions: [NativeWindowTaskAdapter.ApplicationAdmission]? = nil) -> ConversationSubmission? {
+        submitConversationText(draft, origin: .workspace(draftRevision), useMultiAgent: useMultiAgent, useWorkspaceProvider: useWorkspaceProvider, windowObservation: windowObservation, sidekickContext: sidekickContext, nativeReadRestrictions: nativeReadRestrictions)
+    }
+    /// Independent surfaces never temporarily overwrite the workspace composer.
+    @discardableResult
+    func submitText(_ text: String, originID: UUID, originRevision: Int,
+                    useWorkspaceProvider: Bool = false, sidekickContext: SidekickTaskContext? = nil) -> ConversationSubmission? {
+        submitConversationText(text, origin: .external(originID, originRevision), useMultiAgent: nil,
+            useWorkspaceProvider: useWorkspaceProvider, windowObservation: nil, sidekickContext: sidekickContext, nativeReadRestrictions: nil)
+    }
+    private func submitConversationText(_ text: String, origin: SubmissionOrigin, useMultiAgent: Bool?, useWorkspaceProvider: Bool,
+                                       windowObservation: String?, sidekickContext: SidekickTaskContext?,
+                                       nativeReadRestrictions: [NativeWindowTaskAdapter.ApplicationAdmission]?) -> ConversationSubmission? {
+        guard interactiveSessionActive else { errorMessage = "Unlock the session before sending. Your draft is preserved."; return nil }
+        if let existing = submissions.values.first(where: { $0.origin == origin && $0.ticket.isPending && $0.ticket.text.utf8.elementsEqual(text.utf8) }) {
+            return existing.ticket
+        }
+
+        guard !isAuxiliaryBusy else { errorMessage = "Wait for the current operation or stop it first. Your draft is preserved."; return nil }
+        guard !checkingCodex else { errorMessage = "Wait for the Codex CLI check to finish. Your draft is preserved."; return nil }
         guard useWorkspaceProvider || !isRunning || !activeRunUsesCodex else {
             errorMessage = "Use the workspace composer to steer the active Codex task. Your draft is preserved."
-            return
+            return nil
         }
         if let useMultiAgent { self.multiAgentEnabled = useMultiAgent }
-        guard !isClearingConversation else { errorMessage = "Conversation reset is still finishing. Your draft is preserved; send it when reset is complete."; return }
-        guard !isPreparingModel else { errorMessage = "Wait for model preparation to finish, or stop it first. Your draft is preserved."; return }
-        guard !voice.isBusy else { errorMessage = "Stop voice input and review its transcript before sending. Your draft is preserved."; return }
-        guard !accessibilityCheckRunning else { errorMessage = "Stop the accessibility check before starting another task."; return }
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !isClearingConversation else { errorMessage = "Conversation reset is still finishing. Your draft is preserved; send it when reset is complete."; return nil }
+        guard !isPreparingModel else { errorMessage = "Wait for model preparation to finish, or stop it first. Your draft is preserved."; return nil }
+        guard !voice.isBusy else { errorMessage = "Stop voice input and review its transcript before sending. Your draft is preserved."; return nil }
+        guard !accessibilityCheckRunning else { errorMessage = "Stop the accessibility check before starting another task."; return nil }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         speech.stop()
         speechDiagnostic.stop()
-        draft = ""
         errorMessage = nil
         let wasRunning = isRunning
+        if !wasRunning { historyFailure = nil; restoredTaskNeedsNewInvocation = false }
         if wasRunning {
             activeObjective += "\nLatest user constraint: " + text
         } else {
             activeObjective = text
             activeRunUsesCodex = useWorkspaceProvider && workspaceUsesCodex
             nativeTaskID = UUID()
+            directAttemptTaskID = nil; directKnownResult = nil
             let originalTaskID = nativeTaskID
             nativeTaskReadAuthority = activeRunUsesCodex ? nil : .localUserInvocation(taskID: originalTaskID,
                 taskIsCurrent: { [weak self] in self?.nativeTaskID == originalTaskID && self?.interactiveSessionActive == true },
@@ -486,11 +530,30 @@ final class AssistantStore {
             activeWindowObservation = activeRunUsesCodex ? nil : windowObservation
             activeSidekickContext = activeRunUsesCodex ? nil : sidekickContext
         }
-        messages.append(ChatMessage(role: "user", text: text))
+        let submitted = ChatMessage(role: "user", text: text)
+        let journalRun: AssistantConversationHistory.Run
+        do {
+            journalRun = try AssistantConversationHistory.Run(logicalTaskID: nativeTaskID,
+                predecessor: wasRunning ? currentJournalRun : nil, cause: wasRunning ? .steering : .newRequest)
+        } catch { reportHistoryFailure(error); return nil }
+        let ticket = ConversationSubmission(messageID: submitted.id, text: text)
+        submissions[submitted.id] = PendingSubmission(ticket: ticket, origin: origin, runID: journalRun.taskID)
+        nextJournalRun = journalRun
+        appendVisibleMessage(submitted, run: journalRun, deferUserDelivery: true)
+        guard historyFailure == nil else { submissions.removeValue(forKey: submitted.id); ticket.resolve(.failed); return ticket }
         if !wasRunning { activeContextStart = modelMessages.count }
         modelMessages.append(ModelMessage(role: "user", content: wasRunning ? "User steering for the active request: \(text)" : text))
         if wasRunning { record("Steering", "Refreshing the plan for your new instruction. Any in-flight action will be reconciled first.", "observed") }
         beginRun()
+        return ticket
+    }
+
+    /// Revokes only this still-unacknowledged originating invocation. A retired
+    /// surface may not stop a newer task or an already acknowledged shared task.
+    func cancelSubmission(_ ticket: ConversationSubmission) {
+        guard let owned = submissions[ticket.messageID], owned.ticket === ticket, ticket.isPending else { return }
+        if currentJournalRun?.taskID == owned.runID { stop() }
+        else { submissions.removeValue(forKey: ticket.messageID); ticket.resolve(.stopped) }
     }
 
     func runMultiAgentTask(prompt: String) async throws {
@@ -508,11 +571,16 @@ final class AssistantStore {
 
     private func beginRun() {
         guard !isClearingConversation else { return }
+        guard let journalRun = nextJournalRun else { reportHistoryFailure(JournalError.invalidTransition); return }
+        nextJournalRun = nil
+        if !historyRestorationFinished { beginHistoryRestoration() }
         activeNativeReader?.service.stop()
         model.invalidateConversation()
         localVisionStatus = nil
         revision += 1
         let runRevision = revision
+        currentJournalRun = journalRun
+        journalRuns[runRevision] = journalRun
         let previous = task
         previous?.cancel()
         tools.invalidateApprovals()
@@ -529,6 +597,17 @@ final class AssistantStore {
                 self.pendingContextReset = nil
                 self.persist()
             }
+            do {
+                await self.historyRestoreTask?.value
+                if let failure = self.historyFailure { throw failure }
+                try await self.conversationHistory.retryResultSaves()
+                try await self.flushVisibleHistory()
+                try self.gate(runRevision)
+            } catch {
+                self.resolveSubmissions(for: journalRun.taskID, as: .failed)
+                if self.revision == runRevision { self.phase = .failed; self.reportHistoryFailure(error) }
+                return
+            }
             self.verifiedResults = []
             let nativeReader = self.makeNativeReadService(revision: runRevision)
             if self.multiAgentEnabled && !self.activeRunUsesCodex && self.activeWindowObservation == nil && self.activeSidekickContext == nil {
@@ -539,28 +618,50 @@ final class AssistantStore {
             nativeReader?.stop()
             await nativeReader?.drain()
             if self.activeNativeReader?.revision == runRevision { self.activeNativeReader = nil }
+            do {
+                try await self.flushVisibleHistory()
+                // Delivering a response is not an independently verified logical-goal verdict.
+                let outcome: JournalTaskOutcome
+                if self.revision != runRevision || Task.isCancelled { outcome = .interrupted }
+                else {
+                    switch self.phase {
+                    case .idle, .completed: outcome = .responseDelivered
+                    case .needsInput, .awaitingReview: outcome = .needsInput
+                    case .failed: outcome = .failed
+                    case .stopped: outcome = .stopped
+                    case .thinking, .acting: outcome = .interrupted
+                    }
+                }
+                try await self.conversationHistory.finish(journalRun, outcome: outcome)
+                self.journalRuns.removeValue(forKey: runRevision)
+            } catch { if self.revision == runRevision { self.phase = .failed; self.reportHistoryFailure(error) } }
         }
         persist()
     }
 
-    private func runDirectAction(_ call: ToolCall, revision expected: Int, budget: TaskRunBudget) async throws {
+    private func runDirectAction(_ call: ToolCall, proposalID: UUID, revision expected: Int, budget: TaskRunBudget) async throws {
         try gate(expected)
         try budget.check()
         phase = .acting
         record(call.name, "Running the exact request on this Mac.", "requested")
-        let result: ToolResult
-        if let executeOverride { result = try await executeOverride(call) }
-        else { result = try await tools.execute(call) }
+        let logicalTask = nativeTaskID
+        let result = try await checkpointed(call, proposalID: proposalID, revision: expected, budget: budget, action: {
+            let value: ToolResult
+            if let executeOverride = self.executeOverride { value = try await executeOverride(call) }
+            else { value = try await self.tools.execute(call) }
+            if self.nativeTaskID == logicalTask { self.directKnownResult = value }
+            return value
+        }, result: { $0 })
         record(call.name, "\(result.summary)\nEvidence: \(result.evidence)", result.verified ? "verified" : "effect uncertain")
         if expected != revision || Task.isCancelled {
-            messages.append(ChatMessage(role: "assistant", text: "An in-flight action finished after interruption: \(result.summary)\n\(result.evidence)"))
+            appendVisibleMessage(ChatMessage(role: "assistant", text: "An in-flight action finished after interruption: \(result.summary)\n\(result.evidence)"), for: expected)
             persist()
             throw CancellationError()
         }
         let answer = result.verified
             ? result.summary + "\n\nChecked by Relay:\n• " + result.evidence
             : "Relay could not verify the result. " + result.evidence
-        messages.append(ChatMessage(role: "assistant", text: answer))
+        appendVisibleMessage(ChatMessage(role: "assistant", text: answer), for: expected)
         modelMessages.append(ModelMessage(role: "assistant", content: answer))
         phase = result.verified ? .idle : .needsInput
         persist()
@@ -642,7 +743,20 @@ final class AssistantStore {
         let discoveryTools: Set<String> = ["list_apps", "list_files", "observe_app", "read_file", "read_calendar", "search_knowledge", "read_browser_page", "read_sidekick_window", NativeWindowReadTool.name, "prepare_mail_send", "search_files", "preview_file_move", "calculate"]
         do {
             if !usesCodex, !multiAgentEnabled, completeOverride == nil, let call = Self.directToolCall(objective) {
-                try await runDirectAction(call, revision: expected, budget: budget)
+                if directAttemptTaskID == nativeTaskID {
+                    let answer: String
+                    if let known = directKnownResult {
+                        answer = "The original direct action was not repeated. Its earlier result: \(known.summary)\n\n\(known.evidence)"
+                        phase = known.verified ? .idle : .needsInput
+                    } else {
+                        answer = "The original direct action has an unresolved checkpoint and was not repeated. Inspect the current app state, then start a fresh explicit request if needed."
+                        phase = .needsInput
+                    }
+                    appendVisibleMessage(ChatMessage(role: "assistant", text: answer), for: expected)
+                    return
+                }
+                directAttemptTaskID = nativeTaskID
+                try await runDirectAction(call, proposalID: UUID(), revision: expected, budget: budget)
                 return
             }
             if !usesCodex, completeOverride == nil, !actionsReady { try await prepareModel() }
@@ -701,6 +815,7 @@ final class AssistantStore {
                     continue
                 }
                 protocolFailures = 0
+                let acceptedProposalID = UUID()
                 try budget.check()
                 try gate(expected)
                 appendTurn(ModelMessage(role: "assistant", content: reply.content, toolCalls: reply.toolCalls))
@@ -756,8 +871,8 @@ final class AssistantStore {
                     let evidence: String
                     if attemptedActions == 0 { evidence = "No computer actions were executed in this response." }
                     else { evidence = verifiedResults.isEmpty ? "No action outcome was independently verified." : "Checked by Relay:\n" + verifiedResults.map { "• \($0.summary) — \($0.evidence)" }.joined(separator: "\n") }
-                    messages.append(ChatMessage(role: "assistant", text: (text.isEmpty ? "The model returned no answer. Try a more specific request or switch models." : text) + "\n\n" + evidence,
-                                                artifacts: verifiedResults.compactMap(\.artifactPath)))
+                    appendVisibleMessage(ChatMessage(role: "assistant", text: (text.isEmpty ? "The model returned no answer. Try a more specific request or switch models." : text) + "\n\n" + evidence,
+                                                artifacts: verifiedResults.compactMap(\.artifactPath)), for: expected)
                     // Finishing a model turn is not independent proof of every requested outcome.
                     let unresolved = recovery.hasUnresolvedErrors || unverifiedResults > 0
                     phase = unresolved ? .needsInput : .idle
@@ -767,7 +882,7 @@ final class AssistantStore {
                     persist()
                     return
                 }
-                var actionReadbacks: [(MacTools.MutationReadbackScope, ToolCall, TaskRecoveryBudget.Key)] = []
+                var actionReadbacks: [(MacTools.MutationReadbackScope, ToolCall, TaskRecoveryBudget.Key, UUID)] = []
                 // Execute one tool at a time. Even if the model batches calls, Stop/steering is checked between every dispatch.
                 for call in reply.toolCalls {
                     let operationKey = TaskRecoveryBudget.key(for: call, observedScope: tools.recoveryScopeFingerprint(for: call))
@@ -799,7 +914,7 @@ final class AssistantStore {
                                 modelMessages.append(ModelMessage(role: "tool", content: denial, toolCallID: call.id, toolName: call.name))
                                 record(call.name, "Declined. Nothing dispatched.", "not executed")
                                 phase = .needsInput
-                                messages.append(ChatMessage(role: "assistant", text: "That action was not performed. Tell me how you’d like to proceed."))
+                                appendVisibleMessage(ChatMessage(role: "assistant", text: "That action was not performed. Tell me how you’d like to proceed."), for: expected)
                                 // Supply results for any remaining batched requests so the next conversation is well formed.
                                 for pending in reply.toolCalls.drop(while: { !$0.id.utf8.elementsEqual(call.id.utf8) }).dropFirst() {
                                     modelMessages.append(ModelMessage(role: "tool", content: "Not executed: review was declined.", toolCallID: pending.id, toolName: pending.name))
@@ -822,29 +937,30 @@ final class AssistantStore {
                         }
                         if !discoveryTools.contains(call.name) { discoveryOnly = false }
                         record(call.name, "Dispatching validated request", "requested")
-                        let result: ToolResult
+                        let result = try await checkpointed(call, proposalID: acceptedProposalID, revision: expected, budget: budget, action: { [self] in
                         if call.name == NativeWindowReadTool.name {
                             guard !usesCodex, let nativeReader else { throw RelayError.message("Native window reading requires the original local task scope.") }
                             tools.invalidateApprovals()
-                            result = try await nativeReader.read(call, objective: objective)
+                            return try await nativeReader.read(call, objective: objective)
                         } else if call.name == SidekickWindowText.definition.name {
                             try ToolPolicy.validate(call, against: definitions)
                             guard let visualTarget else { throw RelayError.message("Choose the current app in Sidekick before using its visual text.") }
                             let visual = try await SidekickWindowText.read(visualTarget)
                             visualTextForRun[Data(call.id.utf8)] = Self.toolFeedback(visual)
-                            result = ToolResult(summary: "Read visible text from the selected window.",
+                            return ToolResult(summary: "Read visible text from the selected window.",
                                                 evidence: visual.evidence, verified: visual.verified)
-                        } else if let executeOverride { result = try await executeOverride(call) }
+                        } else if let executeOverride { return try await executeOverride(call) }
                         else if let preciseRead {
                             let started = recovery.captureWindowReadAttempt(for: preciseRead.recoveryAttemptID)
                             readAttempt = started
                             let (observed, receipt) = try await tools.executePreciseWindowRead(preciseRead)
-                            result = observed
                             if observed.verified, let receipt,
                                let proof = tools.consumePreciseReadReceipt(receipt, for: call) {
                                 recovery.recordVerifiedWindowRead(started, window: proof.windowID, attemptID: proof.attemptID)
                             }
-                        } else { result = try await tools.execute(call) }
+                            return observed
+                        } else { return try await tools.execute(call) }
+                        }, result: { $0 })
                         record(call.name, "\(result.summary)\nEvidence: \(result.evidence)", result.verified ? "verified" : "effect uncertain")
                         let output = Self.toolFeedback(result)
                         let cloudOutput: String?
@@ -860,7 +976,7 @@ final class AssistantStore {
                                 modelMessages.append(ModelMessage(role: "tool", content: output, toolCallID: call.id, toolName: call.name))
                                 reconcileUnansweredTools()
                                 phase = .needsInput
-                                messages.append(ChatMessage(role: "assistant", text: "I kept the observation on this Mac and stopped here. Switch to the local model to continue without sharing it with OpenAI. The local Activity log shows any steps already taken."))
+                                appendVisibleMessage(ChatMessage(role: "assistant", text: "I kept the observation on this Mac and stopped here. Switch to the local model to continue without sharing it with OpenAI. The local Activity log shows any steps already taken."), for: expected)
                                 persist()
                                 return
                             }
@@ -871,7 +987,7 @@ final class AssistantStore {
                             cloudOutput = nil
                         }
                         appendTurn(ModelMessage(role: "tool", content: output, toolCallID: call.id, toolName: call.name), cloudContent: cloudOutput)
-                        if let readbackScope { actionReadbacks.append((readbackScope, call, operationKey)) }
+                        if let readbackScope { actionReadbacks.append((readbackScope, call, operationKey, UUID())) }
                         if call.name == "read_browser_page", result.verified { browserReadSucceeded = true }
                         if result.verified {
                             verifiedResults.append(result)
@@ -879,11 +995,12 @@ final class AssistantStore {
                         } else if preciseRead != nil { try recovery.recordFailure(recoveryKey) }
                         else { unverifiedResults += 1 }
                         if expected != revision || Task.isCancelled {
-                            messages.append(ChatMessage(role: "assistant", text: "An in-flight action finished after interruption: \(result.summary)\n\(result.evidence)", artifacts: [result.artifactPath].compactMap { $0 }))
+                            appendVisibleMessage(ChatMessage(role: "assistant", text: "An in-flight action finished after interruption: \(result.summary)\n\(result.evidence)", artifacts: [result.artifactPath].compactMap { $0 }), for: expected)
                             persist()
                         }
                         try gate(expected)
-                    } catch is CancellationError { throw CancellationError() }
+                    } catch let failure as JournalError { throw failure }
+                    catch is CancellationError { throw CancellationError() }
                     catch let limit as TaskRecoveryBudget.Limit { throw limit }
                     catch {
                         guard expected == revision, !Task.isCancelled else { throw CancellationError() }
@@ -899,7 +1016,7 @@ final class AssistantStore {
                 // Verify the original document window after a native UI action
                 // before asking the planner to choose its next control. This is
                 // read-only, local and scope-bound; it never repeats a write.
-                for (scope, action, actionKey) in actionReadbacks {
+                for (scope, action, actionKey, readbackProposalID) in actionReadbacks {
                     try gate(expected)
                     try budget.check()
                     let observation = scope.call
@@ -910,7 +1027,8 @@ final class AssistantStore {
                     appendTurn(ModelMessage(role: "assistant", content: "", toolCalls: [observation]))
                     record(observation.name, "Reading the action’s original window before the next planning step.", "requested")
                     do {
-                        let (result, receipt) = try await tools.readbackWithRecovery(scope, after: action)
+                        let (result, receipt) = try await checkpointed(observation, proposalID: readbackProposalID, revision: expected, budget: budget,
+                            action: { try await self.tools.readbackWithRecovery(scope, after: action) }, result: { $0.0 })
                         if result.verified, let receipt,
                            let proof = tools.consumePreciseReadReceipt(receipt, for: observation) {
                             recovery.recordVerifiedWindowRead(readAttempt, window: proof.windowID, attemptID: proof.attemptID)
@@ -922,7 +1040,8 @@ final class AssistantStore {
                             verifiedResults.append(result)
                             recovery.recordVerifiedSuccess(recoveryKey)
                         } else { try recovery.recordFailure(recoveryKey) }
-                    } catch is CancellationError { throw CancellationError() }
+                    } catch let failure as JournalError { throw failure }
+                    catch is CancellationError { throw CancellationError() }
                     catch let limit as TaskRecoveryBudget.Limit { throw limit }
                     catch {
                         try gate(expected)
@@ -946,8 +1065,9 @@ final class AssistantStore {
             if expected == revision {
                 phase = .failed
                 if !usesCodex, !actionsReady { modelStatus = "Model not ready — check Settings" }
-                errorMessage = error.localizedDescription
-                messages.append(ChatMessage(role: "assistant", text: "I couldn’t finish the remaining steps: \(error.localizedDescription)\n\n\(interruptedOutcomeSummary)\nInspect uncertain effects before retrying.", artifacts: verifiedResults.compactMap(\.artifactPath)))
+                if historyFailure != nil { reportHistoryFailure(error) } else { errorMessage = error.localizedDescription }
+                let detail = historyFailure == nil ? error.localizedDescription : "Conversation changes could not be saved; further actions are stopped."
+                appendVisibleMessage(ChatMessage(role: "assistant", text: "I couldn’t finish the remaining steps: \(detail)\n\n\(interruptedOutcomeSummary)\nInspect uncertain effects before retrying.", artifacts: verifiedResults.compactMap(\.artifactPath)), for: expected)
             }
         }
         persist()
@@ -977,8 +1097,10 @@ final class AssistantStore {
                 }
                 return BrowserTaskRouting.route(try await self.model.complete(messages: input, tools: tools, configuration: config), objective: objective)
             },
-            execute: { [weak self] call in
+            execute: { _ in throw RelayError.message("A durable accepted proposal is required before dispatch.") },
+            executeProposal: { [weak self] call, proposalID in
                 guard let self else { throw CancellationError() }
+                return try await self.checkpointed(call, proposalID: proposalID, revision: expected, budget: budget, action: {
                 self.phase = .acting
                 if call.name == NativeWindowReadTool.name {
                     guard let nativeReader else { throw RelayError.message("Native window reading requires the original local task scope.") }
@@ -1002,6 +1124,7 @@ final class AssistantStore {
                 self.tools.knowledgeSearch = self.knowledgeSearch
                 self.tools.calendarSource = self.calendarSource
                 return try await self.tools.execute(call)
+                }, result: { $0 })
             },
             reviewReason: { [weak self] call in
                 guard let self else { return nil }
@@ -1044,7 +1167,7 @@ final class AssistantStore {
             if result.verified { self.verifiedResults.append(result) }
             self.record(call.name, "\(result.summary)\nEvidence: \(result.evidence)", result.verified ? "verified" : "effect uncertain")
             if self.revision != expected || Task.isCancelled {
-                self.messages.append(ChatMessage(role: "assistant", text: "An in-flight action finished after interruption: \(result.summary)\n\(result.evidence)", artifacts: [result.artifactPath].compactMap { $0 }))
+                self.appendVisibleMessage(ChatMessage(role: "assistant", text: "An in-flight action finished after interruption: \(result.summary)\n\(result.evidence)", artifacts: [result.artifactPath].compactMap { $0 }), for: expected)
                 self.persist()
             }
         }
@@ -1064,7 +1187,7 @@ final class AssistantStore {
                 evidence = "Checked by Relay:\n" + result.verifiedResults.map { "• \($0.summary) — \($0.evidence)" }.joined(separator: "\n")
             }
             let finalText = result.content + "\n\n" + evidence
-            messages.append(ChatMessage(role: "assistant", text: finalText, artifacts: result.artifacts))
+            appendVisibleMessage(ChatMessage(role: "assistant", text: finalText, artifacts: result.artifacts), for: expected)
             phase = result.isSuccess ? .idle : .needsInput
             activeAgentRole = nil
             persist()
@@ -1078,8 +1201,9 @@ final class AssistantStore {
             if expected == revision {
                 phase = .failed
                 if !actionsReady { modelStatus = "Model not ready — check Settings" }
-                errorMessage = error.localizedDescription
-                messages.append(ChatMessage(role: "assistant", text: "I couldn’t finish the remaining steps: \(error.localizedDescription)\n\n\(interruptedOutcomeSummary)\nInspect uncertain effects before retrying.", artifacts: verifiedResults.compactMap(\.artifactPath)))
+                if historyFailure != nil { reportHistoryFailure(error) } else { errorMessage = error.localizedDescription }
+                let detail = historyFailure == nil ? error.localizedDescription : "Conversation changes could not be saved; further actions are stopped."
+                appendVisibleMessage(ChatMessage(role: "assistant", text: "I couldn’t finish the remaining steps: \(detail)\n\n\(interruptedOutcomeSummary)\nInspect uncertain effects before retrying.", artifacts: verifiedResults.compactMap(\.artifactPath)), for: expected)
             }
             activeAgentRole = nil
             persist()
@@ -1104,6 +1228,7 @@ final class AssistantStore {
         try Task.checkCancellation()
         calendarSource.refreshAuthorizationStatus()
         guard revision == expected else { throw CancellationError() }
+        if let historyFailure { throw historyFailure }
     }
     func stopForTermination() {
         preparation.pauseUntilNextWakeOrLaunch()
@@ -1114,6 +1239,7 @@ final class AssistantStore {
         guard value != interactiveSessionActive else { return }
         interactiveSessionActive = value
         if !value {
+            if submissions.values.contains(where: { $0.ticket.isPending }) { stop() }
             let wasReadingNativeWindow = activeNativeReader?.service.isBusy == true
             activeNativeReader?.service.stop()
             if wasReadingNativeWindow { task?.cancel() }
@@ -1126,6 +1252,10 @@ final class AssistantStore {
     }
 
     func stop(cancelScheduledPreparation: Bool = true) {
+        let stoppedJournalRun = currentJournalRun
+        for submission in submissions.values { submission.ticket.resolve(.stopped) }
+        submissions.removeAll()
+        conversationHistory.stop(stoppedJournalRun)
         activeNativeReader?.service.stop()
         onStopInput?()
         activeWindowObservation = nil
@@ -1178,16 +1308,26 @@ final class AssistantStore {
         }
         phase = .stopped
         record("Stopped", "New dispatch is blocked. An in-flight operation may finish; its known or uncertain effects will be reported. Stopping does not undo changes.", "stopped")
-        messages.append(ChatMessage(role: "assistant", text: "Stopped. No new actions will start. An in-flight action may finish; stopping does not undo changes.\n\n\(interruptedOutcomeSummary)"))
+        appendVisibleMessage(ChatMessage(role: "assistant", text: "Stopped. No new actions will start. An in-flight action may finish; stopping does not undo changes.\n\n\(interruptedOutcomeSummary)"), run: stoppedJournalRun)
         persist()
     }
     func resume() {
+        guard !restoredTaskNeedsNewInvocation else {
+            errorMessage = "This earlier task's original app scope cannot be restored safely. Start a fresh task; no saved action will be replayed."
+            return
+        }
         guard !isClearingConversation else { errorMessage = "Wait for the conversation reset to finish before resuming."; return }
         guard !isRunning, !voice.isBusy, !checkingCodex else { return }
         if activeRunUsesCodex && !workspaceUsesCodex { activeRunUsesCodex = false }
         if activeRunUsesCodex, !activeObjective.hasSuffix(CodexDevicePlanning.resumeReminder) {
             activeObjective += "\n" + CodexDevicePlanning.resumeReminder
         }
+        guard !activeObjective.isEmpty, let predecessor = currentJournalRun else {
+            errorMessage = "Start a fresh task before using Continue."; return
+        }
+        historyFailure = nil
+        do { nextJournalRun = try AssistantConversationHistory.Run(logicalTaskID: nativeTaskID, predecessor: predecessor, cause: .resume) }
+        catch { reportHistoryFailure(error); return }
         speech.stop()
         speechDiagnostic.stop()
         modelMessages.append(ModelMessage(role: "user", content: "Continue the task only after freshly observing app/file state and reconciling uncertain effects. Do not replay unfinished mutations blindly."))
@@ -1645,6 +1785,18 @@ final class AssistantStore {
             // The fixture wrapper records its terminal result after its child task settles.
             // Wait for that wrapper too so no old Activity entry can arrive after clearing.
             while self.accessibilityCheckRunning { await Task.yield() }
+            self.historyRestoreEpoch += 1
+            do {
+                await self.historyRestoreTask?.value
+                try await self.conversationHistory.clear()
+            } catch {
+                self.reportHistoryFailure(error)
+                self.isClearingConversation = false
+                return
+            }
+            self.pendingUserDelivery.removeAll(); self.submissions.removeAll(); self.newJournalMessageIDs.removeAll(); self.pendingVisibleMessageIDs.removeAll(); self.visibleMessageOrder.removeAll()
+            self.historyRestoreTask = nil; self.historyRestorationFinished = true
+            self.historyFailure = nil; self.historyNotice = nil; self.restoredTaskNeedsNewInvocation = false
             self.messages = []
             self.modelMessages = []
             self.activity = []
@@ -1666,7 +1818,19 @@ final class AssistantStore {
             self.isClearingConversation = false
         }
     }
-    func revealArtifact(_ path: String) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+    func artifactURLForReveal(_ path: String, messageID: UUID) throws -> URL {
+        guard let message = messages.first(where: { $0.id == messageID }),
+              message.artifacts.contains(where: { Data($0.utf8) == Data(path.utf8) }),
+              (try? JournalArtifactReference(visiblePath: path)) != nil else { throw JournalError.unsafeLocation }
+        return URL(fileURLWithPath: path)
+    }
+    func revealArtifact(_ path: String, messageID: UUID) {
+        do {
+            let url = try artifactURLForReveal(path, messageID: messageID)
+            // Explicit Finder reveal is not a content read or automatic model grant.
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } catch { errorMessage = "This local output reference is unavailable." }
+    }
     func chooseModel() {
         guard !isPreparingModel else { return }
         let panel = NSOpenPanel(); panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
@@ -1832,6 +1996,165 @@ final class AssistantStore {
         """
     }
 
+    #if DEBUG
+    /// Inert persistence fixture: no model, tool dispatch or read authority is created.
+    func stageVisibleConversationFixture(_ fixture: [ChatMessage], deferredUsers: Set<UUID>) async throws {
+        await historyRestoreTask?.value
+        let run = try AssistantConversationHistory.Run(logicalTaskID: UUID(), cause: .newRequest)
+        for message in fixture { appendVisibleMessage(message, run: run, deferUserDelivery: deferredUsers.contains(message.id)) }
+        try await flushVisibleHistory()
+        try await conversationHistory.finish(run, outcome: .responseDelivered)
+    }
+    #endif
+    func waitForConversationTaskToSettle() async {
+        await task?.value
+        await historyRestoreTask?.value
+    }
+    private func beginHistoryRestoration() {
+        guard historyRestoreTask == nil, !historyRestorationFinished else { return }
+        let epoch = historyRestoreEpoch
+        historyNotice = "Loading saved conversation…"
+        historyRestoreTask = Task { [weak self] in
+            guard let self else { return }
+            defer { if self.historyRestoreEpoch == epoch { self.historyRestoreTask = nil } }
+            do {
+                let restored = try await self.conversationHistory.restore()
+                guard self.historyRestoreEpoch == epoch, !self.isClearingConversation else { return }
+                let newMessages = self.messages.filter { self.newJournalMessageIDs.contains($0.id) }
+                let restoredIDs = Set(restored.messages.map(\.id))
+                self.visibleMessageOrder = restored.messages.map(\.id) + self.visibleMessageOrder.filter { !restoredIDs.contains($0) }
+                self.messages = restored.messages + newMessages.filter { !restoredIDs.contains($0.id) }
+                self.sortVisibleMessagesByJournalOrder()
+                let activityIDs = Set(restored.activity.map(\.id))
+                self.activity = Array((restored.activity + self.activity.filter { !activityIDs.contains($0.id) }).suffix(400))
+                self.historyRestorationFinished = true
+                self.newJournalMessageIDs.removeAll()
+                self.historyFailure = nil
+                // Never mint a reader, grant, review continuation or executable call from history.
+                if self.currentJournalRun == nil, !restored.messages.isEmpty {
+                    self.restoredTaskNeedsNewInvocation = true
+                    if restored.interrupted { self.phase = .stopped }
+                    else if restored.latestOutcome == .needsInput { self.phase = .needsInput }
+                }
+                self.historyNotice = self.pendingVisibleMessageIDs.isEmpty ? nil : "Saving conversation…"
+            } catch { if self.historyRestoreEpoch == epoch { self.reportHistoryFailure(error) } }
+        }
+    }
+    private func appendVisibleMessage(_ message: ChatMessage, for expected: Int? = nil,
+                                      run explicitRun: AssistantConversationHistory.Run? = nil,
+                                      deferUserDelivery: Bool = false) {
+        let run = explicitRun ?? expected.flatMap { journalRuns[$0] } ?? currentJournalRun
+        guard let run else {
+            messages.append(message)
+            reportHistoryFailure(JournalError.invalidTransition)
+            return
+        }
+        do {
+            try conversationHistory.stage(message, run: run, grants: grants)
+            if !visibleMessageOrder.contains(message.id) { visibleMessageOrder.append(message.id) }
+            pendingVisibleMessageIDs.insert(message.id)
+            if !historyRestorationFinished { newJournalMessageIDs.insert(message.id) }
+            if deferUserDelivery { pendingUserDelivery[message.id] = message }
+            else { messages.append(message) }
+            historyNotice = "Saving conversation…"
+        } catch {
+            if !deferUserDelivery { messages.append(message) }
+            reportHistoryFailure(error)
+        }
+    }
+    private func sortVisibleMessagesByJournalOrder() {
+        var ranks: [UUID: Int] = [:]
+        for (index, id) in visibleMessageOrder.enumerated() where ranks[id] == nil { ranks[id] = index }
+        messages = messages.enumerated().sorted { left, right in
+            let a = ranks[left.element.id] ?? Int.max, b = ranks[right.element.id] ?? Int.max
+            return a == b ? left.offset < right.offset : a < b
+        }.map(\.element)
+    }
+    private func flushVisibleHistory() async throws {
+        do {
+            let saved = try await conversationHistory.flush()
+            for id in saved {
+                pendingVisibleMessageIDs.remove(id)
+                if let message = pendingUserDelivery.removeValue(forKey: id), !messages.contains(where: { $0.id == id }) {
+                    messages.append(message)
+                }
+            }
+            sortVisibleMessagesByJournalOrder()
+            for id in saved {
+                guard let submission = submissions[id], submission.ticket.isPending else { continue }
+                if case let .workspace(capturedRevision) = submission.origin,
+                   capturedRevision == draftRevision, currentJournalRun?.taskID == submission.runID,
+                   draft.utf8.elementsEqual(submission.ticket.text.utf8) { draft = "" }
+                submission.ticket.resolve(.saved)
+                submissions.removeValue(forKey: id)
+            }
+            if historyFailure == nil { historyNotice = pendingVisibleMessageIDs.isEmpty ? nil : "Saving conversation…" }
+        } catch { reportHistoryFailure(error); throw error }
+    }
+    private func checkpointed<Output>(_ call: ToolCall, proposalID: UUID, revision expected: Int, budget: TaskRunBudget,
+                                      action: @escaping @MainActor () async throws -> Output,
+                                      result: @escaping @MainActor (Output) -> ToolResult) async throws -> Output {
+        guard let run = journalRuns[expected] else { throw JournalError.invalidTransition }
+        do {
+            try await flushVisibleHistory()
+            return try await conversationHistory.perform(call, proposalID: proposalID, run: run, validate: { [weak self] in
+                guard let self else { throw CancellationError() }
+                try self.gate(expected); try budget.check()
+                guard self.interactiveSessionActive, !self.isClearingConversation else { throw CancellationError() }
+                self.tools.grants = self.grants
+                self.tools.knowledge = self.knowledge
+                self.tools.knowledgeSearch = self.knowledgeSearch
+                self.tools.calendarSource = self.calendarSource
+            }, action: action, result: result, unsavedResult: { [weak self] observed in
+                guard let self else { return }
+                self.record(call.name, "A factual result arrived but its checkpoint could not be saved: \(observed.summary)\n\(observed.evidence)", "not saved")
+                // Keep the factual pair in memory. All inference is still gated on saving
+                // its pending checkpoint; this is never serialized as an executable action.
+                if self.hasUnansweredModelCall(call) {
+                    self.modelMessages.append(ModelMessage(role: "tool", content: Self.toolFeedback(observed), toolCallID: call.id, toolName: call.name))
+                }
+                if self.revision == expected, observed.verified { self.verifiedResults.append(observed) }
+            }, metadataFailure: { [weak self] observed in
+                guard let self else { return }
+                self.record(call.name, "A factual result arrived, but its output link metadata was invalid: \(observed.summary)", "metadata not retained")
+                if self.hasUnansweredModelCall(call) {
+                    self.modelMessages.append(ModelMessage(role: "tool", content: Self.toolFeedback(observed), toolCallID: call.id, toolName: call.name))
+                }
+                if self.revision == expected, observed.verified { self.verifiedResults.append(observed) }
+            })
+        } catch let failure as JournalError {
+            if Task.isCancelled || revision != expected { throw CancellationError() }
+            reportHistoryFailure(failure)
+            throw failure
+        }
+    }
+    private func resolveSubmissions(for runID: UUID, as status: ConversationSubmission.Status) {
+        let ids = submissions.filter { $0.value.runID == runID }.map(\.key)
+        for id in ids { submissions.removeValue(forKey: id)?.ticket.resolve(status) }
+    }
+    private func hasUnansweredModelCall(_ call: ToolCall) -> Bool {
+        var count = 0
+        for message in modelMessages {
+            if message.role == "assistant" {
+                count += message.toolCalls.filter { $0.id.utf8.elementsEqual(call.id.utf8) && $0.name.utf8.elementsEqual(call.name.utf8) }.count
+            } else if message.role == "tool", message.toolCallID?.utf8.elementsEqual(call.id.utf8) == true,
+                      message.toolName?.utf8.elementsEqual(call.name.utf8) == true { count -= 1 }
+        }
+        return count == 1
+    }
+    /// Explicit storage-only repair. No planner reply or action is replayed here.
+    func retryConversationStorage() async throws {
+        try await conversationHistory.retryResultSaves()
+        try await flushVisibleHistory()
+        historyFailure = nil
+        historyNotice = pendingVisibleMessageIDs.isEmpty ? nil : "Saving conversation…"
+    }
+    private func reportHistoryFailure(_ error: any Error) {
+        historyFailure = error
+        historyNotice = "Conversation changes are not saved."
+        errorMessage = "Conversation storage needs attention. Further actions are stopped. Your draft and prior files are preserved; an earlier in-flight effect may have completed."
+    }
+
     private struct SavedState: Codable {
         var messages: [ChatMessage]
         var activity: [ActivityEntry]
@@ -1844,32 +2167,50 @@ final class AssistantStore {
         var activeContextStart: Int?
         var pendingContextReset: Int?
     }
+    private struct SavedPreferences: Codable {
+        var formatVersion = 1
+        var grants: [ScopeGrant]
+        var memories: [MemoryItem]
+        var configuration: ModelConfiguration
+    }
     private func persist() {
-        guard let url = persistenceURL else { return }
+        guard let url = conversationHistory.preferencesURL else { return }
+        guard !preferencesBlocked else { errorMessage = "Saved preferences are unreadable or newer. Their original file is preserved."; return }
         guard !persistenceBlocked else { errorMessage = Self.historyRecoveryMessage; return }
         do {
-            let state = SavedState(messages: messages, activity: activity, grants: grants, memories: memories, configuration: configuration, modelMessages: modelMessages, interrupted: [.thinking, .acting, .awaitingReview].contains(phase), activeObjective: activeObjective, activeContextStart: activeContextStart, pendingContextReset: pendingContextReset)
+            let state = SavedPreferences(grants: grants, memories: memories, configuration: configuration)
             let data = try JSONEncoder().encode(state)
-            guard data.count <= Self.maximumStateBytes else { throw RelayError.message("Local history reached its 32 MB storage limit. The previous saved file was preserved; start a new conversation or recover/export history before continuing long-term.") }
+            guard data.count <= Self.maximumStateBytes else { throw RelayError.message("Local preferences exceed the 32 MB storage limit. The previous preferences file was preserved.") }
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             try LocalPrivateFileWriter.write(data: data, to: url, maximumBytes: Self.maximumStateBytes)
-        } catch { errorMessage = "Could not save local history: \(error.localizedDescription)" }
+        } catch { errorMessage = "Could not save local preferences: \(error.localizedDescription)" }
     }
     private func restore() {
+        if let preferencesURL = conversationHistory.preferencesURL, FileManager.default.fileExists(atPath: preferencesURL.path) {
+            do {
+                let data = try LocalStateFile.read(preferencesURL, maximumBytes: Self.maximumStateBytes)
+                let state = try JSONDecoder().decode(SavedPreferences.self, from: data)
+                guard state.formatVersion == 1 else { throw JournalError.unsupportedSchema }
+                grants = state.grants; memories = state.memories; configuration = state.configuration
+            } catch { preferencesBlocked = true; errorMessage = "Saved preferences are unreadable or newer. Their original file is preserved." }
+            return
+        }
         guard let url = persistenceURL, FileManager.default.fileExists(atPath: url.path) else { return }
         guard let data = try? LocalStateFile.read(url, maximumBytes: Self.maximumStateBytes), let state = try? JSONDecoder().decode(SavedState.self, from: data) else {
             persistenceBlocked = true
             errorMessage = Self.historyRecoveryMessage
             return
         }
-        messages = state.messages; activity = state.activity; grants = state.grants; memories = state.memories; configuration = state.configuration; modelMessages = state.modelMessages
-        activeObjective = state.activeObjective ?? messages.last(where: { $0.role == "user" })?.text ?? ""
-        activeContextStart = min(modelMessages.count, max(0, state.activeContextStart ?? 0))
-        pendingContextReset = state.pendingContextReset.map { min(modelMessages.count, max(0, $0)) }
+        messages = state.messages; activity = state.activity; grants = state.grants; memories = state.memories; configuration = state.configuration
+        // Visible history is recoverable; old derived context and execution authority are not.
+        modelMessages = []; restoredTaskNeedsNewInvocation = true
+        activeObjective = ""
+        activeContextStart = 0
+        pendingContextReset = nil
         if pendingContextReset != nil { activeObjective = "" }
         if state.interrupted {
             phase = .stopped; reconcileUnansweredTools()
-            messages.append(ChatMessage(role: "assistant", text: "The previous run was interrupted. Nothing has been replayed. Resume will refresh state before any new action."))
+            historyNotice = "The earlier run was interrupted. Start a fresh task; no saved action has been replayed."
         }
     }
 }

@@ -113,25 +113,42 @@ import Testing
         await #expect(throws: CancellationError.self) { try await pending.value }
         #expect(await fixture.requests.count == 3)
     }
-    @Test func unknownOrNullProviderPreservesTheActualSavedHistoryFile() throws {
-        let folder = FileManager.default.temporaryDirectory.appending(path: "relay-provider-recovery-" + UUID().uuidString)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: folder) }
-        let path = folder.appending(path: "state.json")
-        let original = AssistantStore(persistenceURL: path)
-        original.messages = [.init(role: "user", text: "SYNTHETIC preserved history")]
-        original.saveConfiguration()
-        let saved = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: path))
+    @Test func unknownOrNullProviderPreservesTheActualSavedPreferencesAndJournal() async throws {
         for invalid in [JSONValue.string("future-provider"), .null] {
-            var state = try #require(saved.object)
-            var configuration = try #require(state["configuration"]?.object)
+            let folder = FileManager.default.temporaryDirectory.appending(path: "relay-provider-recovery-" + UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let path = folder.appending(path: "state.json"), history = AssistantConversationHistory(stateURL: path)
+            let original = AssistantStore(persistenceURL: path, conversationHistory: history)
+            try await original.stageVisibleConversationFixture([.init(role: "user", text: "SYNTHETIC preserved history")], deferredUsers: [])
+            original.saveConfiguration(); try await history.close()
+            let preferences = try #require(history.preferencesURL)
+            let saved = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: preferences))
+            var state = try #require(saved.object), configuration = try #require(saved.object?["configuration"]?.object)
             configuration["backend"] = invalid; state["configuration"] = .object(configuration)
-            let bytes = try JSONEncoder().encode(JSONValue.object(state))
-            try bytes.write(to: path)
+            let bytes = try JSONEncoder().encode(JSONValue.object(state)); try bytes.write(to: preferences)
             let restored = AssistantStore(persistenceURL: path)
-            #expect(restored.errorMessage?.contains("Saved history could not be read safely") == true)
+            await restored.waitForConversationTaskToSettle()
+            #expect(restored.errorMessage?.contains("preferences") == true)
             restored.saveConfiguration()
+            #expect(try Data(contentsOf: preferences) == bytes)
+            #expect(restored.messages.contains { $0.text == "SYNTHETIC preserved history" })
+        }
+    }
+    @Test func unknownOrNullProviderInLegacyJSONIsPreservedWithoutCreatingAnEmptyJournal() async throws {
+        for invalid in [JSONValue.string("future-provider"), .null] {
+            let folder = FileManager.default.temporaryDirectory.appending(path: "relay-legacy-provider-recovery-" + UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let path = folder.appending(path: "state.json")
+            let message = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(ChatMessage(role: "user", text: "SYNTHETIC legacy history")))
+            let legacy = JSONValue.object(["messages":.array([message]),"activity":.array([]),"grants":.array([]),"memories":.array([]),
+                "configuration":.object(["backend":invalid]),"modelMessages":.array([]),"interrupted":.bool(false)])
+            let bytes = try JSONEncoder().encode(legacy); try bytes.write(to: path)
+            let restored = AssistantStore(persistenceURL: path)
+            await restored.waitForConversationTaskToSettle(); restored.saveConfiguration()
+            #expect(restored.errorMessage?.contains("preserved") == true)
             #expect(try Data(contentsOf: path) == bytes)
+            #expect(!FileManager.default.fileExists(atPath: folder.appending(path: "state.json.conversation-v1/Conversation.sqlite").path))
         }
     }
 }

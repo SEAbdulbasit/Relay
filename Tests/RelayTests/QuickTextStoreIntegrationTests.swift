@@ -14,6 +14,7 @@ struct QuickTextStoreIntegrationTests {
         let fullValue = "UNSELECTED_PREFIX_MUST_STAY_LOCAL " + selected + " UNSELECTED_SUFFIX_MUST_STAY_LOCAL"
         let range = (fullValue as NSString).range(of: selected)
         var inferenceCount = 0
+        let history = AssistantConversationHistory(stateURL: stateURL)
         let store = AssistantStore(persistenceURL: stateURL, complete: { messages, tools, _ in
             inferenceCount += 1
             #expect(tools.isEmpty)
@@ -22,7 +23,7 @@ struct QuickTextStoreIntegrationTests {
             #expect(!input.contains("UNSELECTED_PREFIX_MUST_STAY_LOCAL"))
             #expect(!input.contains("UNSELECTED_SUFFIX_MUST_STAY_LOCAL"))
             return ModelReply(content: "{\"corrected_text\":\"\(corrected)\"}", toolCalls: [])
-        }, execute: { _ in
+        }, conversationHistory: history, execute: { _ in
             Issue.record("Selected-text inference must not dispatch a computer tool.")
             throw CancellationError()
         }, codexComplete: { _, _ in
@@ -43,7 +44,10 @@ struct QuickTextStoreIntegrationTests {
         #expect(store.messages.isEmpty)
         #expect(store.activity.isEmpty)
         store.saveConfiguration()
-        let saved = try String(contentsOf: stateURL, encoding: .utf8)
+        let saved = try String(contentsOf: try #require(history.preferencesURL), encoding: .utf8)
+        let core = try await history.journalForTesting(), scope = try await core.scope()
+        #expect(try await core.page(expectedScope: scope).records.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: stateURL.path))
         #expect(!saved.contains(selected))
         #expect(!saved.contains(corrected))
         #expect(!saved.contains("UNSELECTED_"))

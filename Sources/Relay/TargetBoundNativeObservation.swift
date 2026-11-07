@@ -114,7 +114,11 @@ final class TargetBoundNativeObservation {
     }
 
     func prepare(application: NSRunningApplication) throws -> Request {
-        try prepare(Self.bind(application: application))
+        try requireActive()
+        return try prepare(Self.bind(application: application, requireCurrent: { [weak self] in
+            guard let self else { throw Failure.stopped }
+            try self.requireActive()
+        }))
     }
 
     /// Metadata seam: production binds AX synchronously; tests supply inert metadata only.
@@ -229,8 +233,9 @@ final class TargetBoundNativeObservation {
             && window.width > 0 && window.height > 0 && window.width <= 32_768 && window.height <= 32_768
     }
 
-    private static func bind(application: NSRunningApplication) throws -> Preparation {
-        try Task.checkCancellation()
+    private static func bind(application: NSRunningApplication,
+                             requireCurrent: @escaping @MainActor () throws -> Void) throws -> Preparation {
+        try requireCurrent()
         guard AXIsProcessTrusted(), let identity = DesktopApplicationTarget.identity(of: application) else {
             throw Failure.ambiguousApplication
         }
@@ -240,18 +245,30 @@ final class TargetBoundNativeObservation {
         let window = try selectedWindow(root)
         let initial = try windowInfo(window)
         guard valid(initial) else { throw Failure.unavailableWindow }
-        try uniqueWindow(window, title: initial.title, root: root)
-        let browser = isBrowser(identity)
-            ? try BrowserPageReader.captureCurrentTarget(application: application, expectedWindow: window) : nil
-        if let browser { try BrowserPageReader.validateCurrentTarget(browser, expectedWindow: window) }
-        return Preparation(application: identity, window: initial, validate: {
-            try Task.checkCancellation()
+        let validateOriginal: @MainActor () throws -> Void = {
+            try requireCurrent()
             guard AXIsProcessTrusted(), DesktopApplicationTarget.matches(identity, application: application) else { throw Failure.changedTarget }
             try requireExclusive(identity)
             guard CFEqual(try selectedWindow(root), window) else { throw Failure.changedTarget }
-            try uniqueWindow(window, title: initial.title, root: root)
             guard initial.matchesExactly(try windowInfo(window)) else { throw Failure.changedTarget }
-            if let browser { try BrowserPageReader.validateCurrentTarget(browser, expectedWindow: window) }
+            try requireCurrent()
+        }
+        // First binding has no qualified browser document yet: fail closed without
+        // enumeration recovery until the retained original target is established.
+        try uniqueWindow(window, title: initial.title, root: root, allowSiblingRecovery: false,
+                         validateOriginal: validateOriginal, requireCurrent: requireCurrent)
+        let browser = isBrowser(identity)
+            ? try BrowserPageReader.captureCurrentTarget(application: application, expectedWindow: window) : nil
+        if let browser { try BrowserPageReader.validateCurrentTarget(browser, expectedWindow: window) }
+        try requireCurrent()
+        return Preparation(application: identity, window: initial, validate: {
+            let validateOriginalDocument: @MainActor () throws -> Void = {
+                try validateOriginal()
+                if let browser { try BrowserPageReader.validateCurrentTarget(browser, expectedWindow: window) }
+                try requireCurrent()
+            }
+            try uniqueWindow(window, title: initial.title, root: root, allowSiblingRecovery: true,
+                             validateOriginal: validateOriginalDocument, requireCurrent: requireCurrent)
         })
     }
 
@@ -278,17 +295,36 @@ final class TargetBoundNativeObservation {
         return unsafeBitCast(value, to: AXUIElement.self)
     }
 
-    private static func uniqueWindow(_ selected: AXUIElement, title: String, root: AXUIElement) throws {
-        guard let windows = attribute(root, kAXWindowsAttribute) as? [AXUIElement], !windows.isEmpty, windows.count <= 64 else {
+    private static func uniqueWindow(_ original: AXUIElement, title: String, root: AXUIElement,
+                                     allowSiblingRecovery: Bool,
+                                     validateOriginal: @escaping @MainActor () throws -> Void,
+                                     requireCurrent: @escaping @MainActor () throws -> Void) throws {
+        let backend = NativeWindowEnumeration.Backend<AXUIElement>(enumerate: {
+            var value: CFTypeRef?
+            let status = AXUIElementCopyAttributeValue(root, kAXWindowsAttribute as CFString, &value)
+            guard status == .success else { throw NativeWindowEnumeration.ReadFailure(attribute: .windows, status: status) }
+            guard let windows = value as? [AXUIElement] else { throw Failure.unavailableWindow }
+            return windows
+        }, title: { member in
+            AXUIElementSetMessagingTimeout(member, 0.04)
+            var value: CFTypeRef?
+            let status = AXUIElementCopyAttributeValue(member, kAXTitleAttribute as CFString, &value)
+            guard status == .success else { throw NativeWindowEnumeration.ReadFailure(attribute: .title, status: status) }
+            guard let title = value as? String else { throw Failure.unavailableWindow }
+            return title
+        }, same: { CFEqual($0, $1) }, validateOriginal: validateOriginal, requireCurrent: requireCurrent)
+        do {
+            try NativeWindowEnumeration.validate(original: original, title: title,
+                allowSiblingRecovery: allowSiblingRecovery, backend: backend)
+        } catch let error as NativeWindowEnumeration.Failure {
+            switch error {
+            case .unavailableWindow: throw Failure.unavailableWindow
+            case .wrongWindow: throw Failure.wrongWindow
+            case .changedEnumeration: throw Failure.changedTarget
+            }
+        } catch is NativeWindowEnumeration.ReadFailure {
             throw Failure.unavailableWindow
         }
-        var matching: [AXUIElement] = []
-        for window in windows {
-            AXUIElementSetMessagingTimeout(window, 0.04)
-            guard let otherTitle = attribute(window, kAXTitleAttribute) as? String else { throw Failure.unavailableWindow }
-            if title.utf16.elementsEqual(otherTitle.utf16) { matching.append(window) }
-        }
-        guard matching.count == 1, let window = matching.first, CFEqual(window, selected) else { throw Failure.wrongWindow }
     }
 
     private static func windowInfo(_ window: AXUIElement) throws -> WindowInfo {

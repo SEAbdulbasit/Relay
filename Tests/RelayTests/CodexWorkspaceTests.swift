@@ -194,7 +194,8 @@ struct CodexWorkspaceTests {
         defer { if store.isRunning { store.stop() } }
         await store.selectWorkspaceCodex()
         store.draft = isBrowser ? "Read the currently selected synthetic page in Safari." : "Inspect the synthetic TextEdit window."
-        store.send(useWorkspaceProvider: true)
+        let submission = try #require(store.send(useWorkspaceProvider: true))
+        #expect(await submission.waitForAcknowledgment() == .saved)
         await waitUntil { store.pendingReview != nil || !store.isRunning }
         let review = try #require(store.pendingReview)
 
@@ -267,12 +268,12 @@ struct CodexWorkspaceTests {
     }
 
     private func settle(_ store: AssistantStore) async {
-        await waitUntil { !store.isRunning }
+        await store.waitForConversationTaskToSettle()
         #expect(!store.isRunning)
     }
 
     private func waitUntil(_ condition: () -> Bool) async {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
         while !condition(), ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(1))
         }

@@ -14,17 +14,21 @@ struct PrivateSourceQuestionTests {
                 text: "Only the synthetic source contains MARMOT-351.", textLimited: false)], skipped: 0)
         }
         await source.captureSelection(.notes, requestPermission: false)
+        let history = AssistantConversationHistory(stateURL: path)
         let store = AssistantStore(persistenceURL: path, complete: { messages, tools, _ in
             #expect(tools.isEmpty)
             #expect(messages.last?.content.contains("MARMOT-351") == true)
             return ModelReply(content: "Test note says MARMOT-351.", toolCalls: [])
-        }, nativeSources: source)
+        }, conversationHistory: history, nativeSources: source)
         store.saveConfiguration()
         let answer = try await store.askNativeSource(.notes, question: "What is the test token?")
         #expect(answer == "Test note says MARMOT-351.")
         #expect(store.messages.isEmpty)
         #expect(store.activity.isEmpty)
-        #expect(try !String(contentsOf: path, encoding: .utf8).contains("MARMOT-351"))
+        #expect(try !String(contentsOf: try #require(history.preferencesURL), encoding: .utf8).contains("MARMOT-351"))
+        let core = try await history.journalForTesting(), scope = try await core.scope()
+        #expect(try await core.page(expectedScope: scope).records.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: path.path))
         source.forget(.notes)
         await #expect(throws: (any Error).self) { try await store.askNativeSource(.notes, question: "What is the token?") }
     }

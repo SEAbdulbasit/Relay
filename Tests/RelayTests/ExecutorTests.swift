@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import RelayJournal
 @testable import Relay
 
 @MainActor
@@ -98,20 +99,23 @@ struct ExecutorTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let url = root.appendingPathComponent("state.json")
-        let broken = Data("{incomplete history".utf8)
+        let url = root.appendingPathComponent("state.json"), broken = Data("{incomplete history".utf8)
         try broken.write(to: url)
-        let store = AssistantStore(persistenceURL: url, complete: { _, _, _ in .init(content: "Temporary answer", toolCalls: []) })
+        let history = AssistantConversationHistory(stateURL: url)
+        let store = AssistantStore(persistenceURL: url, complete: { _, _, _ in .init(content: "Temporary answer", toolCalls: []) }, conversationHistory: history)
         #expect(store.errorMessage?.contains("preserved") == true)
-        store.draft = "Temporary request"
-        store.send()
-        for _ in 0..<100 where store.isRunning { await Task.yield() }
+        store.draft = "Temporary request"; store.send(); await store.waitForConversationTaskToSettle()
         #expect(try Data(contentsOf: url) == broken)
         store.clearConversation()
-        for _ in 0..<200 where store.isClearingConversation { await Task.yield() }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while store.isClearingConversation, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(2)) }
         #expect(!store.isClearingConversation)
-        #expect(try Data(contentsOf: url) != broken)
+        // Explicit reset starts a new journal while preserving the unreadable legacy original.
+        #expect(try Data(contentsOf: url) == broken)
+        #expect(store.draft == "Temporary request")
+        try await history.close()
         let restored = AssistantStore(persistenceURL: url)
+        await restored.waitForConversationTaskToSettle()
         #expect(restored.messages.isEmpty)
     }
     @Test func clearingWaitsForOldCompletionBlocksSendAndResumeAndPreservesNewDraft() async throws {
@@ -221,18 +225,22 @@ struct ExecutorTests {
     @Test func persistedInterruptionDoesNotReplay() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let state = directory.appendingPathComponent("state.json")
-        let store = AssistantStore(persistenceURL: state, complete: { _, _, _ in
-            try await Task.sleep(for: .seconds(30))
-            return ModelReply(content: "", toolCalls: [])
-        })
-        store.draft = "Prepare document"
-        store.send()
-        let restored = AssistantStore(persistenceURL: state)
-        #expect(restored.phase == .stopped)
-        #expect(!restored.isRunning)
-        #expect(restored.activity.allSatisfy { $0.status != "verified" })
-        store.stop()
+        let state = directory.appendingPathComponent("state.json"), history = AssistantConversationHistory(stateURL: state)
+        let core = try await history.journalForTesting(), scope = try await core.scope(), task = UUID(), attempt = UUID()
+        _ = try await core.acceptRequest(id: JournalOpaqueID(UUID().uuidString), taskID: task, attemptID: attempt,
+            text: JournalVisibleText("Prepare document", origin: .user), expectedScope: scope)
+        let intent = try JournalIntent(proposalID: UUID(), producerEpoch: core.producerEpoch, toolCallID: JournalOpaqueID("unfinished"),
+            toolName: "open_app", callDigest: Data(repeating: 1, count: 32), effect: .mutation)
+        _ = try await core.commitIntent(JournalEvent(id: JournalOpaqueID("unfinished-intent"), taskID: task, attemptID: attempt, payload: .intent(intent)), expectedScope: scope)
+        // End the old writer with unfinished durable work; separate child-process tests cover abrupt WAL exit.
+        try await history.close()
+        var inferences = 0, dispatches = 0
+        let restored = AssistantStore(persistenceURL: state, complete: { _, _, _ in inferences += 1; return ModelReply(content: "Unexpected", toolCalls: []) },
+            execute: { _ in dispatches += 1; return ToolResult(summary: "Unexpected", evidence: "None", verified: false) })
+        await restored.waitForConversationTaskToSettle()
+        #expect(restored.phase == .stopped); #expect(!restored.isRunning)
+        #expect(inferences == 0); #expect(dispatches == 0)
+        #expect(restored.activity.allSatisfy { $0.status != "verified" && $0.status != "verified receipt" })
     }
     @Test func malformedModelCallsAreRetriedWithoutDispatchAndBounded() async throws {
         var attempts = 0
@@ -306,15 +314,17 @@ struct ExecutorTests {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let state = directory.appendingPathComponent("state.json")
+        let firstHistory = AssistantConversationHistory(stateURL: state)
         let first = AssistantStore(persistenceURL: state, complete: { _, _, _ in
             ModelReply(content: "PRIVATE_SAVED_ANSWER", toolCalls: [])
-        })
+        }, conversationHistory: firstHistory)
         let grant = ScopeGrant(path: "/private/source.txt", writable: false)
         first.grants = [grant]
         first.draft = "PRIVATE_SAVED_REQUEST"
         first.send()
-        for _ in 0..<150 where first.isRunning { await Task.yield() }
+        await first.waitForConversationTaskToSettle()
         first.removeGrant(grant.id)
+        try await firstHistory.close()
         var restoredInput: [ModelMessage] = []
         let restored = AssistantStore(persistenceURL: state, complete: { input, _, _ in
             restoredInput = input
@@ -322,7 +332,7 @@ struct ExecutorTests {
         })
         restored.draft = "New question after relaunch"
         restored.send()
-        for _ in 0..<150 where restored.isRunning { await Task.yield() }
+        await restored.waitForConversationTaskToSettle()
         let context = restoredInput.map(\.content).joined(separator: "\n")
         #expect(!restoredInput.isEmpty)
         #expect(!context.contains("PRIVATE_SAVED"))

@@ -481,7 +481,7 @@ struct MainView: View {
             if !message.artifacts.isEmpty {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 12)], spacing: 12) {
                     ForEach(message.artifacts, id: \.self) { path in
-                        Button { store.revealArtifact(path) } label: {
+                        Button { store.revealArtifact(path, messageID: message.id) } label: {
                             HStack(spacing: 12) {
                                 RelayIconBadge(
                                     icon: ["xlsx", "csv"].contains(URL(fileURLWithPath: path).pathExtension.lowercased()) ? "tablecells.fill" : "doc.richtext.fill",
@@ -547,8 +547,12 @@ struct MainView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 8)
                     Button("Inspect activity") { store.showActivity = true }.buttonStyle(.link)
-                    Button("Continue") { store.resume() }.buttonStyle(RelaySecondaryButtonStyle())
-                        .disabled(store.isAuxiliaryBusy)
+                    if store.canResumeCurrentTask {
+                        Button("Continue") { store.resume() }.buttonStyle(RelaySecondaryButtonStyle())
+                            .disabled(store.isAuxiliaryBusy)
+                    } else {
+                        Button("New task") { composerFocused = true }.buttonStyle(RelaySecondaryButtonStyle())
+                    }
                 }
                 .padding(.vertical, 8)
                 .accessibilityElement(children: .contain)
@@ -557,20 +561,31 @@ struct MainView: View {
             if store.phase == .stopped {
                 HStack(spacing: 12) {
                     Image(systemName: "pause.circle.fill").foregroundStyle(RelayColors.accentCoral)
-                    Text("Task stopped. Inspect activities or resume execution.")
+                    Text(store.canResumeCurrentTask ? "Task stopped. Inspect activities or resume execution." : "The earlier task is no longer active. Start a fresh task to continue.")
                         .font(.system(size: 13)).foregroundStyle(RelayTheme.muted)
                     Spacer()
-                    Button("Inspect & resume") { store.resume() }
-                        .buttonStyle(RelaySecondaryButtonStyle())
+                    if store.canResumeCurrentTask {
+                        Button("Inspect & resume") { store.resume() }.buttonStyle(RelaySecondaryButtonStyle())
+                    } else {
+                        Button("New task") { composerFocused = true }.buttonStyle(RelaySecondaryButtonStyle())
+                    }
                 }
                 .padding(12)
                 .relayLitCard(accent: RelayColors.accentCoral, cornerRadius: 12)
             }
 
             if store.showActivity && viewportWidth < 1200 && store.pendingReview == nil {
-                activityPanel.frame(maxHeight: 220)
+                // A maximum alone lets the dock compress its scroll content to zero.
+                activityPanel.frame(minHeight: 160, idealHeight: 180, maxHeight: 220)
             }
 
+            if let notice = store.historyNotice {
+                Text(notice)
+                    .font(.relayCaption)
+                    .foregroundStyle(RelayTheme.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("conversation.storageStatus")
+            }
             composer
         }
         .frame(maxWidth: workspaceColumnWidth)

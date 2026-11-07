@@ -14,7 +14,8 @@ struct PrivateStatePersistenceTests {
         let source = root.appendingPathComponent("chosen.md")
         try Data("Private synthetic source Café 🌍".utf8).write(to: source)
         let state = root.appendingPathComponent("state.json")
-        let store = AssistantStore(persistenceURL: state, complete: { _, _, _ in .init(content: "Synthetic private reply", toolCalls: []) })
+        let history = AssistantConversationHistory(stateURL: state)
+        let store = AssistantStore(persistenceURL: state, complete: { _, _, _ in .init(content: "Synthetic private reply", toolCalls: []) }, conversationHistory: history)
         store.grants = [.init(path: source.path)]
         store.addMemory("Synthetic approved preference")
         await store.knowledge.index(grants: store.grants)
@@ -23,15 +24,25 @@ struct PrivateStatePersistenceTests {
         store.setSuggestionsEnabled(true)
         try store.preparation.setTime(hour: 9, minute: 0)
         store.draft = "Synthetic private question"; store.send()
-        for _ in 0..<100 where store.isRunning { await Task.yield() }
-        for name in ["state.json", "knowledge.json", "writing-profile.json", "suggestions.json", "preparation-schedule.json"] {
+        await store.waitForConversationTaskToSettle()
+        for name in ["state.json.preferences-v2.json", "knowledge.json", "writing-profile.json", "suggestions.json", "preparation-schedule.json"] {
             let url = root.appendingPathComponent(name)
             let metadata = try FileManager.default.attributesOfItem(atPath: url.path)
             #expect((metadata[.posixPermissions] as? NSNumber)?.intValue == 0o600)
             #expect(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) is [String: Any])
         }
         #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).filter { $0.hasPrefix(".relay-private-write-") }.isEmpty)
+        let journalDirectory = state.deletingLastPathComponent().appendingPathComponent(state.lastPathComponent + ".conversation-v1")
+        let journalPermissions = try FileManager.default.attributesOfItem(atPath: journalDirectory.path)
+        #expect((journalPermissions[.posixPermissions] as? NSNumber)?.intValue == 0o700)
+        for name in ["Conversation.sqlite", "Conversation.sqlite-wal", "Conversation.sqlite-shm"] {
+            let metadata = try FileManager.default.attributesOfItem(atPath: journalDirectory.appendingPathComponent(name).path)
+            #expect((metadata[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+        }
+        #expect(!FileManager.default.fileExists(atPath: state.path))
+        try await history.close()
         let restored = AssistantStore(persistenceURL: state)
+        await restored.waitForConversationTaskToSettle()
         #expect(restored.messages.contains { $0.text.hasPrefix("Synthetic private reply") })
         #expect(restored.memories.first?.text == "Synthetic approved preference")
         #expect(restored.knowledge.records.first?.text == "Private synthetic source Café 🌍")

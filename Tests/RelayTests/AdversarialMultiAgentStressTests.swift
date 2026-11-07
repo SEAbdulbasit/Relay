@@ -155,14 +155,14 @@ struct AdversarialMultiAgentStressTests {
     @Test("Immediate stop during planning phase prevents navigation and execution")
     func stopDuringPlannerTurnHaltsImmediately() async throws {
         var plannerCalled = false
+        var releasePlanner: CheckedContinuation<Void, Never>?
         var executorCalled = false
 
         let store = AssistantStore(persistenceURL: nil, complete: { input, tools, config in
             let system = input.first?.content ?? ""
             if system.contains("ROLE: Planner") {
                 plannerCalled = true
-                // Simulate delay in planner
-                try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+                await withCheckedContinuation { releasePlanner = $0 }
                 return ModelReply(content: """
                 {
                   "taskType": "automation",
@@ -180,9 +180,11 @@ struct AdversarialMultiAgentStressTests {
 
         store.draft = "Task to be cancelled"
         store.send()
-        // Wait a tiny bit then trigger stop while planning
-        try? await Task.sleep(nanoseconds: 10_000_000) // 10ms
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while releasePlanner == nil, ContinuousClock.now < deadline { await Task.yield() }
+        try #require(releasePlanner != nil)
         store.stop()
+        releasePlanner?.resume(); releasePlanner = nil
         await settle(store)
 
         #expect(plannerCalled)

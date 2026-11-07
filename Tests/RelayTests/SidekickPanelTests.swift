@@ -53,11 +53,14 @@ struct SidekickPanelTests {
         controller.promptText = "Sidekick fixture request"
         controller.submit(store: store)
         #expect(store.draft == "Keep this independent draft.")
+        let submission = try #require(controller.pendingSubmission)
+        #expect(await submission.waitForAcknowledgment() == .saved)
+        await Task.yield()
         #expect(controller.promptText.isEmpty)
-        #expect(store.messages.last?.text == "Sidekick fixture request")
+        #expect(controller.submittedMessageID == submission.messageID)
+        #expect(store.messages.first(where: { $0.id == submission.messageID })?.text == "Sidekick fixture request")
 
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-        while store.isRunning && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        await store.waitForConversationTaskToSettle()
         #expect(hostedCalls == 1)
         #expect(controller.latestResult(in: store.messages)?.text.contains("Sidekick fixture result") == true)
         controller.clearResult()
@@ -114,8 +117,7 @@ struct SidekickPanelTests {
     }
 
     private func waitForRun(_ store: AssistantStore) async throws {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-        while store.isRunning && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        await store.waitForConversationTaskToSettle()
         try #require(!store.isRunning)
     }
 }

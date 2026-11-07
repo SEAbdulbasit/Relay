@@ -27,6 +27,7 @@ struct MultiAgentResult: Sendable {
 final class MultiAgentOrchestrator {
     typealias CompleteHandler = ([ModelMessage], [ToolDefinition], ModelConfiguration) async throws -> ModelReply
     typealias ExecuteHandler = (ToolCall) async throws -> ToolResult
+    typealias ExecuteProposalHandler = (ToolCall, UUID) async throws -> ToolResult
     typealias ReviewCheck = (ToolCall) -> String?
     typealias ReviewHandler = (ToolCall, String) async throws -> Bool
     typealias GateCheck = () throws -> Void
@@ -34,6 +35,7 @@ final class MultiAgentOrchestrator {
     let blackboard: MultiAgentBlackboard
     private let complete: CompleteHandler
     private let execute: ExecuteHandler
+    private let executeProposal: ExecuteProposalHandler?
     private let reviewReason: ReviewCheck?
     private let requestReview: ReviewHandler?
     private let gate: GateCheck?
@@ -57,6 +59,7 @@ final class MultiAgentOrchestrator {
         configuration: ModelConfiguration = ModelConfiguration(),
         complete: @escaping CompleteHandler,
         execute: @escaping ExecuteHandler,
+        executeProposal: ExecuteProposalHandler? = nil,
         reviewReason: ReviewCheck? = nil,
         requestReview: ReviewHandler? = nil,
         gate: GateCheck? = nil
@@ -66,6 +69,7 @@ final class MultiAgentOrchestrator {
         self.configuration = configuration
         self.complete = complete
         self.execute = execute
+        self.executeProposal = executeProposal
         self.reviewReason = reviewReason
         self.requestReview = requestReview
         self.gate = gate
@@ -212,12 +216,13 @@ final class MultiAgentOrchestrator {
         try gate?()
 
         try validate(reply.toolCalls, against: tools)
+        let acceptedProposalID = UUID()
         var results: [ToolResult] = []
 
         for call in reply.toolCalls {
             try gate?()
             recordActivity(role: .navigator, title: "Dispatching inspection", detail: call.name)
-            let result = try await dispatch(call)
+            let result = try await dispatch(call, proposalID: acceptedProposalID)
             results.append(result)
             blackboard.addObservation("\(call.name): \(result.summary) [verified=\(result.verified)]")
             recordActivity(role: .navigator, title: "Observed \(call.name)", detail: result.summary)
@@ -253,6 +258,7 @@ final class MultiAgentOrchestrator {
         try gate?()
 
         try validate(reply.toolCalls, against: tools)
+        let acceptedProposalID = UUID()
         var results: [ToolResult] = []
 
         for call in reply.toolCalls {
@@ -268,7 +274,7 @@ final class MultiAgentOrchestrator {
             }
 
             recordActivity(role: .executor, title: "Dispatching mutation", detail: call.name)
-            let result = try await dispatch(call)
+            let result = try await dispatch(call, proposalID: acceptedProposalID)
             results.append(result)
             recordActivity(role: .executor, title: "Executed \(call.name)", detail: result.summary)
             // Later calls in a batch may depend on this action having succeeded.
@@ -306,12 +312,13 @@ final class MultiAgentOrchestrator {
         let reply = try await complete([system, userMsg], tools, configuration)
         try gate?()
         try validate(reply.toolCalls, against: tools)
+        let acceptedProposalID = UUID()
 
         var readbacks: [ToolResult] = []
         for call in reply.toolCalls {
             try gate?()
             recordActivity(role: .critic, title: "Dispatching verification readback", detail: call.name)
-            let result = try await dispatch(call)
+            let result = try await dispatch(call, proposalID: acceptedProposalID)
             readbacks.append(result)
             recordActivity(role: .critic, title: "Critic readback result", detail: result.summary)
         }
@@ -371,9 +378,11 @@ final class MultiAgentOrchestrator {
         try DesktopActionBatch.validate(calls)
     }
 
-    private func dispatch(_ call: ToolCall) async throws -> ToolResult {
+    private func dispatch(_ call: ToolCall, proposalID: UUID) async throws -> ToolResult {
         didDispatchTool = true
-        let result = try await execute(call)
+        let result: ToolResult
+        if let executeProposal { result = try await executeProposal(call, proposalID) }
+        else { result = try await execute(call) }
         if result.verified { blackboard.verifiedResults.append(result) }
         onToolResult?(call, result)
         return result

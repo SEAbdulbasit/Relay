@@ -33,7 +33,7 @@ struct MorningBriefHandoffTests {
         #expect(executed.isEmpty)
 
         try store.startBriefTask(card.id, request: "Open Calculator, then report its launch.")
-        for _ in 0..<100 where store.isRunning { try await Task.sleep(for: .milliseconds(10)) }
+        await store.waitForConversationTaskToSettle()
         #expect(!store.isRunning)
         #expect(!store.workspaceUsesCodex)
         #expect(executed == ["open_app"])
@@ -65,25 +65,31 @@ struct MorningBriefHandoffTests {
         let state = fixture.folder.appending(path: "state.json")
         let marker = "private window fixture marker"
         var inputs: [[ModelMessage]] = []
+        let history = AssistantConversationHistory(stateURL: state)
         let store = AssistantStore(persistenceURL: state, complete: { messages, _, _ in
             inputs.append(messages)
             return ModelReply(content: "Fixture answer.", toolCalls: [])
-        }, multiAgent: true, codexComplete: { _, _ in
+        }, conversationHistory: history, multiAgent: true, codexComplete: { _, _ in
             Issue.record("The reviewed window description must stay local.")
             throw CancellationError()
         }, codexCheck: {})
         await store.selectWorkspaceCodex()
         try store.startWindowTask(request: "Summarize the selected window.", reviewedDescription: marker)
-        for _ in 0..<100 where store.isRunning { try await Task.sleep(for: .milliseconds(10)) }
+        await store.waitForConversationTaskToSettle()
         #expect(!store.isRunning)
         #expect(inputs.first?.first?.content.contains(marker) == true)
         #expect(inputs.first?.first?.content.contains("untrusted evidence") == true)
         #expect(store.messages.allSatisfy { !$0.text.contains(marker) })
-        #expect(try !String(contentsOf: state, encoding: .utf8).contains(marker))
+        #expect(try !String(contentsOf: try #require(history.preferencesURL), encoding: .utf8).contains(marker))
+        let core = try await history.journalForTesting(), scope = try await core.scope()
+        for record in try await core.page(expectedScope: scope).records {
+            #expect(!String(decoding: try JSONEncoder().encode(record.event), as: UTF8.self).contains(marker))
+        }
+        #expect(!FileManager.default.fileExists(atPath: state.path))
 
         store.draft = "Start a new request."
         store.send(useMultiAgent: false)
-        for _ in 0..<100 where store.isRunning { try await Task.sleep(for: .milliseconds(10)) }
+        await store.waitForConversationTaskToSettle()
         #expect(inputs.count == 2)
         #expect(inputs.last?.allSatisfy { !$0.content.contains(marker) } == true)
     }

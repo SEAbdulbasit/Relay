@@ -15,8 +15,7 @@ struct DirectAppLaunchTests {
 
         store.draft = "open Calculator."
         store.send(useWorkspaceProvider: true)
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-        while store.isRunning && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        await store.waitForConversationTaskToSettle()
 
         #expect(calls.count == 1)
         #expect(calls.first?.name == "open_app")
@@ -40,8 +39,7 @@ struct DirectAppLaunchTests {
         store.draft = "What is 48 × 37?"
         #expect(store.canRunWithoutModel(store.draft))
         store.send(useWorkspaceProvider: true)
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-        while store.isRunning && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        await store.waitForConversationTaskToSettle()
         #expect(store.messages.last?.text.contains("1776") == true)
         #expect(store.activity.contains { $0.name == "calculate" && $0.status == "verified" })
         #expect(!store.actionsReady)

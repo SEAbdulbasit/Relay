@@ -173,7 +173,11 @@ final class NotchOverlayController {
     private static let releaseVoicePreference = "relay.sidekick.releaseVoiceToSend"
     private static let compactSize = CGSize(width: 210, height: 34)
 
-    var promptText = ""
+    var promptText = "" { didSet { promptRevision &+= 1 } }
+    @ObservationIgnored private var promptRevision = 0
+    @ObservationIgnored private var submissionPresentationRevision = 0
+    @ObservationIgnored private let submissionOriginID = UUID()
+    private(set) var pendingSubmission: ConversationSubmission?
     var includesCurrentApp = false
     private(set) var currentApp: NSRunningApplication?
     private(set) var preparingTextActions = false
@@ -230,6 +234,8 @@ final class NotchOverlayController {
 
     func connect(store: AssistantStore, available: Bool, openWorkspace: @escaping () -> Void) {
         if let previous = self.store, previous !== store {
+            submissionPresentationRevision &+= 1
+            if let pendingSubmission { previous.cancelSubmission(pendingSubmission) }
             cancelOwnedDictation(for: previous)
             closePanel()
         }
@@ -246,6 +252,8 @@ final class NotchOverlayController {
         displayHandles.onHold = { [weak self] displayID in self?.beginNotchVoiceHold(on: displayID) == true }
         displayHandles.onRelease = { [weak self] cancelled in self?.endNotchVoiceHold(cancelled: cancelled) }
         guard available else {
+            submissionPresentationRevision &+= 1
+            if let pendingSubmission { store.cancelSubmission(pendingSubmission) }
             cancelOwnedDictation(for: store)
             expanded = false
             closePanel()
@@ -586,8 +594,8 @@ final class NotchOverlayController {
     func submit(store: AssistantStore) {
         guard store.interactiveSessionActive else { return }
         if let owner = self.store { guard owner === store, available else { return } }
-        let prompt = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty, !store.isRunning, !store.voice.isBusy else { return }
+        let prompt = promptText
+        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, pendingSubmission?.isPending != true, !store.isRunning, !store.voice.isBusy else { return }
         if let intent = QuickTextActionIntent.parse(prompt) {
             do {
                 guard store.actionsReady, !preparingTextActions else {
@@ -617,20 +625,36 @@ final class NotchOverlayController {
         let visualTarget = appID != nil ? currentApp.flatMap(SidekickWindowText.target(for:)) : nil
         let sidekickContext = SidekickTaskContext(appID: appID, instructions: preferences.string(
             forKey: SidekickTaskContext.instructionsPreference) ?? "", visualTarget: visualTarget)
-        let workspaceDraft = store.draft
-        let previousCount = store.messages.count
-        store.draft = prompt
-        store.send(useWorkspaceProvider: true, sidekickContext: sidekickContext)
-        store.draft = workspaceDraft
-        guard store.messages.count > previousCount, let request = store.messages.last, request.role == "user" else {
+        let capturedRevision = promptRevision
+        let capturedAppSelection = includesCurrentApp
+        let capturedAppPID = currentApp?.processIdentifier
+        let capturedNote = rememberedNoteTitle
+        guard let ticket = store.submitText(prompt, originID: submissionOriginID, originRevision: capturedRevision,
+                                            useWorkspaceProvider: true, sidekickContext: sidekickContext) else {
             errorMessage = store.errorMessage ?? "Relay couldn’t start this task. Your request is still here."
             return
         }
-        submittedMessageID = request.id
-        includesCurrentApp = false
-        promptText = ""
-        rememberedNoteTitle = nil
+        pendingSubmission = ticket
+        submittedMessageID = nil
+        let presentationRevision = submissionPresentationRevision
         errorMessage = nil
+        ticket.onAcknowledgment { [weak self, weak store] status in
+            guard let self, self.pendingSubmission === ticket else { return }
+            guard self.submissionPresentationRevision == presentationRevision else { self.pendingSubmission = nil; return }
+            if status == .saved {
+                self.submittedMessageID = ticket.messageID
+                if self.promptRevision == capturedRevision, self.promptText.utf8.elementsEqual(prompt.utf8) {
+                    self.promptText = ""
+                    if self.includesCurrentApp == capturedAppSelection, self.currentApp?.processIdentifier == capturedAppPID { self.includesCurrentApp = false }
+                    if self.rememberedNoteTitle == capturedNote { self.rememberedNoteTitle = nil }
+                }
+                self.errorMessage = nil
+            } else {
+                self.errorMessage = status == .stopped ? "Stopped before delivery was acknowledged. Your request is still here." :
+                    (store?.errorMessage ?? "This request could not be saved. Your text is still here.")
+            }
+            self.pendingSubmission = nil
+        }
     }
 
     private func performQuickTextAction(_ intent: QuickTextActionIntent, store: AssistantStore) throws {
