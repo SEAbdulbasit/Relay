@@ -31,7 +31,7 @@ struct NativeSourceConnectorsView: View {
                 Spacer()
                 if sources.capturing == kind {
                     ProgressView().controlSize(.small)
-                    Button("Stop capture") { sources.cancelCapture() }
+                    Button(sources.refreshing == kind ? "Stop refresh" : "Stop capture") { sources.cancelCapture() }
                         .buttonStyle(RelaySecondaryButtonStyle())
                 } else {
                     Button("Capture selected \(kind.itemsName)") {
@@ -49,6 +49,23 @@ struct NativeSourceConnectorsView: View {
             Text(sources.status(for: kind))
                 .font(.relayCaption).foregroundStyle(RelayTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
+            if sources.canRefresh(kind) {
+                HStack(spacing: 10) {
+                    Toggle("Keep these items up to date", isOn: Binding(
+                        get: { sources.isRefreshEnabled(kind) },
+                        set: { sources.setRefreshEnabled($0, for: kind) }))
+                        .toggleStyle(.switch)
+                        .disabled(!sources.isRefreshEnabled(kind) && (busy || sources.isCapturing))
+                        .help("Refreshes only the captured items once a minute while Relay runs. Capture again after Notes or Mail restarts. Text stays in this Relay session.")
+                        .accessibilityIdentifier("nativeSources.autoRefresh.\(kind.rawValue)")
+                    Spacer(minLength: 4)
+                    Button("Refresh now") { Task { await sources.refreshCaptured(kind) } }
+                        .buttonStyle(RelaySecondaryButtonStyle())
+                        .disabled(busy || sources.isCapturing)
+                        .accessibilityIdentifier("nativeSources.refresh.\(kind.rawValue)")
+                }
+                .font(.relayCaption)
+            }
             ForEach(items) { item in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title)

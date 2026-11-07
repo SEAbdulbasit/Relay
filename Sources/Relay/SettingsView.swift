@@ -17,7 +17,7 @@ struct SettingsView: View {
     @State private var agentDesktopUpdateMessage: String?
 
     private enum SettingsTab: String, CaseIterable {
-        case model = "Model", sidekick = "Sidekick", access = "Access", sources = "Sources", knowledge = "Knowledge", memory = "Memory", voice = "Voice"
+        case model = "Model", sidekick = "Sidekick", access = "Access", sources = "Sources", knowledge = "Knowledge", memory = "Memory", voice = "Voice", system = "System"
         var title: String {
             switch self {
             case .model: "Models"
@@ -35,6 +35,7 @@ struct SettingsView: View {
             case .knowledge: "books.vertical"
             case .memory: "square.stack.3d.up"
             case .voice: "speaker.wave.2"
+            case .system: "gearshape"
             }
         }
     }
@@ -64,6 +65,7 @@ struct SettingsView: View {
                             case .sources:
                                 sectionTitle("Personal sources", detail: "Choose the exact items Relay can read. Captured content stays on this Mac.")
                                 NativeSourceConnectorsView(sources: store.nativeSources, busy: store.isRunning)
+                                MailWorkflowAccessView(busy: store.isRunning)
                                 PrivateSourceQuestionView(store: store)
                                 ChatArchiveView(store: store)
                                 DirectMCPConnectorView(connector: store.directMCP, busy: store.isRunning && !store.directMCP.isBusy)
@@ -82,6 +84,11 @@ struct SettingsView: View {
                                 memorySettings
                                 Divider().overlay(RelayTheme.line)
                                 ConversationExportView(store: store)
+                            case .system:
+                                sectionTitle("System", detail: "Manage startup, updates, and diagnostics for this Mac.")
+                                LaunchAtLoginView()
+                                Divider().overlay(RelayTheme.line)
+                                AppUpdateView()
                                 Divider().overlay(RelayTheme.line)
                                 DiagnosticsView(store: store)
                             }
@@ -128,7 +135,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 22) {
                     navigationGroup("Workspace", tabs: [.model, .sidekick, .voice])
                     navigationGroup("Your data", tabs: [.sources, .knowledge, .memory])
-                    navigationGroup("Mac", tabs: [.access])
+                    navigationGroup("Mac", tabs: [.access, .system])
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 20)

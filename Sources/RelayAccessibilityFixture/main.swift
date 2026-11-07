@@ -14,13 +14,15 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     private var draftInput: NSTextView?
     private var draftOracleTimer: Timer?
     private var lastOracleState: OracleState?
+    private var delivery: NSPopUpButton?
     private let environment = ProcessInfo.processInfo.environment
     private var launchToken: String { environment["RELAY_FIXTURE_TOKEN"] ?? fallbackToken }
     private let fallbackToken = UUID().uuidString
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let includeDraft = environment["RELAY_FIXTURE_INCLUDE_DRAFT"] == "1"
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: includeDraft ? 460 : 300),
+        let includeSelection = environment["RELAY_FIXTURE_INCLUDE_SELECTION"] == "1"
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: includeDraft ? 460 : includeSelection ? 360 : 300),
                           styleMask: [.titled, .closable, .miniaturizable],
                           backing: .buffered, defer: false)
         let screenMarker = environment["RELAY_FIXTURE_SCREEN_MARKER"]
@@ -71,6 +73,23 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
 
         let includeSecure = environment["RELAY_FIXTURE_INCLUDE_SECURE"] == "1"
         var controls: [NSView] = [heading, inputLabel, input, buttons, result, token]
+        if includeSelection {
+            let selection = NSPopUpButton(frame: .zero, pullsDown: false)
+            selection.addItems(withTitles: ["Standard", "Express — café", "-Priority"])
+            if environment["RELAY_FIXTURE_DUPLICATE_SELECTION"] == "1" {
+                selection.menu?.addItem(NSMenuItem(title: "Express — café", action: nil, keyEquivalent: ""))
+            }
+            if environment["RELAY_FIXTURE_DISABLED_SELECTION"] == "1" {
+                selection.autoenablesItems = false
+                selection.item(at: 1)?.isEnabled = false
+            }
+            selection.setAccessibilityLabel("Fixture delivery method")
+            selection.setAccessibilityIdentifier("relay.fixture.delivery")
+            selection.target = self
+            selection.action = #selector(writeOracle)
+            delivery = selection
+            controls.append(selection)
+        }
         if let screenMarker {
             let marker = NSTextField(labelWithString: "RELAY SCREEN CHECK " + screenMarker)
             marker.font = .monospacedSystemFont(ofSize: 28, weight: .bold)
@@ -190,7 +209,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         let state = OracleState(input: input.stringValue, result: result.stringValue,
                                 clickCount: clickCount, launchToken: launchToken, draft: draft,
                                 secondaryInput: secondaryInput?.string, focusedWindow: NSApplication.shared.keyWindow?.title,
-                                secondaryScrollOffset: secondaryScroll.map { $0.contentView.bounds.minY })
+                                secondaryScrollOffset: secondaryScroll.map { $0.contentView.bounds.minY }, delivery: delivery?.titleOfSelectedItem)
         if state == lastOracleState { return }
         do {
             let data = try JSONEncoder().encode(state)
@@ -218,6 +237,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         let secondaryInput: String?
         let focusedWindow: String?
         let secondaryScrollOffset: Double?
+        let delivery: String?
     }
 }
 

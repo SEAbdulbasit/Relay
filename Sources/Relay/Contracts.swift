@@ -91,6 +91,23 @@ nonisolated struct PendingReview: Identifiable, Sendable {
     var reason: String
     var revision: Int
     var sharesWithOpenAI = false
+    var title: String {
+        if sharesWithOpenAI { return "Share this excerpt with OpenAI?" }
+        switch call.name {
+        case "create_mail_draft": return "Create this Mail draft?"
+        case "send_mail": return "Send this message?"
+        default: return "Action approval required"
+        }
+    }
+    var approvalTitle: String {
+        if sharesWithOpenAI { return "Share Excerpt" }
+        switch call.name {
+        case "create_mail_draft": return "Create draft"
+        case "send_mail": return "Send message"
+        default: return "Approve Action"
+        }
+    }
+    var hasStructuredMailReview: Bool { ["create_mail_draft", "send_mail"].contains(call.name) }
 }
 nonisolated enum RunPhase: String, Sendable { case idle, thinking, acting, awaitingReview, stopped, failed, completed, needsInput }
 nonisolated enum RelayError: LocalizedError {

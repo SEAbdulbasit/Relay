@@ -732,14 +732,14 @@ struct MainView: View {
 
     private func reviewCard(_ review: PendingReview) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label(review.sharesWithOpenAI ? "Share this excerpt with OpenAI?" : "Action Approval Required", systemImage: "hand.raised.fill")
+            Label(review.title, systemImage: "hand.raised.fill")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(RelayColors.accentAmber)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(review.reason).font(.system(size: 14)).foregroundStyle(RelayTheme.ink).textSelection(.enabled)
-                    if !review.sharesWithOpenAI {
+                    if !review.sharesWithOpenAI && !review.hasStructuredMailReview {
                         Text(review.call.name).font(.relayMono).foregroundStyle(RelayColors.accentEmerald)
                         Text(JSONValue.object(review.call.arguments).pretty)
                             .font(.relayMono).textSelection(.enabled)
@@ -747,15 +747,15 @@ struct MainView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: 150).scrollIndicators(.visible)
+            .frame(maxHeight: review.hasStructuredMailReview ? 240 : 150).scrollIndicators(.visible)
 
-            Text(review.sharesWithOpenAI ? "Sharing sends the entire excerpt above to ChatGPT, including any text you scroll to view." : "Approval applies only to this action.")
+            Text(review.sharesWithOpenAI ? "Sharing sends the entire excerpt above to ChatGPT, including any text you scroll to view." : review.hasStructuredMailReview ? "Review the entire message above, including text you scroll to view. Approval applies only to this action." : "Approval applies only to this action.")
                 .font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
 
             HStack {
                 Spacer()
                 Button(review.sharesWithOpenAI ? "Keep on This Mac" : "Decline") { store.denyReview() }.buttonStyle(RelaySecondaryButtonStyle())
-                Button(review.sharesWithOpenAI ? "Share Excerpt" : "Approve Action") { store.approveReview() }.buttonStyle(RelayPrimaryButtonStyle())
+                Button(review.approvalTitle) { store.approveReview() }.buttonStyle(RelayPrimaryButtonStyle())
             }
         }
         .padding(16)

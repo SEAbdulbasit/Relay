@@ -4,6 +4,15 @@ import Testing
 
 @Suite("AgentDesktopBridge & FFI Integration Tests")
 struct AgentDesktopBridgeTests {
+    @Test func exactValuesAreForwardedForDropdownAndTextActions() throws {
+        for command in ["select", "set-value", "type"] {
+            #expect(try AgentDesktopBridge.actionArguments(command: command, ref: "@snapshot:e1", value: "-Priority — café", direction: nil)
+                == [command, "@snapshot:e1", "--", "-Priority — café"])
+            #expect(throws: RelayError.self) {
+                try AgentDesktopBridge.actionArguments(command: command, ref: "@snapshot:e1", value: nil, direction: nil)
+            }
+        }
+    }
     @Test("Resolves vendored agent-desktop CLI and verifies libagent_desktop_ffi.dylib ABI v6")
     func resolvesBinaryAndVerifiesFfiAbi() async throws {
         let execURL = AgentDesktopBridge.resolveExecutableURL()

@@ -236,6 +236,11 @@ nonisolated enum AgentDesktopBridge {
         direction: String? = nil,
         sessionID: String? = nil
     ) async throws -> AgentDesktopEnvelope {
+        let args = try actionArguments(command: command, ref: ref, value: value, direction: direction)
+        return try await runCommand(arguments: args, timeoutSeconds: 8, sessionID: sessionID)
+    }
+
+    static func actionArguments(command: String, ref: String, value: String?, direction: String?) throws -> [String] {
         guard ref.hasPrefix("@"), ref.contains(":e") else {
             throw RelayError.message("agent-desktop ref must be snapshot-qualified (for example @s8f3k2p9:e8).")
         }
@@ -250,12 +255,13 @@ nonisolated enum AgentDesktopBridge {
             throw RelayError.message("Unsupported agent-desktop action '\(command)'.")
         }
         var args = [normalized, ref]
-        if ["set-value", "type"].contains(normalized), let value {
-            args.append(value)
+        if ["set-value", "type", "select"].contains(normalized) {
+            guard let value else { throw RelayError.message("This action requires an exact value.") }
+            args.append(contentsOf: ["--", value])
         } else if normalized == "scroll", let direction {
             args.append(contentsOf: ["--direction", direction.lowercased()])
         }
-        return try await runCommand(arguments: args, timeoutSeconds: 8, sessionID: sessionID)
+        return args
     }
 
     /// Read live geometry using the same private snapshot namespace as the action.

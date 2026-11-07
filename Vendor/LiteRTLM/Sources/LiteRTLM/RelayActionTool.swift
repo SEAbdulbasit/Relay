@@ -6,13 +6,16 @@ public enum RelayNativeTools {
     public static let supportedNames: Set<String> = [
         "calculate", "search_files", "preview_file_move", "move_file", "read_browser_page", "create_document",
         "create_spreadsheet", "read_calendar", "search_knowledge", "list_apps", "open_app", "open_file",
-        "stage_attachment", "list_files", "read_file", "write_file", "observe_app", "read_sidekick_window",
+        "stage_attachment", "create_mail_draft", "prepare_mail_send", "send_mail", "list_files", "read_file", "write_file", "observe_app", "read_sidekick_window",
         "set_value", "scroll_control", "press_control", "open_url", "browser_navigate", "search_web",
         "search_finder", "capability_probe",
     ]
     public static func makeTools(named names: [String]) throws -> [Tool] {
         try names.map { name in
             switch name {
+            case "create_mail_draft": return RelayCreateMailDraftTool()
+            case "prepare_mail_send": return RelayPrepareMailSendTool()
+            case "send_mail": return RelaySendMailTool()
             case "calculate": return RelayCalculateTool()
             case "search_files": return RelaySearchFilesTool()
             case "preview_file_move": return RelayPreviewFileMoveTool()
@@ -43,6 +46,30 @@ public enum RelayNativeTools {
             }
         }
     }
+}
+
+private struct RelayCreateMailDraftTool: RelaySchemaTool {
+    static let name = "create_mail_draft"
+    static let description = "Create a visible plain-text Apple Mail draft after exact review. Uses an existing Mail account. JSON contains sender, to, cc, bcc, subject, body; recipients have address and name. Return its opaque draft_id. Never send without the separate workflow."
+    @ToolParam(description: "Exact JSON message with sender, to, cc, bcc, subject, body")
+    var message_json: String
+    init() {}
+}
+
+private struct RelayPrepareMailSendTool: RelaySchemaTool {
+    static let name = "prepare_mail_send"
+    static let description = "Read the current state of one draft created by Relay in this session. Return an expiring review_id for exact user review. Does not send."
+    @ToolParam(description: "Opaque draft_id returned by create_mail_draft")
+    var draft_id: String
+    init() {}
+}
+
+private struct RelaySendMailTool: RelaySchemaTool {
+    static let name = "send_mail"
+    static let description = "Display sender, recipients, subject, body and attachment state, then submit the exact draft to Apple Mail only after user approval. Report acceptance separately from recipient delivery. Never replay an uncertain send."
+    @ToolParam(description: "Expiring review_id returned by prepare_mail_send")
+    var review_id: String
+    init() {}
 }
 
 private protocol RelaySchemaTool: Tool {}
@@ -165,6 +192,8 @@ private struct RelayPressControlTool: RelaySchemaTool {
     var element_id: String
     @ToolParam(description: "Optional: click, focus for a window, or select/toggle/check/uncheck/expand/collapse for a supported @ref")
     var action: String = "click"
+    @ToolParam(description: "Required for select: exact visible option text; omit for other actions")
+    var value: String = ""
     init() {}
 }
 
@@ -194,7 +223,7 @@ private struct RelaySearchFinderTool: RelaySchemaTool {
 
 private struct RelayBrowserNavigateTool: RelaySchemaTool {
     static let name = "browser_navigate"
-    static let description = "Navigate to an HTTP/HTTPS URL in a new Chrome or Safari tab using its visible address bar. Exact destination and browser require review. Verifies fresh page URL/title only; redirects, authentication and unsupported controls remain uncertain."
+    static let description = "Navigate to a reviewed HTTP/HTTPS destination in Chrome or Safari. Uses a new tab with target-bound address entry when supported, otherwise a supported URL-opening request. Verification covers the selected URL/title only; read page contents separately. Uncertain results, redirects and authentication require inspection."
     @ToolParam(description: "Exact HTTP/HTTPS destination")
     var url: String
     @ToolParam(description: "Google Chrome or Safari name or bundle identifier")
@@ -204,7 +233,7 @@ private struct RelayBrowserNavigateTool: RelaySchemaTool {
 
 private struct RelaySearchWebTool: RelaySchemaTool {
     static let name = "search_web"
-    static let description = "Search the web in a new Chrome or Safari tab using DuckDuckGo. Requires review of the exact query, browser and HTTPS search destination before network access. Verifies page URL/title, not answer accuracy."
+    static let description = "Search the web in Chrome or Safari using DuckDuckGo. Requires review of the exact query, browser and HTTPS destination before network access. Verification covers the selected URL/title; read the resulting page before answering. A new tab is not guaranteed."
     @ToolParam(description: "Exact single-line search text")
     var query: String
     @ToolParam(description: "Google Chrome or Safari name or bundle identifier")

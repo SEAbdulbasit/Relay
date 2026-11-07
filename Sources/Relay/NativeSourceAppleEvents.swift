@@ -41,17 +41,12 @@ nonisolated enum NativeSourceAppleEvents {
             case .noSelection: "Select one or more items in the Apple app, then capture the selection."
             case .selectionTooLarge: "Select up to \(maximumSelection) items at a time. No item content was read."
             case .malformedSelection: "The Apple app did not return an identifiable selection. No source snapshot was saved."
-            case .selectionChanged: "The selection changed while Relay was reading it. The previous snapshot was kept."
+            case .selectionChanged: "The selected item identities changed while Relay was reading them. The update was discarded."
             case .unavailableProperty: "An item property was unavailable or exceeded the safe response size."
             case .expired: "The Apple app did not finish responding within the capture limit. The previous snapshot was kept."
             case .eventFailed(let status): "The Apple app could not read the selection (Automation error \(status)). The previous snapshot was kept."
             }
         }
-    }
-
-    private struct ApplicationIdentity: Sendable {
-        let pid: pid_t
-        let launchedAt: Date
     }
 
     @MainActor static func captureSelected(_ kind: NativePersonalSourceKind, requestPermission: Bool) async throws -> NativePersonalSourceBatch {
@@ -60,12 +55,17 @@ nonisolated enum NativeSourceAppleEvents {
               app.bundleURL?.standardizedFileURL.path == kind.bundlePath, let launchedAt = app.launchDate else {
             throw Failure.appUnavailable
         }
-        return try await capture(kind, identity: ApplicationIdentity(pid: app.processIdentifier, launchedAt: launchedAt),
+        return try await capture(kind, identity: .init(pid: app.processIdentifier, launchedAt: launchedAt),
                                  requestPermission: requestPermission)
     }
 
-    @concurrent private static func capture(_ kind: NativePersonalSourceKind, identity: ApplicationIdentity,
-                                            requestPermission: Bool) async throws -> NativePersonalSourceBatch {
+    @MainActor static func refreshCaptured(_ scope: NativePersonalSourceScope) async throws -> NativePersonalSourceBatch {
+        try assertApplication(scope.kind, identity: scope.application)
+        return try await capture(scope.kind, identity: scope.application, requestPermission: false, scope: scope)
+    }
+
+    @concurrent private static func capture(_ kind: NativePersonalSourceKind, identity: NativePersonalSourceScope.Application,
+                                            requestPermission: Bool, scope: NativePersonalSourceScope? = nil) async throws -> NativePersonalSourceBatch {
         try Task.checkCancellation()
         try assertApplication(kind, identity: identity)
         let address = NSAppleEventDescriptor(processIdentifier: identity.pid)
@@ -76,7 +76,7 @@ nonisolated enum NativeSourceAppleEvents {
 
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(15))
-        return try readSelected(kind) { property, item in
+        let read: (Property, NSAppleEventDescriptor?) throws -> NSAppleEventDescriptor = { property, item in
             try Task.checkCancellation()
             try assertApplication(kind, identity: identity)
             let time = clock.now.duration(to: deadline).components
@@ -103,9 +103,11 @@ nonisolated enum NativeSourceAppleEvents {
             }
             return result
         }
+        if let scope { return try readCaptured(scope, read: read) }
+        return try readSelected(kind, application: identity, read: read)
     }
 
-    private static func assertApplication(_ kind: NativePersonalSourceKind, identity: ApplicationIdentity) throws {
+    private static func assertApplication(_ kind: NativePersonalSourceKind, identity: NativePersonalSourceScope.Application) throws {
         guard let app = NSRunningApplication(processIdentifier: identity.pid), !app.isTerminated,
               app.bundleIdentifier == kind.bundleIdentifier, app.launchDate == identity.launchedAt,
               app.bundleURL?.standardizedFileURL.path == kind.bundlePath else { throw Failure.appUnavailable }
@@ -134,10 +136,11 @@ nonisolated enum NativeSourceAppleEvents {
 
     /// Fixtures replace the Apple-event transport. Production and tests run the same
     /// selection validation, field allowlist, protected-note check and consistency read.
-    static func readSelected(_ kind: NativePersonalSourceKind,
+    static func readSelected(_ kind: NativePersonalSourceKind, application: NativePersonalSourceScope.Application? = nil,
                              read: (Property, NSAppleEventDescriptor?) throws -> NSAppleEventDescriptor) throws -> NativePersonalSourceBatch {
         let references = try selectedReferences(read(.selection, nil), kind: kind)
         var items: [NativePersonalSourceItem] = []
+        var retainedReferences: [Data] = []
         var skipped = 0
         for reference in references {
             try Task.checkCancellation()
@@ -156,15 +159,36 @@ nonisolated enum NativeSourceAppleEvents {
                 let bounded = NativePersonalSources.bounded(text, maximumBytes: maximumItemBytes)
                 let sentAt = kind == .mail ? try optionalDate(read(.sentAt, reference)) : nil
                 let receivedAt = kind == .mail ? try optionalDate(read(.receivedAt, reference)) : nil
-                items.append(NativePersonalSourceItem(id: UUID().uuidString, title: title, sender: sender,
+                items.append(NativePersonalSourceItem(id: NativePersonalSourceScope.itemID(for: reference.data), title: title, sender: sender,
                     text: bounded, textLimited: bounded.utf8.count < text.utf8.count, sentAt: sentAt, receivedAt: receivedAt))
+                retainedReferences.append(reference.data)
             } catch Failure.unavailableProperty {
                 skipped += 1
             }
         }
         let current = try selectedReferences(read(.selection, nil), kind: kind)
         guard current.map(\.data) == references.map(\.data) else { throw Failure.selectionChanged }
-        return NativePersonalSourceBatch(items: items, skipped: skipped)
+        let scope = application.map { NativePersonalSourceScope(kind: kind, application: $0, references: retainedReferences) }
+        return NativePersonalSourceBatch(items: items, skipped: skipped, scope: scope)
+    }
+
+    /// The captured references replace only the local selection lookup. No selection
+    /// event is sent to the app, so selecting another item cannot expand a refresh.
+    static func readCaptured(_ scope: NativePersonalSourceScope,
+                             read: (Property, NSAppleEventDescriptor?) throws -> NSAppleEventDescriptor) throws -> NativePersonalSourceBatch {
+        guard !scope.references.isEmpty, scope.references.count <= maximumSelection,
+              Set(scope.references).count == scope.references.count else { throw Failure.malformedSelection }
+        let list = NSAppleEventDescriptor.list()
+        for (offset, data) in scope.references.enumerated() {
+            guard !data.isEmpty, data.count <= 4_096,
+                  let reference = NSAppleEventDescriptor(descriptorType: DescType(typeObjectSpecifier), data: data) else {
+                throw Failure.malformedSelection
+            }
+            list.insert(reference, at: offset + 1)
+        }
+        return try readSelected(scope.kind, application: scope.application) { property, reference in
+            property == .selection ? list : try read(property, reference)
+        }
     }
 
     private static func optionalDate(_ read: @autoclosure () throws -> NSAppleEventDescriptor) throws -> Date? {

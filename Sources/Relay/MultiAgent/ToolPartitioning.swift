@@ -1,8 +1,7 @@
 import Foundation
 
-/// Partitions tool definitions by agent role to reduce schema context consumption by >75%.
-/// Instead of injecting all 21 tools (~4.5 KB) on every turn, each agent receives only
-/// the 0 to 9 tools required for its specialized task, preserving the 24 KB context window for Gemma 4 E2B.
+/// Keeps each role's tool schemas within its task: planning receives no tools,
+/// inspection and verification omit mutation schemas, and execution gets its action subset.
 nonisolated enum ToolPartitioning {
 
     /// Tool names allowed for each specialized agent role.
@@ -36,7 +35,8 @@ nonisolated enum ToolPartitioning {
                 "create_spreadsheet",
                 "open_url",
                 "browser_navigate",
-                "search_web"
+                "search_web",
+                "stage_attachment", "create_mail_draft", "prepare_mail_send", "send_mail"
             ]
 
         case .critic:

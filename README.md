@@ -102,6 +102,10 @@ Activity shows actual tool evidence, errors and uncertain effects. The model res
 - Morning Brief can refresh explicitly selected local sources, include a session-only agenda from selected calendars, prepare up to two local drafts, and notify you when it is ready. Explicit deadlines affect ordering, and exact source copies share review decisions. Drafts can survive relaunch while the original evidence is current. Scheduled work can resume within its original time window after sleep, a quit, or a power interruption. Relay can show a one-time macOS wake command and verify its presence in the system queue. Applying it requires macOS authorization, and actual wake depends on the hardware and power state.
 - Sidekick opens from the Mac notch, Task menu, or menu bar. It shows the active workspace provider, progress, approvals, and results. Select the current app in the notch to include it in one local task. If macOS grants screen capture access, Relay can use local OCR on that exact window when accessible text is missing. Raw recognition output is available only during that task. You can also choose a window yourself with the image and window picker.
 - Relay can stage an approved local file path in a supported native attachment chooser and verify what it entered. Choose the file yourself to complete the handoff.
+- Apple Mail workflows use an existing Mail account and separate macOS Automation access. Relay can create a reviewed plain-text draft, capture its current sender and recipients, and submit it only after an expiring exact-content approval. A changed draft invalidates that approval. An uncertain send is blocked from replay, and Mail acceptance is reported separately from recipient delivery. Attachments in this workflow require a manual handoff.
+- Selected Notes and Mail snapshots can refresh automatically while Relay runs. This opt-in rereads the original captured item references, excludes newly locked items, and clears unavailable or revoked scope. It does not follow a changed selection or a restarted source app. Content and refresh preferences remain session-only.
+- Sidekick’s Text actions menu summarizes or proofreads an explicit selection using the local model in a separate temporary window. Proofreading shows original and corrected text before a one-use native field replacement. Changed targets, browser fields and unsupported formatting use copying instead. Source text and results stay out of chat history and saved state.
+- Settings → System contains startup and update controls. Update checks use the public GitHub release feed without a Relay account. Downloads open the validated release page. Installing an update depends on a published release and the archive’s signing and notarization.
 - Purchases, account administration, automatic password entry, unrestricted shell access, and a mobile companion are unavailable.
 - No persistent screenshots or telemetry. Conversation, activity, explicit memory and grants are stored locally in `~/Library/Application Support/Relay/state.json` with user-only permissions. Clear Conversation removes conversation/activity; memory and context are removable separately. Selected originals stay in place. No task content becomes memory automatically.
 - File/model loading and native inference can fail or run slowly. Task loop and model inference have budgets; already-applied changes are not rolled back.
@@ -114,7 +118,7 @@ swift test
 RELAY_LITERT_TEST_MODEL=/absolute/path/test.litertlm swift test
 ```
 
-Tests cover action dispatch after Stop, false model narratives, interrupted-state restore, schema/scope/symlink checks, review invalidation, file/PDF readback and native model-message handling. Release targets in `planning/` are future gates, not achieved performance claims.
+Tests cover action dispatch after Stop, false model narratives, interrupted-state restore, schema/scope/symlink checks, review invalidation, file/PDF readback and native model-message handling. [Current parity status and remaining gaps](docs/parity-status.md) distinguish implemented paths from runtime qualification. Release targets in `planning/` are future gates, not achieved performance claims.
 
 ## Accessibility interaction checks
 
@@ -122,7 +126,7 @@ See [the test cases](planning/accessibility-test-plan.md). Settings → Permissi
 
 `search_finder` opens Finder and enters the requested query through its visible search field. The entered query and any visible exact filename evidence are reported separately. The desktop integration test checks the visible query; model planning is tested separately.
 
-Benign named AXButton clicks are now available with complete window/editable-field review binding. Incomplete/secure/oversized contexts refuse. Final submission, sends, publication and consequential controls remain excluded.
+Benign named AXButton clicks use complete window/editable-field review binding. Incomplete, secure, and oversized contexts refuse. Generic final submission, sends, publication, and consequential controls remain manual. The separate Apple Mail workflow binds its own exact displayed review to each draft and send.
 
 
 ## Repository layout

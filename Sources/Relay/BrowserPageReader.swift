@@ -30,12 +30,12 @@ enum BrowserPageReader {
         let expected = try BrowserAutomation.validatedURL(expectedURL)
         let browser = try BrowserAutomation.validatedBrowser(browser)
         guard AXIsProcessTrusted() else { throw RelayError.message("Reading a browser page needs Relay's Accessibility permission. No page was read.") }
-        let applications = NSRunningApplication.runningApplications(withBundleIdentifier: browser.rawValue)
-        guard applications.count == 1, let application = applications.first, !application.isTerminated else {
-            throw RelayError.message("The selected browser must already be running as one identifiable process. No browser was opened.")
+        guard let application = try BrowserAutomation.selectedApplication(browser), !application.isTerminated else {
+            throw RelayError.message("Open the intended browser window before reading its page. No browser was opened.")
         }
         let root = AXUIElementCreateApplication(application.processIdentifier)
         AXUIElementSetMessagingTimeout(root, 0.15)
+        try await BrowserAccessibility.prepareContent(for: application)
         var resolvedBefore: Identity?
         for attempt in 0..<4 {
             do {

@@ -86,15 +86,73 @@ enum BrowserAutomation {
         guard let applicationURL else {
             throw RelayError.message("\(browser.name) is not installed. Install it or explicitly choose another browser; Relay did not open a different browser.")
         }
+        let selected = try selectedApplication(browser)
         if !AXIsProcessTrusted() {
-            return try await openDirectly(url: url, browser: browser, applicationURL: applicationURL, deadline: deadline)
+            return try await openWithoutAddressEntry(url: url, browser: browser, selected: selected,
+                                                    applicationURL: applicationURL, deadline: deadline)
         }
         try checkNavigationDeadline(deadline)
         return try await withDirectOpenFallback(deadline: deadline) {
-            try await navigateWithAXAddressBar(url: url, browser: browser, applicationURL: applicationURL, deadline: deadline)
+            try await navigateWithAXAddressBar(url: url, browser: browser, applicationURL: applicationURL,
+                                              selected: selected, deadline: deadline)
         } open: {
-            try await openDirectly(url: url, browser: browser, applicationURL: applicationURL, deadline: deadline)
+            return try await openWithoutAddressEntry(url: url, browser: browser, selected: selected,
+                                                    applicationURL: applicationURL, deadline: deadline)
         }
+    }
+
+    private static func openWithoutAddressEntry(url: URL, browser: Browser, selected: NSRunningApplication?,
+                                               applicationURL: URL, deadline: Date) async throws -> ToolResult {
+        try checkNavigationDeadline(deadline)
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: browser.rawValue).filter { !$0.isTerminated }
+        if let selected {
+            guard !selected.isTerminated, running.contains(where: { $0.processIdentifier == selected.processIdentifier }) else {
+                throw RelayError.message("The original browser profile closed before navigation. No URL was dispatched.")
+            }
+        }
+        guard running.count > 1 else {
+            return try await openDirectly(url: url, browser: browser, applicationURL: applicationURL, deadline: deadline)
+        }
+        guard let selected, running.contains(where: { $0.processIdentifier == selected.processIdentifier }),
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == selected.processIdentifier else {
+            throw RelayError.message("The selected browser profile changed before navigation. No URL was dispatched.")
+        }
+        let launchedAt = selected.launchDate
+        try await BrowserURLDispatch.open(url, in: selected, applicationURL: applicationURL, deadline: deadline)
+        // A process-targeted URL event does not identify a newly created tab. Certify
+        // only a stable selected destination in this exact original browser process.
+        let root = AXUIElementCreateApplication(selected.processIdentifier)
+        AXUIElementSetMessagingTimeout(root, 0.15)
+        var matchedOnce = false
+        for _ in 0..<20 {
+            try checkNavigationDeadline(deadline)
+            let matches = AXIsProcessTrusted() && !selected.isTerminated && selected.launchDate == launchedAt
+                && NSWorkspace.shared.frontmostApplication?.processIdentifier == selected.processIdentifier
+                && BrowserPageReader.observesSelectedDestination(root: root, pid: selected.processIdentifier, expected: url)
+            if matches && matchedOnce {
+                return ToolResult(summary: "Opened \(url.absoluteString) in \(browser.name).",
+                    evidence: "The exact selected browser process accepted the reviewed URL. Its selected document then exposed that exact destination on two inspection passes. This does not establish a new tab or verify page contents; read the requested page separately.", verified: true)
+            }
+            matchedOnce = matches
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        return ToolResult(summary: "Requested opening \(url.absoluteString) in the selected \(browser.name) profile.",
+            evidence: "The exact original browser process accepted the reviewed URL event, but a stable selected destination was not verified. Inspect the current tab before considering another request.", verified: false)
+    }
+
+    static func selectedApplication(_ browser: Browser) throws -> NSRunningApplication? {
+        let applications = NSRunningApplication.runningApplications(withBundleIdentifier: browser.rawValue)
+            .filter { !$0.isTerminated }
+        let pid = try selectedProcessID(applications.map(\.processIdentifier),
+                                        foreground: NSWorkspace.shared.frontmostApplication?.processIdentifier)
+        return applications.first { $0.processIdentifier == pid }
+    }
+
+    static func selectedProcessID(_ running: [pid_t], foreground: pid_t?) throws -> pid_t? {
+        if running.isEmpty { return nil }
+        if running.count == 1 { return running[0] }
+        if let foreground, running.filter({ $0 == foreground }).count == 1 { return foreground }
+        throw RelayError.message("More than one browser profile is running. Bring the intended browser window forward and open Sidekick there, then retry this request.")
     }
 
     static func withDirectOpenFallback(deadline: Date, addressBar: () async throws -> ToolResult,
@@ -135,22 +193,56 @@ enum BrowserAutomation {
         )
     }
 
-    private static func navigateWithAXAddressBar(url: URL, browser: Browser, applicationURL: URL, deadline: Date) async throws -> ToolResult {
+    private static func navigateWithAXAddressBar(url: URL, browser: Browser, applicationURL: URL,
+                                                selected: NSRunningApplication?, deadline: Date) async throws -> ToolResult {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
-        let application = try await NSWorkspace.shared.openApplication(at: applicationURL, configuration: configuration)
+        let application: NSRunningApplication
+        if let selected {
+            guard !selected.isTerminated else { throw RelayError.message("The selected browser profile closed before navigation.") }
+            application = selected
+        } else {
+            application = try await NSWorkspace.shared.openApplication(at: applicationURL, configuration: configuration)
+        }
         let pid = application.processIdentifier
         let root = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(root, 0.2)
-        application.activate()
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier != pid {
+            application.activate()
+        }
         for _ in 0..<30 {
             try checkNavigationDeadline(deadline)
             if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { break }
             try await Task.sleep(for: .milliseconds(50))
         }
         try assertForeground(pid)
-        guard let originalWindow = elementAttribute(root, kAXFocusedWindowAttribute) else {
+        var focusedWindow = elementAttribute(root, kAXFocusedWindowAttribute)
+        var requestedWindow = false
+        for _ in 0..<40 where focusedWindow == nil {
+            try checkNavigationDeadline(deadline)
+            guard !application.isTerminated else { throw RelayError.message("The selected browser closed during startup.") }
+            // A launched Chrome process with no windows can relinquish foreground
+            // focus after a short delay. Request its one ordinary window as soon as
+            // its ready AX application explicitly proves an empty window list.
+            // An unanswered creation request is never repeated in this navigation.
+            if !requestedWindow, application.isFinishedLaunching,
+               stringAttribute(root, kAXRoleAttribute) == kAXApplicationRole,
+               (attribute(root, kAXWindowsAttribute) as? [AXUIElement])?.isEmpty == true {
+                try assertForeground(pid)
+                try postKey(45, flags: .maskCommand, pid: pid, deadline: deadline) // Cmd+N.
+                requestedWindow = true
+            }
+            try await Task.sleep(for: .milliseconds(100))
+            focusedWindow = elementAttribute(root, kAXFocusedWindowAttribute)
+        }
+        guard let originalWindow = focusedWindow else {
             throw RelayError.message("The browser has no identifiable focused window. Open an ordinary browser window, then retry the reviewed request. No destination was typed.")
+        }
+        try await BrowserAccessibility.prepareContent(for: application)
+        try checkNavigationDeadline(deadline)
+        try assertForeground(pid)
+        guard let currentWindow = elementAttribute(root, kAXFocusedWindowAttribute), CFEqual(currentWindow, originalWindow) else {
+            throw RelayError.message("The selected browser window changed during startup. No destination was typed.")
         }
         try rejectSensitiveWindow(originalWindow)
         guard let originalTab = selectedTab(in: originalWindow) else {
@@ -162,6 +254,21 @@ enum BrowserAutomation {
         }
         // A known original tab is required before revealing a new one. Newly exposed AX
         // objects alone cannot distinguish a hidden old logical tab from a new tab.
+        // Probe the original address control before creating a blank tab. Browsers
+        // without a target-bound confirm can then open the reviewed URL directly.
+        try postKey(37, flags: .maskCommand, pid: pid, deadline: deadline)
+        var originalAddress: AXUIElement?
+        for _ in 0..<20 {
+            try checkNavigationDeadline(deadline)
+            if let candidate = elementAttribute(root, kAXFocusedUIElementAttribute), isAddressField(candidate) {
+                originalAddress = candidate; break
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        try assertSelectedTab(root: root, window: originalWindow, tab: originalTab)
+        guard let originalAddress, confirmationAction(for: originalAddress) != nil else {
+            throw DirectOpenFallback.unsupportedAddressControl
+        }
         try postKey(17, flags: .maskCommand, pid: pid, deadline: deadline) // Cmd+T: new tab.
         try await Task.sleep(for: .milliseconds(150))
         try postKey(37, flags: .maskCommand, pid: pid, deadline: deadline) // Cmd+L: address field only.
@@ -185,14 +292,7 @@ enum BrowserAutomation {
         try assertAddressFocus(root: root, field: address, pid: pid)
         // Discover both capabilities before editing. Process-wide selection, deletion,
         // Unicode key events and Return are never used to carry a destination URL.
-        var valueSettable = DarwinBoolean(false)
-        let valueStatus = AXUIElementIsAttributeSettable(address, kAXValueAttribute as CFString, &valueSettable)
-        var rawActions: CFArray?
-        let actionStatus = AXUIElementCopyActionNames(address, &rawActions)
-        let advertisedActions = actionStatus == .success ? rawActions as? [String] : nil
-        let confirmation = BrowserAddressCommit.entryConfirmationAction(
-            settableQuerySucceeded: valueStatus == .success, valueSettable: valueSettable.boolValue,
-            advertisedActions: advertisedActions)
+        let confirmation = confirmationAction(for: address)
         try assertSelectedTab(root: root, window: window, tab: navigationTab)
         try assertAddressFocus(root: root, field: address, pid: pid)
         guard let confirmation else {
@@ -262,6 +362,15 @@ enum BrowserAutomation {
         guard deadline.timeIntervalSinceReferenceDate.isFinite, now.timeIntervalSinceReferenceDate.isFinite, now < deadline else {
             throw RelayError.message("Browser action expired, including possible sleep/wake interruption. No further typing will be sent; inspect the current tab before starting a new request.")
         }
+    }
+
+    private static func confirmationAction(for address: AXUIElement) -> String? {
+        var settable = DarwinBoolean(false)
+        let valueStatus = AXUIElementIsAttributeSettable(address, kAXValueAttribute as CFString, &settable)
+        var rawActions: CFArray?
+        let actionStatus = AXUIElementCopyActionNames(address, &rawActions)
+        return BrowserAddressCommit.entryConfirmationAction(settableQuerySucceeded: valueStatus == .success,
+            valueSettable: settable.boolValue, advertisedActions: actionStatus == .success ? rawActions as? [String] : nil)
     }
 
     /// Pure verification contract: a matching URL in another tab is insufficient evidence.

@@ -4,6 +4,13 @@ import Testing
 
 @MainActor
 struct BrowserVerificationTests {
+    @Test func multipleBrowserProfilesRequireTheForegroundProfile() throws {
+        #expect(try BrowserAutomation.selectedProcessID([], foreground: 20) == nil)
+        #expect(try BrowserAutomation.selectedProcessID([10], foreground: 20) == 10)
+        #expect(try BrowserAutomation.selectedProcessID([10, 20], foreground: 20) == 20)
+        #expect(throws: RelayError.self) { try BrowserAutomation.selectedProcessID([10, 20], foreground: 30) }
+        #expect(throws: RelayError.self) { try BrowserAutomation.selectedProcessID([10, 20], foreground: nil) }
+    }
     @Test func cachedMatchingPageCannotCertifyDifferentTabOrWindow() throws {
         let expected = try BrowserAutomation.validatedURL("https://example.com/reviewed?q=one")
         func verified(window: Bool = true, tab: Bool = true, focus: Bool = true,

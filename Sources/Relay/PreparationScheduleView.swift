@@ -50,7 +50,6 @@ struct PreparationScheduleView: View {
                 }
                 Divider()
                 MorningBriefNotificationView(notifications: scheduler.notifications)
-                LaunchAtLoginView()
                 wakeDisclosure
             }.padding(.top, 12)
         }

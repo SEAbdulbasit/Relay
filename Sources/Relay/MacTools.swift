@@ -46,10 +46,16 @@ final class MacTools {
     var calendarSource: CalendarSource?
     var knowledge: LocalKnowledge?
     var knowledgeSearch: KnowledgeSearchCoordinator?
-    init() {}
+    private let mailTools: MailWorkflowTools
+    init(mailWorkflow: MailWorkflow? = nil) {
+        mailTools = MailWorkflowTools(workflow: mailWorkflow ?? MailWorkflow())
+    }
 
     static var definitions: [ToolDefinition] {
         [
+            definition("create_mail_draft", "Create a plain-text draft in the user's existing Apple Mail account after exact review. message_json contains sender, to, cc, bcc, subject, body; each recipient is an object with address and name. cc and bcc may be empty arrays. Requires explicit sender and recipient addresses. Mail may sync drafts. Returns an opaque draft_id. Does not send.", ["message_json": "Exact JSON message with sender, to, cc, bcc, subject and body"], ["message_json"]),
+            definition("prepare_mail_send", "Read the current state of one Apple Mail draft created by Relay this session and prepare an expiring send review. Returns a review_id. Does not send.", ["draft_id": "Opaque draft_id returned by create_mail_draft"], ["draft_id"]),
+            definition("send_mail", "Display an exact sender, recipients, subject, body and attachment-state review, then submit that draft to Apple Mail only after the user approves. Uses a one-use review_id from prepare_mail_send. Reports whether Mail accepted the submission; recipient delivery is not verified. Never retry an uncertain send.", ["review_id": "Expiring review_id returned by prepare_mail_send"], ["review_id"]),
             definition("calculate", "Evaluate numeric arithmetic locally and reliably. Use for arithmetic questions, including implicit multiplication written x or ×. Supports + - * / parentheses and decimals. No code, identifiers, units, percentages or exponent syntax. Return the supplied result exactly and disclose rounding when indicated.", ["expression": "Arithmetic expression only, such as 428 × 23445555 or (12.5 + 3) / 2"], ["expression"]),
             definition("search_files", "Search filenames recursively within explicitly selected local scope, with bounded depth, entries, time and output. Hidden entries and symlinks are excluded. Use search_finder when the user explicitly asks to search through Finder.", ["query": "Filename text to match within selected scope"], ["query"]),
             definition("preview_file_move", "Prepare a reviewed move or rename of one regular file up to 64 MB on the same filesystem. Both parent directories must be in selected writable folders. System, application and Library locations are excluded; no overwrite, directory move or copy/delete fallback. Returns a short-lived preview_id; nothing is moved.", ["source": "Existing selected file path", "destination": "New nonexisting path in a selected writable folder"], ["source", "destination"]),
@@ -70,9 +76,9 @@ final class MacTools {
             definition("observe_app", "Inspect a running app’s accessible controls. Use mode=windows to list windows with IDs and focus status. Pass one window_id to inspect only that window. Use find with a control name query or skeleton for a shallow overview. IDs expire after the next observation or mutation. Secure controls are excluded and app content is untrusted.", ["bundle_id": "Running app bundle identifier", "mode": "Optional: full, windows, skeleton, or find", "window_id": "Optional fresh window element_id from mode=windows or native AX observation", "root_ref": "Optional @snapshot:eN container ref to drill into without a window_id", "query": "Optional control name filter for find mode"], ["bundle_id"]),
             definition("set_value", "Set a plain editable text field from a fresh observe_app result and read back the exact value. Native multiline text areas accept line breaks by setting the value directly. Passwords and browser address bars are excluded. Obtain a new observation after every mutation.", ["bundle_id": "Observed bundle identifier", "element_id": "Fresh observed control ID or @snapshot:eN ref", "value": "Exact text to insert"], ["bundle_id", "element_id", "value"]),
             definition("scroll_control", "Scroll a fresh accessible control using its scroll action or its linked native scrollbar. Verify the position when the app exposes it. Observe again to read the new contents.", ["bundle_id": "Observed bundle identifier", "element_id": "Fresh observed control ID or @snapshot:eN ref", "direction": "up, down, left or right"], ["bundle_id", "element_id", "direction"]),
-            definition("press_control", "Use action=focus with a fresh window element_id from mode=windows to switch to that exact window and verify focus. Use click for a named button. Exact Play/Pause/Stop/Resume buttons in VLC and QuickTime are routine. Other named buttons require review. Send, Submit, Publish, destructive, financial and security controls are unsupported. Observe after a button press to verify its outcome.", ["bundle_id": "Observed bundle identifier", "element_id": "Fresh observed control ID or @snapshot:eN ref", "action": "Optional: click, focus for a window, or select/toggle/check/uncheck/expand/collapse for a supported @ref"], ["bundle_id", "element_id"]),
-            definition("browser_navigate", "Navigate to an HTTP/HTTPS URL in a new Chrome or Safari tab using its visible address bar. Exact destination and browser require review. Verifies fresh page URL/title only; redirects, authentication and unsupported controls remain uncertain.", ["url": "Exact HTTP/HTTPS destination", "browser": "Google Chrome or Safari name or bundle identifier"], ["url", "browser"]),
-            definition("search_web", "Search the web in a new Chrome or Safari tab using DuckDuckGo. Requires review of the exact query, browser and HTTPS search destination before network access. Verifies page URL/title, not answer accuracy.", ["query": "Exact single-line search text", "browser": "Google Chrome or Safari name or bundle identifier"], ["query", "browser"]),
+            definition("press_control", "Use action=focus with a fresh window ID to switch windows. Use click for a named button. Use action=select and value for an exact option on a supported dropdown @ref. Other named controls require review. Send, Submit, Publish, destructive, financial and security controls are unsupported. Observe after a mutation to verify its outcome.", ["bundle_id": "Observed bundle identifier", "element_id": "Fresh observed control ID or @snapshot:eN ref", "action": "Optional: click, focus, select, toggle, check, uncheck, expand, or collapse", "value": "Required for select: exact visible option text; omit for other actions"], ["bundle_id", "element_id"]),
+            definition("browser_navigate", "Navigate to a reviewed HTTP/HTTPS destination in Chrome or Safari. Uses a new tab with target-bound address entry when supported, otherwise a supported URL-opening request. Verification covers the selected URL/title only; read page contents separately. Uncertain results, redirects and authentication require inspection.", ["url": "Exact HTTP/HTTPS destination", "browser": "Google Chrome or Safari name or bundle identifier"], ["url", "browser"]),
+            definition("search_web", "Search the web in Chrome or Safari using DuckDuckGo. Requires review of the exact query, browser and HTTPS destination before network access. Verification covers the selected URL/title; read the resulting page before answering. A new tab is not guaranteed.", ["query": "Exact single-line search text", "browser": "Google Chrome or Safari name or bundle identifier"], ["query", "browser"]),
             definition("open_url", "Open an explicit HTTP/HTTPS website in Google Chrome by default. Requires review of destination before network access. Browser launch is not evidence the page loaded.", ["url": "Exact website URL"], ["url"])
         ]
     }
@@ -92,6 +98,7 @@ final class MacTools {
     }
 
     func invalidateApprovals() {
+        mailTools.cancel()
         hideActionPointer()
         effectGeneration &+= 1
         movePreviews.removeAll()
@@ -104,6 +111,9 @@ final class MacTools {
 
     func reviewReason(for call: ToolCall) -> String? {
         switch call.name {
+        case "create_mail_draft", "send_mail":
+            do { return try mailTools.reviewReason(call) }
+            catch { return "Mail review unavailable. \(error.localizedDescription)" }
         case "move_file":
             guard let id = call.arguments["preview_id"]?.string, let preview = movePreviews[id] else { return "Prepare a new file move preview before requesting review. No file will be moved without it." }
             return preview.reviewText
@@ -123,17 +133,27 @@ final class MacTools {
             if isRoutineMediaPress(call) || isWindowFocus(call) { return nil }
             if let refRecord = try? freshAgentDesktopRef(call) {
                 let actionName = controlAction(call)
-                return "Execute \(actionName) on “\(refRecord.title)” (\(refRecord.ref)) in \(refRecord.bundleID).\n\nThis review applies only to this exact snapshot ref (\(refRecord.ref)). Sending, submission, publishing, destructive, financial and security actions are not enabled by approval."
+                let option = actionName == "select" ? "\nExact option: \(String(reflecting: call.arguments["value"]?.string ?? ""))" : ""
+                return "Execute \(actionName) on “\(refRecord.title)” (\(refRecord.ref)) in \(refRecord.bundleID).\(option)\n\nThis review applies only to this exact snapshot ref (\(refRecord.ref)). Sending, submission, publishing, destructive, financial and security actions are not enabled by approval."
             }
             guard let record = try? freshRecord(call), let context = try? reviewContext(record) else {
                 return "This control cannot be reviewed safely because a complete current window and editable-field context is unavailable. Refresh the app state or perform the action directly."
+            }
+            if controlAction(call) == "select" {
+                guard let selection = try? nativePopupSelection(record, call: call),
+                      selection.state.fingerprint == context.buttonFingerprint else {
+                    return "The popup and its exact option could not be reviewed together. Observe the current form and try again."
+                }
+                displayedContexts[call.id] = (ToolPolicy.fingerprint(call), context)
+                let fields = context.fields.isEmpty ? "None" : context.fields.map { "\($0.label) — \($0.value) [enabled=\($0.enabled)]" }.joined(separator: "\n")
+                return "Choose “\(selection.value)” in “\(controlLabel(record.element))” in \(record.bundleID), window “\(context.title)”.\n\nCurrent selection is “\(selection.state.value)”.\n\nCurrent form fields\n\(fields)\n\nThis approval applies to this exact requested text, popup and current form fields."
             }
             displayedContexts[call.id] = (ToolPolicy.fingerprint(call), context)
             return "Press “\(controlLabel(record.element))” in \(record.bundleID), window “\(context.title)”.\n\nCurrent editable fields:\n\(context.fields.isEmpty ? "None" : context.fields.map { "\($0.label): \($0.value) [enabled=\($0.enabled)]" }.joined(separator: "\n"))\n\nThis review applies only to this exact window and these field values. Sending, submission, publishing, destructive, financial and security actions are not enabled by approval."
         case "browser_navigate", "search_web":
             guard let destination = try? BrowserAutomation.destination(for: call) else { return "Review this browser request. Its browser and destination must pass validation before anything opens." }
             let query = call.name == "search_web" ? "Search query: \(call.arguments["query"]?.string ?? "")\n" : ""
-            return "\(query)Open a new tab in \(destination.browser.name): \(destination.url.absoluteString)\nThe browser may contact this destination using your existing session. This approval covers only this exact query/URL and browser; no form submission."
+            return "\(query)Open in \(destination.browser.name)\n\(destination.url.absoluteString)\nThe browser may contact this destination using your existing session. This approval covers only this exact query/URL and browser; no form submission."
         case "open_url": return "Open this website in Google Chrome: \(call.arguments["url"]?.string ?? "unknown"). The browser may contact that destination using your existing session."
         case "create_document":
             guard let url = try? writableDestination(call) else { return "A current selected writable destination is required before this document can be reviewed." }
@@ -160,6 +180,10 @@ final class MacTools {
     /// Freeze the effects BEFORE displaying review, not when the user finally approves.
     func prepareReview(_ call: ToolCall) throws {
         try ToolPolicy.validate(call, against: Self.definitions)
+        if ["create_mail_draft", "send_mail"].contains(call.name) {
+            try mailTools.prepareReview(call)
+            return
+        }
         try rejectUnsupportedPress(call)
         if call.name == "stage_attachment" {
             preparedReviews.removeValue(forKey: call.id)
@@ -185,6 +209,10 @@ final class MacTools {
     /// One-use approval. The pending review baseline must still match current destination/state.
     func authorize(_ call: ToolCall) throws {
         try ToolPolicy.validate(call, against: Self.definitions)
+        if ["create_mail_draft", "send_mail"].contains(call.name) {
+            try mailTools.authorize(call)
+            return
+        }
         try rejectUnsupportedPress(call)
         guard let prepared = preparedReviews.removeValue(forKey: call.id),
               prepared.fingerprint == ToolPolicy.fingerprint(call),
@@ -231,6 +259,9 @@ final class MacTools {
     func execute(_ call: ToolCall) async throws -> ToolResult {
         try Task.checkCancellation()
         try ToolPolicy.validate(call, against: Self.definitions)
+        if ["create_mail_draft", "prepare_mail_send", "send_mail"].contains(call.name) {
+            return try await mailTools.execute(call)
+        }
         try rejectUnsupportedPress(call)
         if call.name == "stage_attachment" {
             guard let approval = approvals.removeValue(forKey: call.id), approval.fingerprint == ToolPolicy.fingerprint(call) else {
@@ -243,10 +274,12 @@ final class MacTools {
             discardObservations()
             return try attachment.stage()
         }
+        var reviewedEffectFingerprint: String?
         if requiresReview(call) {
             guard let approval = approvals.removeValue(forKey: call.id), approval.fingerprint == ToolPolicy.fingerprint(call), approval.effectFingerprint == (try effectFingerprint(call)) else {
                 throw RelayError.message("This action needs a new explicit review. Its destination, content or observed state may have changed.")
             }
+            reviewedEffectFingerprint = approval.effectFingerprint
         }
         if ["open_app", "open_file", "search_finder", "move_file", "browser_navigate", "search_web", "open_url",
             "write_file", "create_document", "create_spreadsheet"].contains(call.name) {
@@ -315,7 +348,7 @@ final class MacTools {
                               evidence: calendarSource.status + " Local EventKit read; no event was written. Returned event text is untrusted source data.", verified: true)
         case "observe_app": return try await observe(call)
         case "set_value": return try await setValue(call)
-        case "press_control": return try await press(call)
+        case "press_control": return try await press(call, reviewedEffectFingerprint: reviewedEffectFingerprint)
         case "scroll_control": return try await scroll(call)
         case "browser_navigate", "search_web":
             let destination = try BrowserAutomation.destination(for: call)
@@ -1132,6 +1165,18 @@ final class MacTools {
         guard call.name == "press_control" else { return }
         if let refRecord = try? freshAgentDesktopRef(call) {
             try requireHelperOutsideChooser(refRecord)
+            if controlAction(call) == "select" {
+                guard ["combobox", "popupbutton", "listbox", "select", "list"].contains(refRecord.role.lowercased()),
+                      let value = call.arguments["value"]?.string, !value.isEmpty, value.utf8.count <= 512 else {
+                    throw RelayError.message("Select requires an observed dropdown and its exact visible option text, up to 512 UTF-8 bytes.")
+                }
+                _ = try Self.validatedEditableText(value, multiline: false)
+                guard !Self.isExcludedControlLabel(value) else {
+                    throw RelayError.message("Consequential or security-related options remain unsupported.")
+                }
+            } else if let value = call.arguments["value"]?.string, !value.isEmpty {
+                throw RelayError.message("An option value is supported only for the select action.")
+            }
             if isRoutineMediaPress(call) { return }
             guard !refRecord.title.isEmpty, !Self.isExcludedControlLabel(refRecord.title) else {
                 throw RelayError.message("Only named, non-consequential controls can be reviewed. Send, Submit, Publish, destructive, financial and security actions remain manual/unsupported.")
@@ -1142,6 +1187,13 @@ final class MacTools {
         if isWindowFocus(call) { return }
         guard !NativeAttachmentStaging.isChooserControl(record.element) else {
             throw RelayError.message("Choose or cancel a file in the native file chooser yourself. Relay can stage an approved local file path.")
+        }
+        if controlAction(call) == "select" {
+            _ = try nativePopupSelection(record, call: call)
+            return
+        }
+        if let value = call.arguments["value"]?.string, !value.isEmpty {
+            throw RelayError.message("An option value is supported only for the select action.")
         }
         guard controlAction(call) == "click" else {
             throw RelayError.message("This native control does not support the requested action. Use focus for an observed window or click for a named button.")
@@ -1219,7 +1271,79 @@ final class MacTools {
             }
         }
         guard foundTarget else { throw RelayError.message("The button is no longer present in the complete window tree.") }
-        return AXReviewContext(windowIdentity: windowIdentity, title: title, buttonFingerprint: stateFingerprint(record.element), fields: fields)
+        let targetFingerprint = (attribute(record.element, kAXRoleAttribute) as? String) == "AXPopUpButton"
+            ? try nativePopupState(record).fingerprint : stateFingerprint(record.element)
+        return AXReviewContext(windowIdentity: windowIdentity, title: title, buttonFingerprint: targetFingerprint, fields: fields)
+    }
+
+    private struct NativePopupOption {
+        let element: AXUIElement
+        let title: String
+        let enabled: Bool
+        let fingerprint: String
+    }
+
+    private struct NativePopupState {
+        let value: String
+        let fingerprint: String
+    }
+
+    private func nativePopupState(_ record: ElementRecord) throws -> NativePopupState {
+        guard (attribute(record.element, kAXRoleAttribute) as? String) == "AXPopUpButton",
+              let window = record.window, windowIsAttached(window, to: record.pid),
+              let value = attribute(record.element, kAXValueAttribute) as? String else {
+            throw RelayError.message("This popup lacks a current value and identifiable native window.")
+        }
+        return NativePopupState(value: value, fingerprint: stateFingerprint(record.element))
+    }
+
+    private func nativePopupMenu(_ record: ElementRecord) throws -> AXUIElement {
+        guard
+              let children = attribute(record.element, kAXChildrenAttribute) as? [AXUIElement], children.count == 1,
+              let menu = children.first, (attribute(menu, kAXRoleAttribute) as? String) == "AXMenu",
+              let parent = accessibilityElement(menu, kAXParentAttribute), CFEqual(parent, record.element) else {
+            throw RelayError.message("The opened popup does not expose one attached native menu.")
+        }
+        return menu
+    }
+
+    private func nativePopupOptions(_ menu: AXUIElement, pid expectedPID: pid_t) throws -> [NativePopupOption] {
+        guard
+              let items = attribute(menu, kAXChildrenAttribute) as? [AXUIElement], !items.isEmpty, items.count <= 64 else {
+            throw RelayError.message("The native popup menu options are absent or exceed the inspection limit.")
+        }
+        var options: [NativePopupOption] = []
+        let deadline = Date().addingTimeInterval(0.5)
+        for item in items {
+            AXUIElementSetMessagingTimeout(item, 0.025)
+            var pid: pid_t = 0
+            guard Date() < deadline, AXUIElementGetPid(item, &pid) == .success, pid == expectedPID,
+                  (attribute(item, kAXRoleAttribute) as? String) == "AXMenuItem",
+                  let title = attribute(item, kAXTitleAttribute) as? String, title.utf8.count <= 512,
+                  let enabled = attribute(item, kAXEnabledAttribute) as? Bool,
+                  let parent = accessibilityElement(item, kAXParentAttribute), CFEqual(parent, menu) else {
+                throw RelayError.message("The native popup options could not be inspected completely.")
+            }
+            options.append(NativePopupOption(element: item, title: title, enabled: enabled, fingerprint: stateFingerprint(item)))
+        }
+        return options
+    }
+
+    private func nativePopupSelection(_ record: ElementRecord, call: ToolCall) throws -> (state: NativePopupState, value: String) {
+        let label = controlLabel(record.element)
+        let value = try text("value", call)
+        guard !label.isEmpty, !Self.isExcludedControlLabel(label), !Self.isExcludedControlLabel(value),
+              value.utf8.count <= 512 else {
+            throw RelayError.message("Select requires a named, non-consequential popup and exact option text up to 512 UTF-8 bytes.")
+        }
+        _ = try Self.validatedEditableText(value, multiline: false)
+        let state = try nativePopupState(record)
+        var actions: CFArray?
+        guard AXUIElementCopyActionNames(record.element, &actions) == .success,
+              (actions as? [String])?.contains(kAXPressAction) == true else {
+            throw RelayError.message("The native popup has no open-menu action.")
+        }
+        return (state, value)
     }
 
     static func isExcludedControlLabel(_ label: String) -> Bool {
@@ -1332,7 +1456,7 @@ final class MacTools {
         return min(bounds.upperBound, max(bounds.lowerBound, current + (forward ? step : -step)))
     }
 
-    private func press(_ call: ToolCall) async throws -> ToolResult {
+    private func press(_ call: ToolCall, reviewedEffectFingerprint: String?) async throws -> ToolResult {
         if let refRecord = try? freshAgentDesktopRef(call) {
             let requestedAction = controlAction(call)
             let allowed: Set<String> = ["click", "double-click", "select", "toggle", "check", "uncheck", "expand", "collapse", "focus"]
@@ -1343,7 +1467,8 @@ final class MacTools {
             defer { RelayActionPointer.shared.finishAction() }
             try requireHelperOutsideChooser(freshAgentDesktopRef(call))
             discardObservations()
-            let envelope = try await AgentDesktopBridge.act(command: requestedAction, ref: refRecord.ref, sessionID: desktopSession.id)
+            let envelope = try await AgentDesktopBridge.act(command: requestedAction, ref: refRecord.ref,
+                value: requestedAction == "select" ? call.arguments["value"]?.string : nil, sessionID: desktopSession.id)
             guard envelope.ok else {
                 throw RelayError.message("agent-desktop \(requestedAction) failed: \(envelope.formattedSummary)")
             }
@@ -1357,6 +1482,9 @@ final class MacTools {
         if call.arguments["action"]?.string?.lowercased() == "focus" {
             return try await focusWindow(record)
         }
+        if controlAction(call) == "select" {
+            return try await selectNativePopup(record, call: call, reviewedEffectFingerprint: reviewedEffectFingerprint)
+        }
         var actions: CFArray?
         guard AXUIElementCopyActionNames(record.element, &actions) == .success, let names = actions as? [String], names.contains(kAXPressAction) else { throw RelayError.message("This control does not offer a press action.") }
         try Task.checkCancellation()
@@ -1369,6 +1497,86 @@ final class MacTools {
         let result = AXUIElementPerformAction(record.element, kAXPressAction as CFString)
         guard result == .success else { throw RelayError.message("Press returned AX error \(result.rawValue). Its effects are uncertain; observe before retrying.") }
         return ToolResult(summary: "Pressed the approved control in \(record.bundleID).", evidence: "Accessibility accepted AXPress. The resulting app state has not been verified. Call observe_app and inspect the required outcome before claiming success.", verified: false)
+    }
+
+    private func selectNativePopup(_ record: ElementRecord, call: ToolCall, reviewedEffectFingerprint: String?) async throws -> ToolResult {
+        let selection = try nativePopupSelection(record, call: call)
+        guard let reviewedEffectFingerprint, try reviewContext(record).fingerprint == reviewedEffectFingerprint else {
+            throw RelayError.message("The popup or form changed after approval. Observe and review the current selection again.")
+        }
+        if selection.state.value == selection.value {
+            return ToolResult(summary: "“\(selection.value)” is already selected in \(record.bundleID).",
+                evidence: "The reviewed popup already read back the exact requested value. No action was dispatched.", verified: true)
+        }
+        let generation = effectGeneration
+        RelayActionPointer.shared.show(element: record.element, label: "Select")
+        defer { RelayActionPointer.shared.finishAction() }
+        var menu = try? nativePopupMenu(record)
+        var completed = false
+        defer {
+            if !completed, let ownedMenu = menu ?? (try? nativePopupMenu(record)) {
+                var actions: CFArray?
+                if AXUIElementCopyActionNames(ownedMenu, &actions) == .success,
+                   (actions as? [String])?.contains("AXCancel") == true {
+                    AXUIElementSetMessagingTimeout(ownedMenu, 0.2)
+                    _ = AXUIElementPerformAction(ownedMenu, "AXCancel" as CFString)
+                }
+            }
+        }
+        try Task.checkCancellation()
+        discardObservations()
+        if menu == nil {
+            AXUIElementSetMessagingTimeout(record.element, 0.5)
+            // A native menu tracks input until a choice is made, so this opening can
+            // time out while the menu is visible. Inspect once and never reopen it.
+            let opening = AXUIElementPerformAction(record.element, kAXPressAction as CFString)
+            for _ in 0..<10 where menu == nil {
+                try Task.checkCancellation()
+                guard generation == effectGeneration else { throw CancellationError() }
+                menu = try? nativePopupMenu(record)
+                if menu == nil { try await Task.sleep(for: .milliseconds(50)) }
+            }
+            guard menu != nil else {
+                throw RelayError.message("Opening the native popup returned AX error \(opening.rawValue) without an identifiable menu. Inspect the popup and close any open menu before retrying.")
+            }
+        }
+        guard generation == effectGeneration, let menu,
+              try reviewContext(record).fingerprint == reviewedEffectFingerprint else {
+            throw RelayError.message("The popup or form changed while its menu opened. No option was chosen. Inspect the form and close any remaining menu before reviewing again.")
+        }
+        let options = try nativePopupOptions(menu, pid: record.pid)
+        let matches = options.filter { $0.title == selection.value }
+        guard matches.count == 1, let option = matches.first, option.enabled else {
+            throw RelayError.message("The exact reviewed option is absent, duplicated or disabled. No option was chosen. Close any remaining menu before reviewing again.")
+        }
+        var actions: CFArray?
+        guard AXUIElementCopyActionNames(option.element, &actions) == .success,
+              let names = actions as? [String], names.contains("AXPick") || names.contains(kAXPressAction) else {
+            throw RelayError.message("The exact menu option has no native selection action. Close the menu and inspect the form before retrying.")
+        }
+        let selectionAction = names.contains("AXPick") ? "AXPick" : kAXPressAction
+        try Task.checkCancellation()
+        guard generation == effectGeneration,
+              try reviewContext(record).fingerprint == reviewedEffectFingerprint,
+              CFEqual(try nativePopupMenu(record), menu),
+              try nativePopupOptions(menu, pid: record.pid).map(\.fingerprint) == options.map(\.fingerprint) else {
+            throw RelayError.message("The popup, its options or the reviewed form changed. No selection was dispatched. Close any remaining menu and review the current state.")
+        }
+        AXUIElementSetMessagingTimeout(option.element, 0.5)
+        let result = AXUIElementPerformAction(option.element, selectionAction as CFString)
+        for _ in 0..<10 {
+            try Task.checkCancellation()
+            guard generation == effectGeneration else { throw CancellationError() }
+            if attribute(record.element, kAXValueAttribute) as? String == selection.value,
+               (try? nativePopupMenu(record)) == nil,
+               let window = record.window, windowIsAttached(window, to: record.pid) {
+                completed = true
+                return ToolResult(summary: "Selected “\(selection.value)” in \(record.bundleID).",
+                    evidence: "The same native popup read back the exact reviewed option after its menu closed. No form button or Return was pressed.", verified: true)
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw RelayError.message("Selecting the option returned AX error \(result.rawValue) without exact selected-value readback. The effect is uncertain. Inspect the form before retrying.")
     }
 
     private func focusWindow(_ record: ElementRecord) async throws -> ToolResult {

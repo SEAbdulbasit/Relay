@@ -175,6 +175,7 @@ final class NotchOverlayController {
     var promptText = ""
     var includesCurrentApp = false
     private(set) var currentApp: NSRunningApplication?
+    private(set) var preparingTextActions = false
     var rememberedNoteTitle: String?
     var lastDoubleTapDraft: String?
     private(set) var isDoubleTapSwirling = false
@@ -193,6 +194,8 @@ final class NotchOverlayController {
     @ObservationIgnored private var panel: SidekickFloatingPanel?
     @ObservationIgnored private var screenObserver: (any NSObjectProtocol)?
     @ObservationIgnored private var dictationStart: Task<Void, Never>?
+    @ObservationIgnored private var textPreparation: Task<Void, Never>?
+    @ObservationIgnored private var textPreparationID: UUID?
     @ObservationIgnored private weak var store: AssistantStore?
     @ObservationIgnored private var pointerPoll: Timer?
     @ObservationIgnored private var interactionFrame: CGRect?
@@ -261,6 +264,18 @@ final class NotchOverlayController {
         store.showImageInspection = true
     }
 
+    func runTextAction(_ kind: QuickTextActionSession.Kind) {
+        guard let store, let currentApp, !preparingTextActions, !store.isRunning, !store.voice.isBusy, store.actionsReady else {
+            errorMessage = "Select text in another app and load a local model before using text actions."
+            return
+        }
+        do {
+            let selection = try BoundTextSelection.capture(application: currentApp)
+            hideFloatingNotchPanel()
+            try QuickTextActionPanelController.shared.present(store: store, kind: kind, selection: selection)
+        } catch { errorMessage = error.localizedDescription }
+    }
+
     func open() {
         expand(focusPanel: true)
     }
@@ -275,6 +290,7 @@ final class NotchOverlayController {
                 currentApp = nil
             }
             includesCurrentApp = false
+            prepareTextActions()
         }
         expanded = true
         showPanelIfNeeded()
@@ -293,6 +309,7 @@ final class NotchOverlayController {
 
     func hideFloatingNotchPanel() {
         stopDictation()
+        cancelTextPreparation()
         expanded = false
         currentApp = nil
         includesCurrentApp = false
@@ -305,6 +322,7 @@ final class NotchOverlayController {
     }
 
     private func closePanel() {
+        cancelTextPreparation()
         pointerPoll?.invalidate()
         pointerPoll = nil
         panel?.orderOut(nil)
@@ -312,6 +330,33 @@ final class NotchOverlayController {
         isVisible = false
         interactionFrame = nil
         hoveringNotch = false
+    }
+
+    private func prepareTextActions() {
+        cancelTextPreparation()
+        guard store?.actionsReady == true, let currentApp, currentApp.bundleIdentifier == "com.google.Chrome" else { return }
+        let id = UUID()
+        textPreparationID = id
+        preparingTextActions = true
+        // Prepare Chrome's accessibility provider without capturing selected text.
+        // The selection is read only when the user chooses a text action.
+        textPreparation = Task { @MainActor [weak self] in
+            defer {
+                if self?.textPreparationID == id {
+                    self?.textPreparation = nil
+                    self?.textPreparationID = nil
+                    self?.preparingTextActions = false
+                }
+            }
+            try? await BrowserAccessibility.prepareContent(for: currentApp)
+        }
+    }
+
+    private func cancelTextPreparation() {
+        textPreparationID = nil
+        textPreparation?.cancel()
+        textPreparation = nil
+        preparingTextActions = false
     }
 
     private func screenChanged() {
@@ -751,6 +796,21 @@ struct NotchOverlayBar: View {
                         .font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
                 }
                 Spacer(minLength: 8)
+                if controller.currentApp != nil {
+                    Menu {
+                        Button("Summarize selection") { controller.runTextAction(.summarize) }
+                        Button("Proofread selection") { controller.runTextAction(.proofread) }
+                    } label: {
+                        Label("Text actions", systemImage: "text.cursor").font(.relayCaption)
+                    }
+                    .menuIndicator(.hidden)
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .disabled(controller.preparingTextActions || !store.actionsReady || store.isRunning || store.voice.isBusy)
+                    .help("Work with selected text in the source app using your local model.")
+                    .accessibilityLabel("Selected text actions")
+                    .accessibilityIdentifier("sidekick.textActions")
+                }
                 Button("Open Relay", action: controller.showWorkspace).buttonStyle(.link).font(.relayCaption)
             }
             if let error = controller.errorMessage {
@@ -818,7 +878,7 @@ struct NotchOverlayBar: View {
     private func decision(_ review: PendingReview) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label(review.sharesWithOpenAI ? "Share this excerpt with OpenAI?" : "Action approval required", systemImage: "hand.raised.fill")
+                Label(review.title, systemImage: "hand.raised.fill")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(RelayColors.accentAmber)
                 Spacer()
                 collapseButton
@@ -826,7 +886,7 @@ struct NotchOverlayBar: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(review.reason).font(.system(size: 13)).textSelection(.enabled)
-                    if !review.sharesWithOpenAI {
+                    if !review.sharesWithOpenAI && !review.hasStructuredMailReview {
                         Text(review.call.name).font(.relayMono).foregroundStyle(RelayColors.accentEmerald)
                         Text(JSONValue.object(review.call.arguments).pretty).font(.relayMono).textSelection(.enabled)
                     }
@@ -835,7 +895,7 @@ struct NotchOverlayBar: View {
             }
             .scrollIndicators(.visible)
             .id(review.id)
-            Text(review.sharesWithOpenAI ? "Sharing sends the entire excerpt above to ChatGPT, including text you scroll to view." : "Approval applies only to this action.")
+            Text(review.sharesWithOpenAI ? "Sharing sends the entire excerpt above to ChatGPT, including text you scroll to view." : review.hasStructuredMailReview ? "Review the entire message above, including text you scroll to view." : "Approval applies only to this action.")
                 .font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
             HStack(spacing: 8) {
                 Button("Open Relay", action: controller.showWorkspace).buttonStyle(.link).font(.relayCaption)
@@ -845,7 +905,7 @@ struct NotchOverlayBar: View {
                 }
                 .buttonStyle(RelaySecondaryButtonStyle())
                 .accessibilityIdentifier("sidekick.decline")
-                Button(review.sharesWithOpenAI ? "Share Excerpt" : "Approve Action") {
+                Button(review.approvalTitle) {
                     if store.pendingReview?.id == review.id { store.approveReview() }
                 }
                 .buttonStyle(RelayPrimaryButtonStyle())
