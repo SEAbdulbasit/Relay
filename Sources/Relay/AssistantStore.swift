@@ -94,6 +94,10 @@ final class AssistantStore {
     @ObservationIgnored private var activeWindowObservation: String?
     @ObservationIgnored private var activeSidekickContext: SidekickTaskContext?
     @ObservationIgnored private let multiAgentContinuation: MultiAgentContinuation
+    @ObservationIgnored private let localHistorySources = LocalModelHistorySources()
+    @ObservationIgnored private let fileReadSources = FileReadResultSources()
+    @ObservationIgnored private let fileReadWorker: FileExtractionWorker
+    @ObservationIgnored private var ordinaryGoalCoverage: OrdinaryGoalCoverage?
     @ObservationIgnored private var multiAgentStepCheckpoint: MultiAgentStepCheckpoint?
     @ObservationIgnored private let conversationHistory: AssistantConversationHistory
     @ObservationIgnored private var historyRestoreTask: Task<Void, Never>?
@@ -132,12 +136,15 @@ final class AssistantStore {
     @ObservationIgnored private let persistenceURL: URL?
     @ObservationIgnored private var completeOverride: (([ModelMessage], [ToolDefinition], ModelConfiguration) async throws -> ModelReply)?
     @ObservationIgnored private var executeOverride: ((ToolCall) async throws -> ToolResult)?
+    @ObservationIgnored private var executeFileReadOverride: ((ToolCall, FileReadExecutionScope) async throws -> ToolResult)?
 
     init(persistenceURL: URL? = AssistantStore.defaultStateURL,
          complete: (([ModelMessage], [ToolDefinition], ModelConfiguration) async throws -> ModelReply)? = nil,
          conversationHistory: AssistantConversationHistory? = nil,
          continuationProofWorker: SelectedFileProofWorker? = nil,
          execute: ((ToolCall) async throws -> ToolResult)? = nil,
+         executeFileRead: ((ToolCall, FileReadExecutionScope) async throws -> ToolResult)? = nil,
+         fileReadWorker: FileExtractionWorker? = nil,
          voiceInput: LocalVoiceInput? = nil,
          speechOutput: LocalSpeechOutput? = nil,
          semanticSearch: SemanticKnowledgeSearch? = nil,
@@ -180,6 +187,8 @@ final class AssistantStore {
         suggestions = ProactiveSuggestions(persistenceURL: persistenceURL?.deletingLastPathComponent().appendingPathComponent("suggestions.json"))
         completeOverride = complete
         executeOverride = execute
+        executeFileReadOverride = executeFileRead
+        self.fileReadWorker = fileReadWorker ?? .shared
         restore()
         beginHistoryRestoration()
         knowledgeSearch.currentGrants = { [weak self] in self?.grants ?? [] }
@@ -198,6 +207,9 @@ final class AssistantStore {
         calendarSource.onContextInvalidated = { [weak self] in
             self?.preparation.setCalendarRefreshEnabled(false)
             self?.invalidateDerivedContext(reason: "Calendar scope changed or was cleared. Earlier calendar context will not be reused for inference.")
+        }
+        calendarSource.onContentInvalidated = { [weak self] in
+            self?.invalidateDerivedContext(reason: "Calendar data changed. Earlier event excerpts will not be reused; refresh the selected calendars for current results.")
         }
         if modelMessages.contains(where: { $0.role == "tool" && $0.toolName == "read_calendar" }) {
             invalidateDerivedContext(reason: "Select calendars again for this session before using calendar context. Prior calendar excerpts will not be reused for inference.")
@@ -535,7 +547,9 @@ final class AssistantStore {
             activeObjective = text
             activeRunUsesCodex = useWorkspaceProvider && workspaceUsesCodex
             nativeTaskID = UUID()
+            ordinaryGoalCoverage = OrdinaryGoalCoverage(logicalTaskID: nativeTaskID)
             multiAgentContinuation.startTask(nativeTaskID)
+            fileReadSources.reset()
             multiAgentStepCheckpoint = MultiAgentStepCheckpoint(logicalTaskID: nativeTaskID)
             directAttemptTaskID = nil; directKnownResult = nil
             let originalTaskID = nativeTaskID
@@ -589,6 +603,7 @@ final class AssistantStore {
         guard let journalRun = nextJournalRun else { reportHistoryFailure(JournalError.invalidTransition); return }
         nextJournalRun = nil
         if !historyRestorationFinished { beginHistoryRestoration() }
+        ordinaryGoalCoverage?.revokeCapabilities()
         activeNativeTask?.service.stop()
         model.invalidateConversation()
         localVisionStatus = nil
@@ -597,6 +612,7 @@ final class AssistantStore {
         currentJournalRun = journalRun
         journalRuns[runRevision] = journalRun
         let previous = task
+        let originalGoalCoverage = ordinaryGoalCoverage
         previous?.cancel()
         tools.invalidateApprovals()
         resolveReview(false)
@@ -607,7 +623,9 @@ final class AssistantStore {
             if let boundary = self.pendingContextReset {
                 // Keep only explicit new user messages. Late old tool/assistant results
                 // may have arrived after the boundary while cancellation was settling.
-                self.modelMessages = self.modelMessages.dropFirst(boundary).filter { $0.role == "user" }
+                let retainedIndices = self.modelMessages.indices.filter { $0 >= boundary && self.modelMessages[$0].role == "user" }
+                self.localHistorySources.rebase(keepingOriginalIndices: retainedIndices)
+                self.modelMessages = retainedIndices.map { self.modelMessages[$0] }
                 self.activeContextStart = 0
                 self.pendingContextReset = nil
                 self.persist()
@@ -634,6 +652,7 @@ final class AssistantStore {
                 await self.run(revision: runRevision, nativeTask: nativeTask, budget: budget)
             }
             nativeTask?.stop()
+            originalGoalCoverage?.revokeCapabilities()
             await nativeTask?.drain()
             if self.activeNativeTask?.revision == runRevision { self.activeNativeTask = nil }
             do {
@@ -663,10 +682,11 @@ final class AssistantStore {
         phase = .acting
         record(call.name, "Running the exact request on this Mac.", "requested")
         let logicalTask = nativeTaskID
-        let result = try await checkpointed(call, proposalID: proposalID, revision: expected, budget: budget, action: {
-            let value: ToolResult
-            if let executeOverride = self.executeOverride { value = try await executeOverride(call) }
-            else { value = try await self.tools.execute(call) }
+        let fileScope = try makeFileReadScope(call, proposalID: proposalID, revision: expected,
+            context: multiAgentContinuationContext(), budget: budget)
+        let result = try await checkpointed(call, proposalID: proposalID, revision: expected, budget: budget,
+            fileReadScope: fileScope, action: {
+            let value = try await self.executeLocalTool(call, fileReadScope: fileScope)
             if self.nativeTaskID == logicalTask { self.directKnownResult = value }
             return value
         }, result: { $0 })
@@ -733,6 +753,7 @@ final class AssistantStore {
                 // govern each read/plan round; no private source is logged.
                 self.record("Native window", "Inspecting the retained original window.", "observing")
             })
+            let originalGoalCoverage = ordinaryGoalCoverage
             let service = NativeComputerTaskService(scope: scope, history: conversationHistory,
                 factory: dependencies.factory, inspect: dependencies.inspect,
                 review: { [weak self] call, reason, presentation in
@@ -766,6 +787,9 @@ final class AssistantStore {
                     } catch { try validate(); try vision.validate(); try await inputProof?.validate(); throw error }
                     try validate(); try vision.validate(); try await inputProof?.validate()
                     return reply
+                }, observeUnverifiedEffect: { identity, seed in
+                    originalGoalCoverage?.recordUnverified(call: identity.call, proposalID: identity.proposalID,
+                        run: run, seed: seed)
                 })
             activeNativeTask = (expected, service)
             return service
@@ -782,6 +806,12 @@ final class AssistantStore {
     private func runNativeControl(_ call: ToolCall, acceptedProposalID: UUID,
                                   service: NativeComputerTaskService, revision expected: Int,
                                   inputProof: ModelInputSourceProof? = nil) async throws -> ToolResult {
+        try await runNativeControlOutcome(call, acceptedProposalID: acceptedProposalID,
+            service: service, revision: expected, inputProof: inputProof).result
+    }
+    private func runNativeControlOutcome(_ call: ToolCall, acceptedProposalID: UUID,
+                                         service: NativeComputerTaskService, revision expected: Int,
+                                         inputProof: ModelInputSourceProof? = nil) async throws -> NativeSourcedToolResult {
         guard let run = journalRuns[expected] else { throw CancellationError() }
         let context = multiAgentContinuationContext()
         let prepared = try await multiAgentContinuation.prepare(call, proposalID: acceptedProposalID,
@@ -792,8 +822,8 @@ final class AssistantStore {
                   multiAgentContinuationContext() == context else { throw CancellationError() }
         }
         try validatePublication()
-        let output: ToolResult
-        do { output = try await service.control(call, acceptedProposalID: acceptedProposalID, inputProof: inputProof) }
+        let output: NativeSourcedToolResult
+        do { output = try await service.controlWithOutcome(call, acceptedProposalID: acceptedProposalID, inputProof: inputProof) }
         catch {
             // Inner checkpoints settle late physical/focus facts in the original
             // run before these publication fences. A stale error never taints or
@@ -805,11 +835,94 @@ final class AssistantStore {
         }
         try validatePublication()
         multiAgentContinuation.markUnsupportedSourceContribution(prepared: prepared, currentContext: context)
-        await multiAgentContinuation.record(output, prepared: prepared, grants: { [weak self] in self?.grants ?? [] })
+        await multiAgentContinuation.record(output.result, prepared: prepared, grants: { [weak self] in self?.grants ?? [] })
         try validatePublication()
         // All inner report/effect checkpoints have settled before returning.
         multiAgentContinuation.acknowledge(prepared)
         return output
+    }
+
+    private func makeFileReadScope(_ call: ToolCall, proposalID: UUID, revision expected: Int,
+                                   context: MultiAgentContinuation.Context, budget: TaskRunBudget) throws -> FileReadExecutionScope? {
+        guard call.name == "read_file" else { return nil }
+        try gate(expected); try budget.check()
+        guard let run = journalRuns[expected], multiAgentContinuationContext() == context else { throw CancellationError() }
+        return try FileReadExecutionScope(run: run, proposalID: proposalID, call: call, context: context,
+            currentContext: { [weak self] in self?.multiAgentContinuationContext() },
+            grants: { [weak self] in self?.grants ?? [] },
+            isCurrent: { [weak self] in
+                guard let self else { return false }
+                do { try self.gate(expected); try budget.check() } catch { return false }
+                return self.interactiveSessionActive && !self.isClearingConversation
+                    && self.journalRuns[expected]?.taskID == run.taskID
+                    && self.journalRuns[expected]?.attemptID == run.attemptID
+                    && self.nativeTaskID == context.logicalTaskID
+            })
+    }
+    private func executeLocalTool(_ call: ToolCall, fileReadScope: FileReadExecutionScope?) async throws -> ToolResult {
+        guard call.name == "read_file" else {
+            if let executeOverride { return try await executeOverride(call) }
+            return try await tools.execute(call)
+        }
+        do {
+            let result: ToolResult
+            if let fileReadScope, let executeFileReadOverride { result = try await executeFileReadOverride(call, fileReadScope) }
+            else if let executeOverride { result = try await executeOverride(call) }
+            else { result = try await tools.execute(call, fileReadScope: fileReadScope, fileReadWorker: fileReadWorker) }
+            try Task.checkCancellation(); try fileReadScope?.validateCurrent(call: call)
+            return result
+        } catch {
+            try Task.checkCancellation(); try fileReadScope?.validateCurrent(call: call)
+            // Unknown parser/custom-error strings are not admitted source data.
+            if let closed = error as? FileExtractionWorker.Failure { throw closed }
+            throw FileExtractionWorker.Failure.readFailed
+        }
+    }
+
+    private static func closedFileReadFact(_ result: ToolResult) -> ToolResult {
+        ToolResult(summary: "The file result is unavailable for this task.",
+            evidence: "Read the selected file again to use its current contents. Its recorded read outcome is retained; no action was repeated.",
+            verified: result.verified)
+    }
+    private func admitFilePublication(_ call: ToolCall, result: ToolResult, proposalID: UUID,
+        revision expected: Int, scope: FileReadExecutionScope?, inputProof: ModelInputSourceProof?,
+        budget: TaskRunBudget) async -> (result: ToolResult, proof: ModelInputSourceProof?) {
+        do {
+            try gate(expected); try budget.check()
+            guard let scope, let run = journalRuns[expected],
+                  multiAgentContinuationContext() == scope.executionContext else { throw CancellationError() }
+            try scope.validateCurrent(call: call)
+            try await inputProof?.validate()
+            let proof = try await fileReadSources.sourceProof(call: call, result: result, run: run,
+                proposalID: proposalID, context: scope.executionContext)
+            try await inputProof?.validate()
+            try gate(expected); try budget.check(); try scope.validateCurrent(call: call)
+            return (result, proof)
+        } catch {
+            // Never publish a newly late body or private error into Activity or
+            // replacement history. The original saved read fact remains known.
+            return (Self.closedFileReadFact(result), nil)
+        }
+    }
+
+    private func localResultSourceProof(_ call: ToolCall, acceptedProposalID: UUID, result: ToolResult,
+                                        nativeTask: NativeComputerTaskService?, revision expected: Int,
+                                        budget: TaskRunBudget) async throws -> ModelInputSourceProof {
+        try gate(expected); try budget.check()
+        let context = multiAgentContinuationContext()
+        let runID = try nativeValidationRunID(expected)
+        let proof: ModelInputSourceProof
+        if NativeCurrentModelContext.isNative(call.name) {
+            guard let nativeTask else { throw NativeCurrentReadbackReceipts.Failure.unavailable }
+            proof = try await nativeTask.admitReadbackSourceProof(call, acceptedProposalID: acceptedProposalID, result: result)
+        } else {
+            guard let run = journalRuns[expected], run.taskID == runID else { throw CancellationError() }
+            proof = try await fileReadSources.sourceProof(call: call, result: result, run: run,
+                proposalID: acceptedProposalID, context: context)
+        }
+        try gate(expected); try budget.check(); try await proof.validate()
+        try gate(expected); try budget.check()
+        return proof
     }
 
     private func run(revision expected: Int, nativeTask: NativeComputerTaskService?, budget: TaskRunBudget) async {
@@ -821,7 +934,8 @@ final class AssistantStore {
             }
         }
         var recovery = TaskRecoveryBudget()
-        var unverifiedResults = 0
+        let goalCoverage = ordinaryGoalCoverage ?? OrdinaryGoalCoverage(logicalTaskID: nativeTaskID)
+        ordinaryGoalCoverage = goalCoverage
         var attemptedActions = 0
         var protocolFailures = 0
         var discoveryOnly = true
@@ -842,14 +956,17 @@ final class AssistantStore {
             + (nativeTask?.definitions ?? [])
         let definitions = usesCodex ? CodexDevicePlanning.definitions : localDefinitions
         var codexMessages = [ModelMessage(role: "user", content: objective)]
-        var visualTextForRun: [Data: String] = [:]
-        func appendTurn(_ message: ModelMessage, cloudContent: String? = nil) {
+        var visualTextForRun: [Int: String] = [:]
+        @discardableResult
+        func appendTurn(_ message: ModelMessage, cloudContent: String? = nil) -> Int {
+            let index = modelMessages.count
             modelMessages.append(message)
             if usesCodex {
                 var cloudMessage = message
                 if let cloudContent { cloudMessage.content = cloudContent }
                 codexMessages.append(cloudMessage)
             }
+            return index
         }
         let discoveryTools: Set<String> = ["list_apps", "list_files", "observe_app", "read_file", "read_calendar", "search_knowledge", "read_browser_page", "read_sidekick_window", NativeWindowReadTool.name, "prepare_mail_send", "search_files", "preview_file_move", "calculate"]
         do {
@@ -878,9 +995,10 @@ final class AssistantStore {
                 try gate(expected)
                 try budget.check()
                 phase = .thinking
+                let replyExecutionContext = multiAgentContinuationContext()
                 // Keep complete call/result pairs; never truncate the protocol history mid-tool.
-                let context = usesCodex ? codexMessages : currentContext.map { message in
-                    guard let id = message.toolCallID, let text = visualTextForRun[Data(id.utf8)] else { return message }
+                let context = usesCodex ? codexMessages : currentContext.enumerated().map { index, message in
+                    guard message.toolName == SidekickWindowText.definition.name, let text = visualTextForRun[index] else { return message }
                     var scoped = message
                     scoped.content = text
                     return scoped
@@ -891,6 +1009,7 @@ final class AssistantStore {
                 Complete the current user request below, honoring its latest constraints. Discovery alone does not complete a requested action. Do not repeat a prior refusal or ask again for an ordinary already-authorized step.
                 """
                 let reply: ModelReply
+                var selectedInputProof: ModelInputSourceProof?
                 do {
                     let proposed: ModelReply
                     if usesCodex {
@@ -898,15 +1017,31 @@ final class AssistantStore {
                     } else {
                         let system = ModelMessage(role: "system", content: systemPrompt + windowContext + sidekickPrompt + objectiveReminder)
                         let schemaBytes = try JSONEncoder().encode(definitions).count
-                        let window = try ContextWindow.prepare(context, activeStart: activeContextStart,
-                                                               budget: configuration.inferenceContextByteBudget - system.content.utf8.count - schemaBytes)
+                        let selected = configuration
+                        let window = try await localHistorySources.project(context, activeStart: activeContextStart,
+                            currentRun: try nativeValidationRunID(expected),
+                            budget: selected.inferenceContextByteBudget - system.content.utf8.count - schemaBytes,
+                            gate: { [weak self] in
+                                guard let self else { throw CancellationError() }
+                                try self.gate(expected); try budget.check()
+                                guard self.interactiveSessionActive, !self.isClearingConversation,
+                                      self.configuration == selected,
+                                      self.multiAgentContinuationContext() == replyExecutionContext else { throw CancellationError() }
+                            })
+                        selectedInputProof = window.sourceProof
                         if (window.omittedMessages > 0 || window.compactedMessages > 0) && !activity.suffix(8).contains(where: { $0.name == "Context window" }) {
                             record("Context window", "Earlier completed turns may be omitted; superseded app observations and redundant action narration may be compacted. Full local history and tool Activity remain available. Current user requests, tool pairs, the latest app observations and opaque workflow receipts are retained.", "observed")
                         }
                         let input = [system] + window.messages
-                        if let completeOverride { proposed = try await completeOverride(input, definitions, configuration) }
-                        else { proposed = try await model.complete(messages: input, tools: definitions, configuration: configuration) }
+                        do {
+                            try await window.validate()
+                            if let completeOverride { proposed = try await completeOverride(input, definitions, selected) }
+                            else { proposed = try await model.complete(messages: input, tools: definitions,
+                                configuration: selected, sourceAuthorization: window.validate) }
+                        } catch { try await window.validate(); throw error }
+                        try await window.validate()
                     }
+                    guard multiAgentContinuationContext() == replyExecutionContext else { throw CancellationError() }
                     let routed = BrowserTaskRouting.route(proposed, objective: objective)
                     try DesktopActionBatch.validate(routed.toolCalls)
                     reply = routed
@@ -922,14 +1057,19 @@ final class AssistantStore {
                     case .invalidAction:
                         correction = "The previous model reply was rejected before dispatch: \(MacTools.boundedText(error.localizedDescription, utf8Limit: 700)). Nothing from that reply was dispatched. Correct the structured function, arguments and action ordering using only the advertised tools. Do not invent a tool. Preserve previously verified work and inspect uncertain effects before retrying a mutation."
                     }
-                    appendTurn(ModelMessage(role: "user", content: correction))
+                    let index = appendTurn(ModelMessage(role: "user", content: correction))
+                    if !usesCodex { try localHistorySources.appDerivedMessage(at: index,
+                        runID: try nativeValidationRunID(expected), inputProof: selectedInputProof) }
                     continue
                 }
                 protocolFailures = 0
                 let acceptedProposalID = UUID()
                 try budget.check()
                 try gate(expected)
-                appendTurn(ModelMessage(role: "assistant", content: reply.content, toolCalls: reply.toolCalls))
+                let replyInputProof = selectedInputProof
+                let replyIndex = appendTurn(ModelMessage(role: "assistant", content: reply.content, toolCalls: reply.toolCalls))
+                if !usesCodex { try localHistorySources.acceptReply(at: replyIndex, groupID: acceptedProposalID,
+                    runID: try nativeValidationRunID(expected), reply: reply, inputProof: replyInputProof) }
                 if reply.toolCalls.isEmpty {
                     // A website launch is not evidence that a requested read is unsupported.
                     // Reconsider a blanket privacy refusal once, through the normal tools/reviews.
@@ -948,7 +1088,7 @@ final class AssistantStore {
                     // This recognizes conversational phrasing, never intent or authorization;
                     // the model and normal dispatch/review gates still decide the next step.
                     // Failed/uncertain effects and any mutation exclude this recovery path.
-                    if attemptedActions > 0, discoveryOnly, !recovery.hasUnresolvedErrors, unverifiedResults == 0, completionCheckpoints == 0,
+                    if attemptedActions > 0, discoveryOnly, !recovery.hasUnresolvedErrors, goalCoverage.unverifiedCount == 0, completionCheckpoints == 0,
                        Self.proposesFollowthrough(reply.content) {
                         completionCheckpoints += 1
                         record("Checking next step", "The response offered another step after discovery. Checking it against your request; this check does not dispatch an action or grant access.", "planning")
@@ -963,7 +1103,7 @@ final class AssistantStore {
                     // once after verified effects; this does not dispatch,
                     // approve, or retry an action on the model's behalf.
                     if attemptedActions > 0, !discoveryOnly, !completedEffectAudited,
-                       !recovery.hasUnresolvedErrors, unverifiedResults == 0 {
+                       !recovery.hasUnresolvedErrors, goalCoverage.unverifiedCount == 0 {
                         completedEffectAudited = true
                         record("Checking requested outcome", "Comparing the completed effects with the whole request before finishing. Completed work and normal action checks remain in force.", "planning")
                         let ledger = TaskToolLedger.summary(history: modelMessages.dropFirst(activeContextStart),
@@ -978,6 +1118,114 @@ final class AssistantStore {
                         """))
                         continue
                     }
+                    // Assess the goal independently without rewriting uncertain
+                    // input/focus receipts. Every unverified result must have
+                    // actual settled coverage on this same original source.
+                    if !usesCodex, goalCoverage.unverifiedCount > 0, !recovery.hasUnresolvedErrors,
+                       let nativeTask, let run = journalRuns[expected] {
+                        let ticket: OrdinaryGoalCoverage.Ticket?
+                        do { ticket = try goalCoverage.begin(unverifiedCount: goalCoverage.unverifiedCount, run: run) }
+                        catch { try gate(expected); ticket = nil }
+                        if let ticket {
+                            record("Checking requested state", "Reading the original window independently. Earlier input and focus receipts remain unchanged.", "planning")
+                            let selected = configuration
+                            let assessment: OrdinaryGoalAssessment.Result
+                            do {
+                                assessment = try await OrdinaryGoalAssessment.assess(objective: objective, ticket: ticket,
+                                    budget: budget, maximumBytes: selected.inferenceContextByteBudget,
+                                    gate: { [weak self] in
+                                        guard let self else { throw CancellationError() }
+                                        try self.gate(expected)
+                                        guard self.interactiveSessionActive, self.configuration == selected,
+                                              self.journalRuns[expected]?.taskID == run.taskID else { throw CancellationError() }
+                                    }, read: { [self] call, proposalID, target in
+                                        try gate(expected); try budget.check(); try ticket.validate()
+                                        tools.invalidateApprovals()
+                                        let index = appendTurn(.init(role: "assistant", content: "", toolCalls: [call]))
+                                        try localHistorySources.acceptReply(at: index, groupID: proposalID, runID: run.taskID,
+                                            reply: .init(content: "", toolCalls: [call]), inputProof: nil)
+                                        do {
+                                            let result = try await checkpointed(call, proposalID: proposalID, revision: expected, budget: budget,
+                                                admitAction: { try ticket.validate() }, action: {
+                                                    try await nativeTask.readOriginalGoal(call, acceptedProposalID: proposalID,
+                                                        objective: objective, target: target)
+                                                }, result: { result in
+                                                    // Only closed facts reach journal error/unsaved
+                                                    // callbacks while private detail awaits COMMIT.
+                                                    ToolResult(summary: "Read the retained original window for an independent assessment.",
+                                                        evidence: "Read-only checkpoint; capture scope only. No input or semantic goal is certified.",
+                                                        verified: result.verified)
+                                                })
+                                            let proof = try await nativeTask.admitReadbackSourceProof(call, acceptedProposalID: proposalID, result: result)
+                                            try await proof.validate(); try gate(expected); try budget.check(); try ticket.validate()
+                                            guard interactiveSessionActive, configuration == selected,
+                                                  journalRuns[expected]?.taskID == run.taskID else { throw CancellationError() }
+                                            // Release private detail only after durable return
+                                            // and actual source/task proof, with no await below.
+                                            appendTurn(.init(role: "tool", content: Self.toolFeedback(result), toolCallID: call.id, toolName: call.name))
+                                            try localHistorySources.returned(groupID: proposalID, call: call, receipt: result.verified ? .verified : .unverified)
+                                            try localHistorySources.resultSource(groupID: proposalID, call: call, proof: proof)
+                                            record(call.name, "\(result.summary)\nEvidence: \(result.evidence)", result.verified ? "verified read" : "unverified read")
+                                            return OrdinaryGoalAssessment.Evidence(call: call, result: result, sourceProof: proof)
+                                        } catch {
+                                            // If a factual result was already appended, do
+                                            // not create a second response for that call.
+                                            if modelMessages.last?.toolCallID?.utf8.elementsEqual(call.id.utf8) != true {
+                                                appendTurn(.init(role: "tool", content: "The original-window verification read did not complete. No input was requested or replayed.", toolCallID: call.id, toolName: call.name))
+                                            }
+                                            try localHistorySources.resultSource(groupID: proposalID, call: call, proof: nil)
+                                            throw error
+                                        }
+                                    }, complete: { [self] input, proof in
+                                        let validate: @MainActor @Sendable () async throws -> Void = { [weak self] in
+                                            guard let self else { throw CancellationError() }
+                                            try self.gate(expected); try budget.check(); try ticket.validate()
+                                            guard self.interactiveSessionActive, self.configuration == selected,
+                                                  self.journalRuns[expected]?.taskID == run.taskID else { throw CancellationError() }
+                                            try await proof.validate()
+                                            try self.gate(expected); try budget.check(); try ticket.validate()
+                                        }
+                                        try await validate()
+                                        let verdict: ModelReply
+                                        do {
+                                            if let completeOverride { verdict = try await completeOverride(input, [], selected) }
+                                            else { verdict = try await model.complete(messages: input, tools: [], configuration: selected, sourceAuthorization: validate) }
+                                        } catch { try await validate(); throw error }
+                                        try await validate()
+                                        if verdict.toolCalls.isEmpty {
+                                            let index = appendTurn(.init(role: "assistant", content: verdict.content))
+                                            try localHistorySources.acceptReply(at: index, groupID: UUID(), runID: run.taskID,
+                                                reply: verdict, inputProof: proof)
+                                        }
+                                        return verdict
+                                    })
+                            } catch is CancellationError { throw CancellationError() }
+                            catch let failure as JournalError { throw failure }
+                            catch let limit as TaskRunBudget.Limit { throw limit }
+                            catch { try gate(expected); assessment = .notEstablished }
+                            try gate(expected); try budget.check()
+                            var supported = assessment.verdict == .stateSupported
+                            if supported {
+                                do {
+                                    guard let publish = assessment.validateForPublication else { throw NativeVisualTaskFailure.staleTask }
+                                    try await publish(); try gate(expected); try budget.check()
+                                }
+                                catch is CancellationError { throw CancellationError() }
+                                catch let limit as TaskRunBudget.Limit { throw limit }
+                                catch { try gate(expected); supported = false }
+                            }
+                            appendVisibleMessage(ChatMessage(role: "assistant", text: supported
+                                ? "I read the original window again. Overall completion and the earlier input receipt remain unverified; a state assessment does not certify an exact physical action or count."
+                                : "I could not establish the whole requested outcome from a fresh read of the original window. Earlier actions were not repeated; their receipts remain in Activity."), for: expected)
+                            // A model's basis label cannot authorize whole-goal
+                            // completion. A trusted objective adapter is still missing.
+                            phase = .needsInput
+                            record("Requested state assessed", supported
+                                ? "Fresh evidence was assessed, but whole-objective completion remains unverified. Original effect/focus facts were not changed."
+                                : "Fresh evidence did not establish the whole objective. No mutation was replayed.", "assessment only")
+                            persist(); return
+                        }
+                    }
                     let text = reply.content.trimmingCharacters(in: .whitespacesAndNewlines)
                     let evidence: String
                     if attemptedActions == 0 { evidence = "No computer actions were executed in this response." }
@@ -985,7 +1233,7 @@ final class AssistantStore {
                     appendVisibleMessage(ChatMessage(role: "assistant", text: (text.isEmpty ? "The model returned no answer. Try a more specific request or switch models." : text) + "\n\n" + evidence,
                                                 artifacts: verifiedResults.compactMap(\.artifactPath)), for: expected)
                     // Finishing a model turn is not independent proof of every requested outcome.
-                    let unresolved = recovery.hasUnresolvedErrors || unverifiedResults > 0
+                    let unresolved = recovery.hasUnresolvedErrors || goalCoverage.unverifiedCount > 0
                     phase = unresolved ? .needsInput : .idle
                     record("Response finished", unresolved
                         ? "The response is ready, but some actions still need attention. Check their results before continuing."
@@ -993,9 +1241,10 @@ final class AssistantStore {
                     persist()
                     return
                 }
-                var actionReadbacks: [(MacTools.MutationReadbackScope, ToolCall, TaskRecoveryBudget.Key, UUID)] = []
+                var actionReadbacks: [(MacTools.MutationReadbackScope, ToolCall, TaskRecoveryBudget.Key, UUID, ModelInputSourceProof?)] = []
                 // Execute one tool at a time. Even if the model batches calls, Stop/steering is checked between every dispatch.
                 for call in reply.toolCalls {
+                    guard let originalCallRun = journalRuns[expected] else { throw CancellationError() }
                     let operationKey = TaskRecoveryBudget.key(for: call, observedScope: tools.recoveryScopeFingerprint(for: call))
                     let preciseRead = executeOverride == nil ? tools.preparePreciseWindowReadRecovery(for: call) : nil
                     let recoveryKey = preciseRead.map { attempt in
@@ -1003,6 +1252,8 @@ final class AssistantStore {
                             ?? TaskRecoveryBudget.unboundWindowReadKey(originalAction: operationKey)
                     } ?? operationKey
                     var readAttempt: TaskRecoveryBudget.WindowReadAttempt?
+                    var callVisualText: String?
+                    var nativeGoalSeed: NativeGoalEffectSeed?
                     defer { if let readAttempt { recovery.discardWindowReadAttempt(readAttempt) } }
                     do {
                         try gate(expected)
@@ -1023,12 +1274,14 @@ final class AssistantStore {
                             guard approved else {
                                 let denial = "User declined this specific action. Do not retry it or perform an equivalent action through another tool."
                                 modelMessages.append(ModelMessage(role: "tool", content: denial, toolCallID: call.id, toolName: call.name))
+                                if !usesCodex { try localHistorySources.returned(groupID: acceptedProposalID, call: call, receipt: .notDispatched) }
                                 record(call.name, "Declined. Nothing dispatched.", "not executed")
                                 phase = .needsInput
                                 appendVisibleMessage(ChatMessage(role: "assistant", text: "That action was not performed. Tell me how you’d like to proceed."), for: expected)
                                 // Supply results for any remaining batched requests so the next conversation is well formed.
                                 for pending in reply.toolCalls.drop(while: { !$0.id.utf8.elementsEqual(call.id.utf8) }).dropFirst() {
                                     modelMessages.append(ModelMessage(role: "tool", content: "Not executed: review was declined.", toolCallID: pending.id, toolName: pending.name))
+                                    if !usesCodex { try localHistorySources.returned(groupID: acceptedProposalID, call: pending, receipt: .notDispatched) }
                                 }
                                 persist(); return
                             }
@@ -1048,14 +1301,18 @@ final class AssistantStore {
                         }
                         if !discoveryTools.contains(call.name) { discoveryOnly = false }
                         record(call.name, "Dispatching validated request", "requested")
-                        let result: ToolResult
+                        let actualResult: ToolResult
+                        let fileScope = try makeFileReadScope(call, proposalID: acceptedProposalID,
+                            revision: expected, context: replyExecutionContext, budget: budget)
                         if call.name == NativeWindowControlTools.outerName {
                             guard !usesCodex, let nativeTask else { throw NativeVisualTaskFailure.staleTask }
                             tools.invalidateApprovals()
-                            result = try await runNativeControl(call, acceptedProposalID: acceptedProposalID,
-                                service: nativeTask, revision: expected)
+                            let returned = try await runNativeControlOutcome(call, acceptedProposalID: acceptedProposalID,
+                                service: nativeTask, revision: expected, inputProof: replyInputProof)
+                            actualResult = returned.result; nativeGoalSeed = returned.goalSeed
                         } else {
-                        result = try await checkpointed(call, proposalID: acceptedProposalID, revision: expected, budget: budget, action: { [self] in
+                        actualResult = try await checkpointed(call, proposalID: acceptedProposalID, revision: expected, budget: budget,
+                            admitAction: replyInputProof?.validator, fileReadScope: fileScope, action: { [self] in
                         if call.name == NativeWindowReadTool.name {
                             guard !usesCodex, let nativeTask else { throw RelayError.message("Native window reading requires the original local task scope.") }
                             tools.invalidateApprovals()
@@ -1063,7 +1320,7 @@ final class AssistantStore {
                             let context = multiAgentContinuationContext()
                             let contribution = try await multiAgentContinuation.prepare(call, proposalID: acceptedProposalID,
                                 run: run, context: context, grants: { [weak self] in self?.grants ?? [] })
-                            let output = try await nativeTask.read(call, acceptedProposalID: acceptedProposalID, objective: objective)
+                            let output = try await nativeTask.read(call, acceptedProposalID: acceptedProposalID, objective: objective, inputProof: replyInputProof)
                             try gate(expected)
                             guard interactiveSessionActive, historyFailure == nil,
                                   multiAgentContinuationContext() == context else { throw CancellationError() }
@@ -1073,11 +1330,12 @@ final class AssistantStore {
                             try ToolPolicy.validate(call, against: definitions)
                             guard let visualTarget else { throw RelayError.message("Choose the current app in Sidekick before using its visual text.") }
                             let visual = try await SidekickWindowText.read(visualTarget)
-                            visualTextForRun[Data(call.id.utf8)] = Self.toolFeedback(visual)
+                            callVisualText = Self.toolFeedback(visual)
                             return ToolResult(summary: "Read visible text from the selected window.",
                                                 evidence: visual.evidence, verified: visual.verified)
-                        } else if let executeOverride { return try await executeOverride(call) }
-                        else if let preciseRead {
+                        } else if executeOverride != nil || (call.name == "read_file" && executeFileReadOverride != nil) {
+                            return try await executeLocalTool(call, fileReadScope: fileScope)
+                        } else if let preciseRead {
                             let started = recovery.captureWindowReadAttempt(for: preciseRead.recoveryAttemptID)
                             readAttempt = started
                             let (observed, receipt) = try await tools.executePreciseWindowRead(preciseRead)
@@ -1086,9 +1344,19 @@ final class AssistantStore {
                                 recovery.recordVerifiedWindowRead(started, window: proof.windowID, attemptID: proof.attemptID)
                             }
                             return observed
-                        } else { return try await tools.execute(call) }
-                        }, result: { $0 })
+                        } else { return try await executeLocalTool(call, fileReadScope: fileScope) }
+                        }, result: { result in
+                            if !result.verified, preciseRead == nil {
+                                goalCoverage.recordUnverified(call: call, proposalID: acceptedProposalID, run: originalCallRun)
+                            }
+                            return result
+                        })
                         }
+                        let publication = call.name == "read_file"
+                            ? await admitFilePublication(call, result: actualResult, proposalID: acceptedProposalID,
+                                revision: expected, scope: fileScope, inputProof: replyInputProof, budget: budget)
+                            : (result: actualResult, proof: Optional<ModelInputSourceProof>.none)
+                        let result = publication.result
                         record(call.name, "\(result.summary)\nEvidence: \(result.evidence)", result.verified ? "verified" : "effect uncertain")
                         let output = Self.toolFeedback(result)
                         let cloudOutput: String?
@@ -1114,20 +1382,40 @@ final class AssistantStore {
                         } else {
                             cloudOutput = nil
                         }
-                        appendTurn(ModelMessage(role: "tool", content: output, toolCallID: call.id, toolName: call.name), cloudContent: cloudOutput)
-                        if let readbackScope { actionReadbacks.append((readbackScope, call, operationKey, UUID())) }
+                        let resultIndex = appendTurn(ModelMessage(role: "tool", content: output, toolCallID: call.id, toolName: call.name), cloudContent: cloudOutput)
+                        if let callVisualText { visualTextForRun[resultIndex] = callVisualText }
+                        if !usesCodex {
+                            try localHistorySources.returned(groupID: acceptedProposalID, call: call,
+                                receipt: result.verified ? .verified : .unverified)
+                            if NativeCurrentModelContext.requiresCurrentSource(call.name) {
+                                do {
+                                    let proof: ModelInputSourceProof?
+                                    if call.name == "read_file" { proof = publication.proof }
+                                    else { proof = try await localResultSourceProof(call, acceptedProposalID: acceptedProposalID,
+                                        result: result, nativeTask: nativeTask, revision: expected, budget: budget) }
+                                    try localHistorySources.resultSource(groupID: acceptedProposalID, call: call, proof: proof)
+                                } catch {
+                                    try gate(expected); try budget.check()
+                                    try localHistorySources.resultSource(groupID: acceptedProposalID, call: call, proof: nil)
+                                }
+                            }
+                        }
+                        if let readbackScope { actionReadbacks.append((readbackScope, call, operationKey, UUID(), replyInputProof)) }
                         if call.name == "read_browser_page", result.verified { browserReadSucceeded = true }
                         if result.verified {
                             verifiedResults.append(result)
                             recovery.recordVerifiedSuccess(recoveryKey)
                         } else if preciseRead != nil { try recovery.recordFailure(recoveryKey) }
-                        else { unverifiedResults += 1 }
+                        else {
+                            goalCoverage.recordUnverified(call: call, proposalID: acceptedProposalID, run: originalCallRun, seed: nativeGoalSeed)
+                        }
                         if expected != revision || Task.isCancelled {
                             appendVisibleMessage(ChatMessage(role: "assistant", text: "An in-flight action finished after interruption: \(result.summary)\n\(result.evidence)", artifacts: [result.artifactPath].compactMap { $0 }), for: expected)
                             persist()
                         }
                         try gate(expected)
                     } catch let failure as JournalError { throw failure }
+                    catch let refusal as SourceAdmissionRefusal { throw refusal }
                     catch is CancellationError { throw CancellationError() }
                     catch let declined as NativeVisualTaskFailure where declined == .reviewDeclined { throw declined }
                     catch let limit as TaskRecoveryBudget.Limit { throw limit }
@@ -1135,6 +1423,7 @@ final class AssistantStore {
                         guard expected == revision, !Task.isCancelled else { throw CancellationError() }
                         record(call.name, error.localizedDescription, "failed / inspect before retry")
                         appendTurn(ModelMessage(role: "tool", content: "Tool failed: \(error.localizedDescription). Inspect effects before retrying any mutation.", toolCallID: call.id, toolName: call.name), cloudContent: "Relay could not verify this action. The error is available locally in Activity. Do not blindly retry a mutation.")
+                        if !usesCodex { try localHistorySources.returned(groupID: acceptedProposalID, call: call, receipt: .failedOrUnknown) }
                         let failureMessage = error.localizedDescription
                         do { try recovery.recordFailure(recoveryKey) }
                         catch let limit as TaskRecoveryBudget.Limit {
@@ -1145,7 +1434,7 @@ final class AssistantStore {
                 // Verify the original document window after a native UI action
                 // before asking the planner to choose its next control. This is
                 // read-only, local and scope-bound; it never repeats a write.
-                for (scope, action, actionKey, readbackProposalID) in actionReadbacks {
+                for (scope, action, actionKey, readbackProposalID, readbackInputProof) in actionReadbacks {
                     try gate(expected)
                     try budget.check()
                     let observation = scope.call
@@ -1153,10 +1442,13 @@ final class AssistantStore {
                         ?? TaskRecoveryBudget.unboundWindowReadKey(originalAction: actionKey)
                     let readAttempt = recovery.captureWindowReadAttempt(for: scope.recoveryAttemptID)
                     defer { recovery.discardWindowReadAttempt(readAttempt) }
-                    appendTurn(ModelMessage(role: "assistant", content: "", toolCalls: [observation]))
+                    let readbackIndex = appendTurn(ModelMessage(role: "assistant", content: "", toolCalls: [observation]))
+                    if !usesCodex { try localHistorySources.acceptReply(at: readbackIndex, groupID: readbackProposalID,
+                        runID: try nativeValidationRunID(expected), reply: .init(content: "", toolCalls: [observation]), inputProof: readbackInputProof) }
                     record(observation.name, "Reading the action’s original window before the next planning step.", "requested")
                     do {
                         let (result, receipt) = try await checkpointed(observation, proposalID: readbackProposalID, revision: expected, budget: budget,
+                            admitAction: readbackInputProof?.validator,
                             action: { try await self.tools.readbackWithRecovery(scope, after: action) }, result: { $0.0 })
                         if result.verified, let receipt,
                            let proof = tools.consumePreciseReadReceipt(receipt, for: observation) {
@@ -1164,6 +1456,8 @@ final class AssistantStore {
                         }
                         appendTurn(ModelMessage(role: "tool", content: Self.toolFeedback(result),
                             toolCallID: observation.id, toolName: observation.name))
+                        if !usesCodex { try localHistorySources.returned(groupID: readbackProposalID, call: observation,
+                            receipt: result.verified ? .verified : .unverified) }
                         record(observation.name, "\(result.summary)\nEvidence: \(result.evidence)", result.verified ? "verified" : "effect uncertain")
                         if result.verified {
                             verifiedResults.append(result)
@@ -1260,7 +1554,9 @@ final class AssistantStore {
                         throw error
                     }
                 }
-                let context = self.multiAgentContinuationContext()
+                let context = stepContext
+                let fileScope = try self.makeFileReadScope(call, proposalID: proposalID,
+                    revision: expected, context: context, budget: budget)
                 let validateAcceptedTask: @MainActor @Sendable () throws -> Void = {
                     try self.gate(expected); try budget.check()
                     guard self.nativeTaskID == logicalTaskID, self.configuration == selectedConfiguration,
@@ -1276,7 +1572,7 @@ final class AssistantStore {
                     try validateAcceptedTask(); try await inputProof?.validate(); try validateAcceptedTask()
                 }
                 let output = try await self.checkpointed(call, proposalID: proposalID, revision: expected, budget: budget,
-                    admitAction: admitAcceptedInput, action: {
+                    admitAction: admitAcceptedInput, fileReadScope: fileScope, action: {
                     try validateAcceptedTask()
                     @MainActor func actualAction() async throws -> ToolResult {
                         self.phase = .acting
@@ -1294,21 +1590,32 @@ final class AssistantStore {
                                 throw error
                             }
                         }
-                        if let executeOverride = self.executeOverride {
-                            return try await executeOverride(call)
-                        }
                         self.tools.grants = self.grants
                         self.tools.knowledge = self.knowledge
                         self.tools.knowledgeSearch = self.knowledgeSearch
                         self.tools.calendarSource = self.calendarSource
-                        return try await self.tools.execute(call)
+                        return try await self.executeLocalTool(call, fileReadScope: fileScope)
                     }
                     let result = try await actualAction()
-                    await self.multiAgentContinuation.record(result, prepared: prepared, grants: { [weak self] in self?.grants ?? [] })
+                    if call.name != "read_file" {
+                        await self.multiAgentContinuation.record(result, prepared: prepared, grants: { [weak self] in self?.grants ?? [] })
+                    }
                     return result
                 }, result: { $0 })
+                let published: ToolResult
+                if call.name == "read_file" {
+                    let admitted = await self.admitFilePublication(call, result: output, proposalID: proposalID,
+                        revision: expected, scope: fileScope, inputProof: inputProof, budget: budget)
+                    await self.multiAgentContinuation.record(admitted.result, prepared: prepared, grants: { [weak self] in self?.grants ?? [] })
+                    // Recording a plain historical proof can itself await IO.
+                    // Revalidate before the body first reaches the caller.
+                    if admitted.proof != nil {
+                        published = await self.admitFilePublication(call, result: output, proposalID: proposalID,
+                            revision: expected, scope: fileScope, inputProof: inputProof, budget: budget).result
+                    } else { published = admitted.result }
+                } else { published = output }
                 self.multiAgentContinuation.acknowledge(prepared)
-                return output
+                return published
             },
             priorReceipts: { [weak self] remainingBytes in
                 guard let self else { throw CancellationError() }
@@ -1346,15 +1653,9 @@ final class AssistantStore {
                     guard let nativeTask else { throw NativeCurrentReadbackReceipts.Failure.unavailable }
                     proof = try await nativeTask.admitReadbackSourceProof(call, acceptedProposalID: acceptedProposalID, result: result)
                 } else {
-                    proof = try await self.multiAgentContinuation.freshReadbackSourceProof(
-                        call: call, result: result, context: stepContext, validationRunID: try self.nativeValidationRunID(expected),
-                        grants: { [weak self] in self?.grants ?? [] },
-                        currentContext: { [weak self] in self?.multiAgentContinuationContext() },
-                        isCurrent: { [weak self] in
-                            guard let self else { return false }
-                            return self.revision == expected && self.interactiveSessionActive && !self.isClearingConversation
-                                && self.nativeTaskID == logicalTaskID && self.configuration == selectedConfiguration
-                        })
+                    guard let run = self.journalRuns[expected] else { throw CancellationError() }
+                    proof = try await self.fileReadSources.sourceProof(call: call, result: result, run: run,
+                        proposalID: acceptedProposalID, context: stepContext)
                 }
                 try self.gate(expected); try budget.check()
                 try await proof.validate(); try self.gate(expected); try budget.check()
@@ -1486,6 +1787,7 @@ final class AssistantStore {
         if !value {
             if submissions.values.contains(where: { $0.ticket.isPending }) { stop() }
             let wasReadingNativeWindow = activeNativeTask?.service.isBusy == true
+            ordinaryGoalCoverage?.revokeCapabilities()
             activeNativeTask?.service.stop()
             if wasReadingNativeWindow { task?.cancel() }
             model.invalidateConversation()
@@ -1497,10 +1799,12 @@ final class AssistantStore {
     }
 
     func stop(cancelScheduledPreparation: Bool = true) {
+        fileReadSources.reset()
         let stoppedJournalRun = currentJournalRun
         for submission in submissions.values { submission.ticket.resolve(.stopped) }
         submissions.removeAll()
         conversationHistory.stop(stoppedJournalRun)
+        ordinaryGoalCoverage?.revokeCapabilities()
         activeNativeTask?.service.stop()
         onStopInput?()
         activeWindowObservation = nil
@@ -1888,6 +2192,7 @@ final class AssistantStore {
         pendingContextReset = modelMessages.count
         activeObjective = ""
         nativeTaskReadAuthority = nil; nativeTaskID = UUID()
+        ordinaryGoalCoverage = nil
         multiAgentStepCheckpoint = nil
         tools.invalidateApprovals()
         selectionNotice = reason + " Visible conversation and Activity remain in local history; start a new request or clear history separately."
@@ -2051,11 +2356,12 @@ final class AssistantStore {
             self.historyRestoreTask = nil; self.historyRestorationFinished = true
             self.historyFailure = nil; self.historyFailureID = nil; self.ownedHistoryErrorID = nil; self.historyNotice = nil; self.restoredTaskNeedsNewInvocation = false
             self.messages = []
-            self.modelMessages = []
+            self.modelMessages = []; self.localHistorySources.reset(); self.fileReadSources.reset()
             self.activity = []
             self.verifiedResults = []
             self.activeObjective = ""
             self.nativeTaskReadAuthority = nil; self.nativeTaskID = UUID()
+            self.ordinaryGoalCoverage = nil
             self.multiAgentContinuation.startTask(nil)
             self.multiAgentStepCheckpoint = nil
             self.activeContextStart = 0
@@ -2346,23 +2652,49 @@ final class AssistantStore {
             if historyFailure == nil { historyNotice = pendingVisibleMessageIDs.isEmpty ? nil : "Saving conversation…" }
         } catch { reportHistoryFailure(error); throw error }
     }
+    /// Only records a refusal from the accepted-input validator itself. Action,
+    /// storage, cancellation and budget failures retain their own contracts.
+    private final class SourceAdmissionOutcome { var refused = false }
+    nonisolated private enum SourceAdmissionRefusal: LocalizedError {
+        case unavailable
+        var errorDescription: String? {
+            "The sources for this action could not be rechecked. It was not performed. Inspect the current source before continuing."
+        }
+    }
     private func checkpointed<Output>(_ call: ToolCall, proposalID: UUID, revision expected: Int, budget: TaskRunBudget,
                                       admitAction: (@MainActor @Sendable () async throws -> Void)? = nil,
+                                      fileReadScope: FileReadExecutionScope? = nil,
                                       action: @escaping @MainActor () async throws -> Output,
                                       result: @escaping @MainActor (Output) -> ToolResult) async throws -> Output {
         guard let run = journalRuns[expected] else { throw JournalError.invalidTransition }
+        let sourceAdmission = SourceAdmissionOutcome()
+        let checkedAdmission: (@MainActor @Sendable () async throws -> Void)?
+        if let admitAction {
+            checkedAdmission = {
+                do { try await admitAction() }
+                catch is CancellationError { throw CancellationError() }
+                catch let storage as JournalError { throw storage }
+                catch let limit as TaskRunBudget.Limit { throw limit }
+                catch { try budget.check(); sourceAdmission.refused = true; throw error }
+            }
+        } else { checkedAdmission = nil }
         do {
             try await flushVisibleHistory()
             return try await conversationHistory.perform(call, proposalID: proposalID, run: run, validate: { [weak self] in
                 guard let self else { throw CancellationError() }
                 try self.gate(expected); try budget.check()
+                if let fileReadScope {
+                    guard self.multiAgentContinuationContext() == fileReadScope.executionContext else { throw CancellationError() }
+                    try fileReadScope.validateCurrent(call: call)
+                }
                 guard self.interactiveSessionActive, !self.isClearingConversation else { throw CancellationError() }
                 self.tools.grants = self.grants
                 self.tools.knowledge = self.knowledge
                 self.tools.knowledgeSearch = self.knowledgeSearch
                 self.tools.calendarSource = self.calendarSource
-            }, admitAction: admitAction, action: action, result: result, unsavedResult: { [weak self] observed in
+            }, admitAction: checkedAdmission, action: action, result: result, unsavedResult: { [weak self] observed in
                 guard let self else { return }
+                let observed = call.name == "read_file" ? Self.closedFileReadFact(observed) : observed
                 self.record(call.name, "A factual result arrived but its checkpoint could not be saved: \(observed.summary)\n\(observed.evidence)", "not saved")
                 // Keep the factual pair in memory. All inference is still gated on saving
                 // its pending checkpoint; this is never serialized as an executable action.
@@ -2372,16 +2704,36 @@ final class AssistantStore {
                 if self.revision == expected, observed.verified { self.verifiedResults.append(observed) }
             }, metadataFailure: { [weak self] observed in
                 guard let self else { return }
+                let observed = call.name == "read_file" ? Self.closedFileReadFact(observed) : observed
                 self.record(call.name, "A factual result arrived, but its output link metadata was invalid: \(observed.summary)", "metadata not retained")
                 if self.hasUnansweredModelCall(call) {
                     self.modelMessages.append(ModelMessage(role: "tool", content: Self.toolFeedback(observed), toolCallID: call.id, toolName: call.name))
                 }
                 if self.revision == expected, observed.verified { self.verifiedResults.append(observed) }
+            }, settledFileResult: { [weak self] observed, settlement in
+                guard let self, let fileReadScope else { return }
+                // A source miss cannot undo the saved factual result. Missing
+                // registration means its private body will be omitted later.
+                _ = try? self.fileReadSources.registerSettled(call: call, result: observed, run: run,
+                    proposalID: proposalID, context: fileReadScope.executionContext, settlement: settlement)
             })
         } catch let failure as JournalError {
             if Task.isCancelled || revision != expected { throw CancellationError() }
             reportHistoryFailure(failure)
             throw failure
+        } catch is CancellationError { throw CancellationError() }
+        catch let limit as TaskRunBudget.Limit { throw limit }
+        catch {
+            guard sourceAdmission.refused else { throw error }
+            // Core refused dispatch; any pending notDispatched save remains
+            // storage-only. End this run; a generic correction cannot silently
+            // obtain a new scope or ask the model to re-propose the action.
+            record(call.name, "The sources used to plan this action are unavailable. This proposal was not dispatched; no action was repeated.", "not executed")
+            if hasUnansweredModelCall(call) {
+                modelMessages.append(ModelMessage(role: "tool", content: "Not executed: the sources used for this accepted proposal could not be rechecked before dispatch. No action was repeated.", toolCallID: call.id, toolName: call.name))
+                try? localHistorySources.returned(groupID: proposalID, call: call, receipt: .notDispatched)
+            }
+            throw SourceAdmissionRefusal.unavailable
         }
     }
     private func multiAgentContinuationContext() -> MultiAgentContinuation.Context {
@@ -2482,7 +2834,7 @@ final class AssistantStore {
         }
         messages = state.messages; activity = state.activity; grants = state.grants; memories = state.memories; configuration = state.configuration
         // Visible history is recoverable; old derived context and execution authority are not.
-        modelMessages = []; restoredTaskNeedsNewInvocation = true
+        modelMessages = []; localHistorySources.reset(); fileReadSources.reset(); restoredTaskNeedsNewInvocation = true
         activeObjective = ""
         activeContextStart = 0
         pendingContextReset = nil

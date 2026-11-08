@@ -139,6 +139,7 @@ private func continuationRoot() throws -> URL {
         let history = AssistantConversationHistory(stateURL: root.appendingPathComponent("state.json"))
         let journal = try await history.journalForTesting()
         let marker = "CONTINUITY_FACT_ONLY_ONCE", expected = Data("OWNED_OUTPUT_BYTES".utf8)
+        let extractionWorker = FileExtractionWorker(extractionTimeout: .seconds(5), validationTimeout: .seconds(5))
         let grants = [ScopeGrant(path: root.path, writable: true)]
         var planners = 0, effects = 0, reads = 0, verdicts = 0, syntheses = 0, resumes: [String] = []
         let store = AssistantStore(persistenceURL: nil, complete: { @MainActor input, definitions, _ in
@@ -180,7 +181,11 @@ private func continuationRoot() throws -> URL {
             try expected.write(to: output)
             await journal.injectFault(fault)
             return ToolResult(summary: marker, evidence: "Owned output was written.", verified: true, artifactPath: output.path)
-        }, multiAgent: true)
+        }, executeFileRead: { @MainActor call, scope in
+            reads += 1
+            let reader = MacTools(); reader.grants = grants
+            return try await reader.execute(call, fileReadScope: scope, fileReadWorker: extractionWorker)
+        }, fileReadWorker: extractionWorker, multiAgent: true)
         store.grants = grants
         store.draft = "Create the selected output once, then report its status."
         store.send(); await store.waitForConversationTaskToSettle()

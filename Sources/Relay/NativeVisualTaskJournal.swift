@@ -8,6 +8,16 @@ import RelayJournal
     let preparedAction: NativeControlSession.ReviewedProposal?
 }
 
+/// Minted only after the actual original-run effect checkpoint settled. This
+/// token is ephemeral and cannot be decoded from history or a ToolResult.
+@MainActor struct NativeSettledVisualStep {
+    let fact: NativeVisualStepOutcome
+    let identity: NativeVisualProposalIdentity
+    fileprivate init(fact: NativeVisualStepOutcome, identity: NativeVisualProposalIdentity) {
+        self.fact = fact; self.identity = identity
+    }
+}
+
 /// Sequential checkpoints, not nested perform calls on an in-flight run.
 /// This uses the journal lane's optional typed outcome seam; no action closure
 /// or input authority is restored from its saved metadata/receipts.
@@ -77,8 +87,13 @@ import RelayJournal
 
     func effect(identity: NativeVisualProposalIdentity, inputProof: ModelInputSourceProof? = nil,
                 operation: @escaping @MainActor () async throws -> NativeVisualStepOutcome) async throws -> NativeVisualStepOutcome {
+        try await settledEffect(identity: identity, inputProof: inputProof, operation: operation).fact
+    }
+
+    func settledEffect(identity: NativeVisualProposalIdentity, inputProof: ModelInputSourceProof? = nil,
+                       operation: @escaping @MainActor () async throws -> NativeVisualStepOutcome) async throws -> NativeSettledVisualStep {
         try identity.validate(scope: scope, call: identity.call)
-        return try await history.perform(identity.call, proposalID: identity.proposalID, run: scope.run,
+        let fact = try await history.perform(identity.call, proposalID: identity.proposalID, run: scope.run,
             validate: { [scope] in try scope.validate() }, admitAction: inputProof?.validator, action: operation, result: { $0.toolResult },
             unsavedResult: unsavedFact,
             journalOutcome: { output, intent in JournalToolOutcome(intent: intent, kind: output.journalKind) },
@@ -89,5 +104,6 @@ import RelayJournal
         // Crucially no post-action scope check runs inside the action closure:
         // original-run facts are saved even when Stop/revocation followed input.
         // The owner fences the returned value/error before replacement inference.
+        return NativeSettledVisualStep(fact: fact, identity: identity)
     }
 }

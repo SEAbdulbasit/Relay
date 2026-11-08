@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Dispatch
 import Foundation
 import Testing
 @preconcurrency import LiteRTLM
@@ -13,24 +14,304 @@ import Testing
         let rig = try StoreRig(); defer { rig.remove() }
         var mainTurns = 0, protocolMessages: [ModelMessage] = []
         let store = rig.store(complete: { messages, tools, _ in
-            mainTurns += 1; protocolMessages = messages
-            #expect(tools.contains { $0.name == NativeWindowControlTools.outerName })
+            mainTurns += 1
+            if messages.contains(where: { $0.role == "tool" && $0.toolCallID == "outer-original" }) { protocolMessages = messages }
+            if mainTurns <= 2 { #expect(tools.contains { $0.name == NativeWindowControlTools.outerName }) }
+            else { #expect(tools.isEmpty) }
             #expect(!tools.contains { NativeWindowControlTools.visualDefinitions.map(\.name).contains($0.name) })
             return mainTurns == 1 ? .init(content: "", toolCalls: [rig.outer()])
                 : .init(content: "The original editor navigation was dispatched and read back; no semantic goal claim.", toolCalls: [])
         })
         try await rig.start(store)
         #expect(store.errorMessage == nil && rig.canvas.commands.count == 1)
-        #expect(rig.opens == 1 && rig.closes == 1 && rig.runtime.images.count == 1)
+        #expect(rig.opens == 1 && rig.closes == 1 && rig.runtime.images.count == 2)
         #expect(rig.budgets == 1 && mainTurns >= 2)
         let intents = try await rig.intents()
-        #expect(intents.map(\.toolName) == ["native_control_prepare", NativeWindowControlTools.keyName])
+        #expect(intents.map(\.toolName) == ["native_control_prepare", NativeWindowControlTools.keyName, NativeWindowReadTool.name])
+        #expect(store.phase == .needsInput) // Plain narration is not a goal verdict.
         #expect(!intents.contains { $0.toolName == NativeWindowControlTools.outerName })
         #expect(protocolMessages.filter { $0.role == "assistant" && $0.toolCalls.contains { $0.id == "outer-original" } }.count == 1)
         #expect(protocolMessages.filter { $0.role == "tool" && $0.toolCallID == "outer-original" }.count == 1)
         #expect(ContextWindow.isWellFormed(protocolMessages.filter { $0.role != "system" }))
         try rig.expectNoImageHistory(store, messages: protocolMessages)
         store.stop(); rig.client.unload()
+    }
+
+    @Test(arguments: [false, true])
+    func ordinaryGoalAssessmentKeepsCompletionUnverifiedWithoutChangingTheInputReceipt(_ supportsGoal: Bool) async throws {
+        let rig = try StoreRig(); defer { rig.remove() }
+        var mainTurns = 0, signalGreen = false, verdicts = 0, editorReadsBeforeGoal = 0
+        rig.canvas.dispatchHook = {
+            signalGreen = supportsGoal
+            rig.runtime.readAnswer = signalGreen ? "Owned signal is green." : "Owned signal is red."
+        }
+        let store = rig.store(complete: { input, tools, _ in
+            mainTurns += 1
+            if input.first?.content.contains("ROLE: Independent goal assessment") == true {
+                verdicts += 1; #expect(tools.isEmpty)
+                #expect(rig.canvas.textReads == editorReadsBeforeGoal) // Controller read path only, not a provider-wide AX claim.
+                #expect(input.contains { $0.role == "tool" && $0.content.contains(signalGreen ? "signal is green" : "signal is red") })
+                return try Self.goalVerdict(input, satisfied: signalGreen)
+            }
+            if mainTurns == 2 { editorReadsBeforeGoal = rig.canvas.textReads }
+            return mainTurns == 1 ? .init(content: "", toolCalls: [rig.outer()])
+                : .init(content: "The input receipt alone does not establish the requested state.", toolCalls: [])
+        })
+        defer { store.stop(); rig.client.unload() }
+        store.configuration = .init(modelPath: rig.model.path)
+        store.draft = "Leave the owned signal in its green observable state."
+        let ticket = try #require(store.send(nativeReadRestrictions: [rig.admission]))
+        #expect(await ticket.waitForAcknowledgment() == .saved)
+        await store.waitForConversationTaskToSettle()
+        #expect(verdicts == 1 && mainTurns == 3 && rig.canvas.commands.count == 1)
+        #expect(rig.opens == 1 && rig.closes == 1 && rig.budgets == 1 && rig.runtime.images.count == 2)
+        #expect(store.phase == .needsInput) // No trusted whole-objective adapter exists.
+        let intents = try await rig.intents(), outcomes = try await rig.outcomes()
+        let effect = try #require(intents.first { $0.toolName == NativeWindowControlTools.keyName })
+        #expect(outcomes.first { $0.invocationID == effect.invocationID }?.kind == .returnedUnverified)
+        #expect(intents.filter { $0.toolName == NativeWindowReadTool.name }.count == 1)
+        #expect(!store.messages.contains { $0.text.contains("exact physical action was verified") })
+    }
+
+    @Test func twoDifferentOriginalSourcesCannotBeCertifiedByTheLatestSeed() async throws {
+        let rig = try StoreRig(); defer { rig.remove() }; var turns = 0
+        let store = rig.store(complete: { input, _, _ in
+            turns += 1
+            #expect(input.first?.content.contains("ROLE: Independent goal assessment") != true)
+            if turns == 1 { return .init(content: "", toolCalls: [rig.outer()]) }
+            if turns == 2 { rig.selectSecondary = true; return .init(content: "", toolCalls: [rig.outer()]) }
+            return .init(content: "Both original windows still require whole-goal verification.", toolCalls: [])
+        })
+        defer { store.stop(); rig.client.unload() }
+        try await rig.start(store)
+        #expect(turns == 3 && store.phase == .needsInput && rig.canvas.commands.count == 2)
+        #expect(rig.runtime.images.count == 2 && rig.opens == 1 && rig.closes == 1)
+        #expect(try await rig.intents().filter { $0.toolName == NativeWindowReadTool.name }.isEmpty)
+    }
+
+    @Test func goalReadRetainsTheOriginalSourceInsteadOfCallingTheNewSelectionResolver() async throws {
+        let rig = try StoreRig(); defer { rig.remove() }; var turns = 0
+        rig.runtime.readAnswer = "ORIGINAL_A_STATE"
+        rig.answers[rig.secondaryCanvas.sourceID] = "FOREIGN_B_BODY"
+        let store = rig.store(complete: { input, _, _ in
+            turns += 1
+            if input.first?.content.contains("ROLE: Independent goal assessment") == true {
+                #expect(input.map(\.content).joined().contains("ORIGINAL_A_STATE"))
+                #expect(!input.map(\.content).joined().contains("FOREIGN_B_BODY"))
+                return try Self.goalVerdict(input, satisfied: true)
+            }
+            if turns == 1 { return .init(content: "", toolCalls: [rig.outer()]) }
+            rig.selectSecondary = true // Only an app-level re-selection would now choose B.
+            return .init(content: "Check the actual original source.", toolCalls: [])
+        })
+        defer { store.stop(); rig.client.unload() }
+        try await rig.start(store)
+        #expect(turns == 3 && store.phase == .needsInput && rig.canvas.commands.count == 1)
+        #expect(rig.secondaryCanvas.captureCount == 0 && rig.secondaryCanvas.commands.isEmpty)
+        #expect(rig.runtime.images.count == 2 && rig.opens == 1 && rig.closes == 1)
+    }
+
+    @Test(arguments: ["missing_effect", "wrong_read", "physical_count", "tool_request"])
+    func incompleteOrPhysicalDeliveryVerdictsCannotOverrideTheUnverifiedReceipt(_ defect: String) async throws {
+        let rig = try StoreRig(); defer { rig.remove() }; var turns = 0
+        let forbidden = rig.folder.appending(path: "not-written.txt")
+        let store = rig.store(complete: { input, tools, _ in
+            turns += 1
+            if input.first?.content.contains("ROLE: Independent goal assessment") == true {
+                #expect(tools.isEmpty)
+                var reply = try Self.goalVerdict(input, satisfied: true)
+                var object = try JSONDecoder().decode([String: JSONValue].self, from: Data(reply.content.utf8))
+                switch defect {
+                case "missing_effect": object["effect_ids"] = .array([])
+                case "wrong_read": object["read_ids"] = .array([.string(UUID().uuidString)])
+                case "physical_count": object["basis"] = .string("delivery_or_count")
+                default: reply.toolCalls = [.init(name: "write_file", arguments: ["path": .string(forbidden.path), "content": .string("must not dispatch")])]
+                }
+                reply.content = JSONValue.object(object).pretty; return reply
+            }
+            return turns == 1 ? .init(content: "", toolCalls: [rig.outer()]) : .init(content: "The requested state needs an independent check.", toolCalls: [])
+        })
+        defer { store.stop(); rig.client.unload() }
+        try await rig.start(store)
+        #expect(turns == 3 && store.phase == .needsInput && rig.canvas.commands.count == 1)
+        #expect(!FileManager.default.fileExists(atPath: forbidden.path))
+        #expect(rig.runtime.images.count == 2)
+    }
+
+    @Test func anUncoveredLegacyUnverifiedResultBlocksTheNativeGoalOverride() async throws {
+        let rig = try StoreRig(); defer { rig.remove() }; var turns = 0
+        let store = rig.store(complete: { input, _, _ in
+            turns += 1
+            #expect(input.first?.content.contains("ROLE: Independent goal assessment") != true)
+            if turns == 1 { return .init(content: "", toolCalls: [rig.outer()]) }
+            if turns == 2 { return .init(content: "", toolCalls: [.init(name: "calculate", arguments: ["expression": .string("1+1")])]) }
+            return .init(content: "The unrelated result remains unverified.", toolCalls: [])
+        }, execute: { call in
+            try #require(call.name == "calculate")
+            return .init(summary: "Inert unrelated unverified result.", evidence: "Synthetic result; no calculator or process was used.", verified: false)
+        })
+        defer { store.stop(); rig.client.unload() }
+        try await rig.start(store)
+        #expect(turns == 3 && store.phase == .needsInput && rig.canvas.commands.count == 1)
+        #expect(rig.runtime.images.count == 1)
+        #expect(try await rig.intents().filter { $0.toolName == NativeWindowReadTool.name }.isEmpty)
+    }
+
+    @Test func noInputReportUncertaintyCannotCreateGoalCoverage() async throws {
+        let rig = try StoreRig(); defer { rig.remove() }; rig.runtime.kind = .report; var turns = 0
+        let store = rig.store(complete: { input, _, _ in
+            turns += 1; #expect(input.first?.content.contains("ROLE: Independent goal assessment") != true)
+            return turns == 1 ? .init(content: "", toolCalls: [rig.outer()]) : .init(content: "The report is unverified.", toolCalls: [])
+        })
+        defer { store.stop(); rig.client.unload() }
+        try await rig.start(store)
+        #expect(turns == 2 && store.phase == .needsInput && rig.canvas.commands.isEmpty)
+        #expect(rig.runtime.images.count == 1)
+    }
+
+    @Test func unsavedOriginalEffectCannotMintGoalEligibilityOrRepeatInputDuringRepair() async throws {
+        let rig = try StoreRig(); defer { rig.remove() }; var turns = 0
+        let core = try await rig.history.journalForTesting()
+        await core.injectResultFault(.afterCommit, forToolName: NativeWindowControlTools.keyName)
+        let store = rig.store(complete: { input, _, _ in
+            turns += 1; #expect(input.first?.content.contains("ROLE: Independent goal assessment") != true)
+            return .init(content: "", toolCalls: [rig.outer()])
+        })
+        defer { store.stop(); rig.client.unload() }
+        try await rig.start(store)
+        #expect(turns == 1 && rig.canvas.commands.count == 1 && rig.runtime.images.count == 1)
+        #expect(store.phase != .idle)
+        try await rig.history.retryResultSaves()
+        #expect(turns == 1 && rig.canvas.commands.count == 1)
+        #expect(try await rig.intents().filter { $0.toolName == NativeWindowReadTool.name }.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func sourceDriftOrStopDuringGoalVerdictCannotPublishCompletionOrRepeatTheGesture(_ stop: Bool) async throws {
+        let rig = try StoreRig(); defer { rig.remove() }
+        var turns = 0, waiting: CheckedContinuation<Void, Never>?
+        let store = rig.store(complete: { input, tools, _ in
+            turns += 1
+            if input.first?.content.contains("ROLE: Independent goal assessment") == true {
+                #expect(tools.isEmpty)
+                await withCheckedContinuation { waiting = $0 }
+                return try Self.goalVerdict(input, satisfied: true)
+            }
+            return turns == 1 ? .init(content: "", toolCalls: [rig.outer()]) : .init(content: "Inspect the postcondition independently.", toolCalls: [])
+        })
+        defer { waiting?.resume(); store.stop(); rig.client.unload() }
+        store.configuration = .init(modelPath: rig.model.path); store.draft = "Leave the original owned window in the requested observable state."
+        let ticket = try #require(store.send(nativeReadRestrictions: [rig.admission]))
+        #expect(await ticket.waitForAcknowledgment() == .saved)
+        try await until { waiting != nil }
+        if stop { store.stop() } else { rig.canvas.sourceVersion += 1 }
+        waiting?.resume(); waiting = nil
+        await store.waitForConversationTaskToSettle()
+        #expect(turns == 3 && rig.canvas.commands.count == 1 && rig.runtime.images.count == 2)
+        #expect(store.phase != .idle)
+        #expect(!store.activity.contains { $0.name == "Requested state checked" && $0.status == "goal assessed" })
+        #expect(rig.opens == 1 && rig.closes == 1)
+        if stop {
+            store.resume(); await store.waitForConversationTaskToSettle()
+            #expect(store.phase == .needsInput && rig.canvas.commands.count == 1 && rig.runtime.images.count == 2)
+            #expect(turns == 4) // Same logical task keeps uncovered uncertainty; old owner is not adopted.
+        }
+    }
+
+    @Test func actualLateUncertainEffectAfterStopRemainsAnUncoveredObligationOnContinue() async throws {
+        let rig = try StoreRig(); defer { rig.remove() }; var turns = 0
+        let store = rig.store(complete: { input, _, _ in
+            turns += 1
+            #expect(input.first?.content.contains("ROLE: Independent goal assessment") != true)
+            return turns == 1 ? .init(content: "", toolCalls: [rig.outer()])
+                : .init(content: "The earlier input is still uncertain; no new input was requested.", toolCalls: [])
+        })
+        defer { store.stop(); rig.client.unload() }
+        rig.canvas.dispatchHook = { [weak store] in store?.stop() }
+        try await rig.start(store)
+        #expect(store.phase == .stopped && rig.canvas.commands.count == 1 && turns == 1)
+        rig.canvas.dispatchHook = nil
+        store.resume(); await store.waitForConversationTaskToSettle()
+        #expect(turns == 2 && store.phase == .needsInput && rig.canvas.commands.count == 1)
+        #expect(rig.runtime.images.count == 1)
+        let original = try #require(try await rig.intents().first { $0.toolName == NativeWindowControlTools.keyName })
+        #expect(try await rig.outcomes().contains { $0.invocationID == original.invocationID && $0.kind == .effectUncertain })
+    }
+
+    @Test func aPhysicalCountObjectiveCannotFinishFromAFalseObservedStateSelfLabel() async throws {
+        let rig = try StoreRig(); defer { rig.remove() }; var turns = 0
+        let originalValue = rig.canvas.field
+        let store = rig.store(complete: { input, tools, _ in
+            turns += 1
+            if input.first?.content.contains("ROLE: Independent goal assessment") == true {
+                #expect(tools.isEmpty)
+                // Adversarial: exact IDs/coverage, false physical-goal classification.
+                return try Self.goalVerdict(input, satisfied: true, basis: "observed_state")
+            }
+            return turns == 1 ? .init(content: "", toolCalls: [rig.outer()]) : .init(content: "The physical input requires proof.", toolCalls: [])
+        })
+        defer { store.stop(); rig.client.unload() }
+        store.configuration = .init(modelPath: rig.model.path)
+        store.draft = "Prove that the physical Left key was delivered exactly once. A preexisting editor state is not sufficient."
+        let ticket = try #require(store.send(nativeReadRestrictions: [rig.admission]))
+        #expect(await ticket.waitForAcknowledgment() == .saved)
+        await store.waitForConversationTaskToSettle()
+        #expect(turns == 3 && store.phase == .needsInput && rig.canvas.commands.count == 1)
+        #expect(rig.canvas.field.utf8.elementsEqual(originalValue.utf8))
+        #expect(store.messages.last?.text.contains("remain unverified") == true)
+        #expect(!store.activity.contains { $0.status == "goal assessed" })
+        let effect = try #require(try await rig.intents().first { $0.toolName == NativeWindowControlTools.keyName })
+        #expect(try await rig.outcomes().first { $0.invocationID == effect.invocationID }?.kind == .returnedUnverified)
+    }
+
+    @Test(arguments: ["source", "stop", "unsaved_source", "unsaved_stop"])
+    func auxiliaryReadCommitRevocationPublishesOnlyGenericFactsAndNeverItsPrivateBody(_ change: String) async throws {
+        let rig = try StoreRig(); defer { rig.remove() }
+        let core = try await rig.history.journalForTesting(), barrier = GoalCommitBarrier()
+        let sentinel = rig.runtime.secret
+        var turns = 0, resumed = false
+        if change.hasPrefix("unsaved") { await core.injectResultFault(.afterCommit, forToolName: NativeWindowReadTool.name) }
+        await core.atNextResultBoundary(.afterCommit, forToolName: NativeWindowReadTool.name) { barrier.pause() }
+        let store = rig.store(complete: { input, _, _ in
+            turns += 1
+            #expect(input.first?.content.contains("ROLE: Independent goal assessment") != true)
+            if resumed {
+                #expect(!input.map(\.content).joined().contains(sentinel))
+                return .init(content: "The old input remains uncertain; no replacement or replay was requested.", toolCalls: [])
+            }
+            return turns == 1 ? .init(content: "", toolCalls: [rig.outer()]) : .init(content: "Check the state independently.", toolCalls: [])
+        })
+        defer { barrier.release(); store.stop(); rig.client.unload() }
+        store.configuration = .init(modelPath: rig.model.path); store.draft = "Leave the owned source in the requested observable state."
+        let ticket = try #require(store.send(nativeReadRestrictions: [rig.admission]))
+        #expect(await ticket.waitForAcknowledgment() == .saved)
+        do {
+            try await until { barrier.entered }
+            if change.hasSuffix("stop") { store.stop() } else { rig.canvas.sourceVersion += 1 }
+            barrier.release(); await store.waitForConversationTaskToSettle()
+            #expect(turns == 2 && rig.canvas.commands.count == 1 && rig.runtime.images.count == 2)
+            #expect(store.phase != .idle)
+            #expect(!store.activity.contains { $0.detail.contains(sentinel) })
+            #expect(!store.messages.contains { $0.text.contains(sentinel) })
+            if change.hasPrefix("unsaved") { try await rig.history.retryResultSaves() }
+            resumed = true; store.resume(); await store.waitForConversationTaskToSettle()
+            #expect(turns == 3 && store.phase == .needsInput && rig.canvas.commands.count == 1)
+            #expect(!store.activity.contains { $0.detail.contains(sentinel) })
+            #expect(try await rig.intents().filter { $0.toolName == NativeWindowReadTool.name }.count == 1)
+        } catch {
+            store.stop(); barrier.release(); await store.waitForConversationTaskToSettle(); throw error
+        }
+    }
+
+    private static func goalVerdict(_ input: [ModelMessage], satisfied: Bool, basis: String = "observed_state") throws -> ModelReply {
+        let marker = "App-owned effect coverage IDs (not semantic proof): "
+        let text = try #require(input.first { $0.role == "user" && $0.content.contains(marker) }?.content)
+        let start = try #require(text.range(of: marker))
+        let ids = try JSONDecoder().decode([String].self, from: Data(text[start.upperBound...].utf8))
+        let readID = try #require(input.last { $0.role == "tool" }?.toolCallID)
+        return .init(content: JSONValue.object(["goal": .string(satisfied ? "satisfied" : "not_established"),
+            "basis": .string(basis), "coverage": .string("whole_objective"),
+            "read_ids": .array([.string(readID)]), "effect_ids": .array(ids.map(JSONValue.string))]).pretty, toolCalls: [])
     }
 
     @Test func executorUsesTheSameServiceWhileNavigatorAndCriticRemainReadOnly() async throws {
@@ -84,6 +365,65 @@ import Testing
         try await rig.start(store)
         #expect(turns >= 3 && rig.canvas.commands.isEmpty && rig.runtime.images.count == 1)
         #expect(DesktopActionBatch.invalidatesReferences(rig.outer()))
+        store.stop(); rig.client.unload()
+    }
+
+    @Test func ordinaryComposerOmitsTheWholeNativeGroupWhenItsOriginalSourceChangesBeforeNextInference() async throws {
+        let rig = try StoreRig(); defer { rig.remove() }
+        let secret = "PRIVATE_ORDINARY_NATIVE_" + UUID().uuidString
+        rig.answers[rig.canvas.sourceID] = secret
+        var turns = 0, closed = false
+        let store = rig.store(complete: { input, _, _ in
+            turns += 1
+            if turns == 1 {
+                return .init(content: "", toolCalls: [.init(id: "ordinary-native-read", name: NativeWindowReadTool.name,
+                    arguments: ["bundle_id": .string(rig.canvas.application.bundleID), "question": .string("Read only the admitted original source.")])])
+            }
+            #expect(closed && !input.map(\.content).joined().contains(secret))
+            #expect(!input.flatMap(\.toolCalls).contains { $0.id == "ordinary-native-read" })
+            #expect(ContextWindow.isWellFormed(input.filter { $0.role != "system" }))
+            #expect(input.contains { $0.content.contains("omitted_complete_groups") })
+            return .init(content: "The earlier source changed; no input was repeated.", toolCalls: [])
+        })
+        rig.sourceValidationHook = { [weak store] source in
+            guard let store, source == rig.canvas.sourceID, !closed, store.phase == .thinking,
+                  rig.runtime.images.count == 1 else { return }
+            closed = true; rig.canvas.sourceVersion += 1
+        }
+        try await rig.start(store)
+        #expect(turns == 2 && rig.opens == 1 && rig.closes == 1 && rig.runtime.images.count == 1)
+        #expect(rig.canvas.commands.isEmpty && rig.canvas.textWrites == 0)
+        #expect(store.activity.contains { $0.detail.contains(secret) })
+        store.stop(); rig.client.unload()
+    }
+
+    @Test(arguments: [false, true])
+    func ordinaryLateSourceDerivedWriteIsNeverAcceptedAfterDriftOrStop(_ stop: Bool) async throws {
+        let rig = try StoreRig(); defer { rig.remove() }
+        let output = rig.folder.appending(path: "must-not-exist.txt")
+        var waiting: CheckedContinuation<Void, Never>?, turns = 0
+        let store = rig.store(complete: { input, _, _ in
+            turns += 1
+            if turns == 1 { return .init(content: "", toolCalls: [.init(id: "read-before-write", name: NativeWindowReadTool.name,
+                arguments: ["bundle_id": .string(rig.canvas.application.bundleID), "question": .string("Inspect the original source before deciding.")])]) }
+            #expect(input.contains { $0.role == "tool" && $0.content.contains(rig.runtime.secret) })
+            await withCheckedContinuation { waiting = $0 }
+            return .init(content: "Late source-derived narration.", toolCalls: [.init(id: "late-derived-write", name: "write_file",
+                arguments: ["path": .string(output.path), "content": .string(rig.runtime.secret)])])
+        })
+        store.configuration = .init(modelPath: rig.model.path)
+        store.grants = [.init(path: rig.folder.path, writable: true)]
+        store.draft = "Inspect the admitted source, then decide whether to write only the owned output."
+        let ticket = try #require(store.send(nativeReadRestrictions: [rig.admission]))
+        #expect(await ticket.waitForAcknowledgment() == .saved)
+        try await until { waiting != nil }
+        if stop { store.stop() } else { rig.canvas.sourceVersion += 1 }
+        waiting?.resume(); waiting = nil
+        try await until { !store.isRunning }
+        #expect(turns == 2 && !FileManager.default.fileExists(atPath: output.path))
+        #expect(!store.activity.contains { $0.name == "write_file" && $0.status == "requested" })
+        #expect(rig.canvas.commands.isEmpty && rig.canvas.textWrites == 0 && rig.runtime.images.count == 1)
+        #expect(store.phase == (stop ? .stopped : .failed))
         store.stop(); rig.client.unload()
     }
 
@@ -472,6 +812,13 @@ import Testing
             }
             nonisolated func cancel() {}
         }
+    }
+    nonisolated private final class GoalCommitBarrier: @unchecked Sendable {
+        private let lock = NSLock(), semaphore = DispatchSemaphore(value: 0)
+        private var began = false, released = false
+        var entered: Bool { lock.lock(); defer { lock.unlock() }; return began }
+        func pause() { lock.lock(); began = true; lock.unlock(); _ = semaphore.wait(timeout: .now() + 8) }
+        func release() { lock.lock(); let signal = !released; released = true; lock.unlock(); if signal { semaphore.signal() } }
     }
     nonisolated private final class Clock: @unchecked Sendable {
         private let lock = NSLock(); private var value: TimeInterval = 0

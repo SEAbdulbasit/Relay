@@ -61,7 +61,13 @@ struct ArtifactToolIntegrationTests {
                 #expect(document.pageCount == 1)
                 #expect(document.string?.contains(title) == true)
                 #expect(document.string?.contains("Second line: 123.") == true)
-                let read = try await tools.execute(ToolCall(name: "read_file", arguments: ["path": .string(output.path)]))
+                let extraction = FileExtractionWorker()
+                let read: ToolResult
+                do {
+                    read = try await tools.execute(ToolCall(name: "read_file", arguments: ["path": .string(output.path)]), fileReadWorker: extraction)
+                    await extraction.drain()
+                } catch { await extraction.drain(); throw error }
+                #expect(extraction.activeCount == 0)
                 #expect(read.verified)
                 #expect(read.summary.contains("Exact synthetic content."))
                 #expect(read.evidence.contains("PDFKit"))
@@ -152,18 +158,29 @@ struct ArtifactToolIntegrationTests {
         try imageData(text: "SCOPE OCR 321").write(to: image)
         let tools = MacTools()
         tools.grants = [ScopeGrant(path: allowed.path)]
-        let result = try await tools.execute(ToolCall(name: "read_file", arguments: ["path": .string(image.path)]))
-        #expect(result.verified)
-        #expect(result.summary.uppercased().contains("SCOPE"))
-        #expect(result.summary.contains("321"))
-        #expect(result.evidence.contains("Vision OCR locally"))
-        #expect(result.evidence.contains("may contain errors"))
-        let unselected = outside.appendingPathComponent("secret.png")
-        try imageData(text: "UNSELECTED DATA").write(to: unselected)
-        let link = allowed.appendingPathComponent("escape.png")
-        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: unselected)
-        for url in [unselected, link] {
-            await #expect(throws: (any Error).self) { try await tools.execute(ToolCall(name: "read_file", arguments: ["path": .string(url.path)])) }
+        try await withArtifactReceiptState(root: root, grants: tools.grants) { receipts in
+            let actual = try await receipts.read(tools, call: ToolCall(name: "read_file", arguments: ["path": .string(image.path)]))
+            let result = actual.result
+            #expect(result.verified)
+            #expect(result.summary.uppercased().contains("SCOPE"))
+            #expect(result.summary.contains("321"))
+            #expect(result.evidence.contains("Vision OCR locally"))
+            #expect(result.evidence.contains("may contain errors"))
+            try await actual.proof.validate()
+            // Trailing raw bytes may leave OCR output unchanged; only the actual
+            // parser-input receipt can establish this source has changed.
+            var changed = try Data(contentsOf: image)
+            changed.append(contentsOf: [0x52, 0x41, 0x57, 0x01])
+            try changed.write(to: image)
+            await #expect(throws: FileExtractionWorker.Failure.unavailable) { try await actual.proof.validate() }
+            await #expect(throws: FileExtractionWorker.Failure.unavailable) { _ = try await receipts.admit(actual) }
+            let unselected = outside.appendingPathComponent("secret.png")
+            try imageData(text: "UNSELECTED DATA").write(to: unselected)
+            let link = allowed.appendingPathComponent("escape.png")
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: unselected)
+            for url in [unselected, link] {
+                await #expect(throws: (any Error).self) { _ = try await receipts.read(tools, call: ToolCall(name: "read_file", arguments: ["path": .string(url.path)])) }
+            }
         }
     }
 
@@ -187,12 +204,23 @@ struct ArtifactToolIntegrationTests {
         #expect(PDFDocument(url: url)?.string?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false)
         let tools = MacTools()
         tools.grants = [ScopeGrant(path: folder.path)]
-        let result = try await tools.execute(ToolCall(name: "read_file", arguments: ["path": .string(url.path)]))
-        #expect(result.verified)
-        #expect(result.evidence.contains("OCR"))
-        #expect(result.summary.contains("123"))
-        #expect(result.summary.contains("first 3 of 4 pages"))
-        #expect(!result.summary.contains("FOURTH"))
+        try await withArtifactReceiptState(root: folder, grants: tools.grants) { receipts in
+            let actual = try await receipts.read(tools, call: ToolCall(name: "read_file", arguments: ["path": .string(url.path)]))
+            let result = actual.result
+            #expect(result.verified)
+            #expect(result.evidence.contains("OCR"))
+            #expect(result.summary.contains("123"))
+            #expect(result.summary.contains("first 3 of 4 pages"))
+            #expect(!result.summary.contains("FOURTH"))
+            try await actual.proof.validate()
+            // Keep the original OCR/page-limit assertions and independently mutate
+            // the exact PDF snapshot bytes after the settled extraction.
+            var changed = try Data(contentsOf: url)
+            changed.append(Data("\n% actual raw input changed\n".utf8))
+            try changed.write(to: url)
+            await #expect(throws: FileExtractionWorker.Failure.unavailable) { try await actual.proof.validate() }
+            await #expect(throws: FileExtractionWorker.Failure.unavailable) { _ = try await receipts.admit(actual) }
+        }
     }
 
     @Test func invalidOrOversizedSelectedImageFailsWithoutFabricatingText() async throws {
@@ -206,4 +234,70 @@ struct ArtifactToolIntegrationTests {
             await #expect(throws: (any Error).self) { try await tools.execute(ToolCall(name: "read_file", arguments: ["path": .string(url.path)])) }
         }
     }
+}
+
+/// The existing owned OCR artifacts are read through the real parser worker,
+/// explicit execution scope, SQLite result checkpoint and receipt registry.
+/// No model/provider/desktop runtime or synthetic source proof is substituted.
+@MainActor private final class ArtifactReceiptState {
+    struct Returned {
+        let call: ToolCall
+        let proposalID: UUID
+        let result: ToolResult
+        let proof: ModelInputSourceProof
+    }
+    let worker = FileExtractionWorker(extractionTimeout: .seconds(30), validationTimeout: .seconds(5))
+    private let history: AssistantConversationHistory
+    private let registry = FileReadResultSources()
+    private let run: AssistantConversationHistory.Run
+    private let context: MultiAgentContinuation.Context
+    private let grants: [ScopeGrant]
+    private var live = true
+    init(root: URL, grants: [ScopeGrant]) throws {
+        let taskID = UUID()
+        history = AssistantConversationHistory(stateURL: root.appendingPathComponent("ocr-receipt-state.json"))
+        run = try .init(logicalTaskID: taskID, cause: .newRequest)
+        context = .init(logicalTaskID: taskID, configuration: .init(), scopeID: UUID(), sourceRevision: 0)
+        self.grants = grants
+    }
+    func read(_ tools: MacTools, call: ToolCall) async throws -> Returned {
+        let proposal = UUID()
+        let scope = try FileReadExecutionScope(run: run, proposalID: proposal, call: call, context: context,
+            currentContext: { [weak self] in self?.context }, grants: { [weak self] in self?.grants ?? [] },
+            isCurrent: { [weak self] in self?.live == true })
+        var saved: AssistantConversationHistory.FileReadSettlement?, registrationFailure: (any Error)?
+        let result = try await history.perform(call, proposalID: proposal, run: run, journalEffect: .readOnly,
+            validate: { try scope.validateCurrent(call: call) },
+            action: { try await tools.execute(call, fileReadScope: scope, fileReadWorker: self.worker) },
+            result: { $0 }, unsavedResult: { _ in Issue.record("Owned OCR read result unexpectedly failed to settle.") },
+            settledFileResult: { [self] actual, settlement in
+                saved = settlement
+                do { _ = try registry.registerSettled(call: call, result: actual, run: run,
+                    proposalID: proposal, context: context, settlement: settlement) }
+                catch { registrationFailure = error }
+            })
+        if let registrationFailure { throw registrationFailure }
+        _ = try #require(saved)
+        let proof = try await registry.sourceProof(call: call, result: result, run: run, proposalID: proposal, context: context)
+        try await proof.validate()
+        return Returned(call: call, proposalID: proposal, result: result, proof: proof)
+    }
+    func admit(_ actual: Returned) async throws -> ModelInputSourceProof {
+        try await registry.sourceProof(call: actual.call, result: actual.result, run: run,
+            proposalID: actual.proposalID, context: context)
+    }
+    func close() async throws {
+        live = false
+        registry.reset()
+        await worker.drain()
+        #expect(worker.activeCount == 0)
+        try await history.close()
+    }
+}
+
+@MainActor private func withArtifactReceiptState(root: URL, grants: [ScopeGrant],
+    body: @MainActor (ArtifactReceiptState) async throws -> Void) async throws {
+    let state = try ArtifactReceiptState(root: root, grants: grants)
+    do { try await body(state); try await state.close() }
+    catch { try? await state.close(); throw error }
 }

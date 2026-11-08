@@ -389,6 +389,7 @@ import Testing
             observations: root.appendingPathComponent("proposal-observations", isDirectory: true))
         let history = AssistantConversationHistory(stateURL: root.appendingPathComponent("state/state.json"))
         let proofWorker = SelectedFileProofWorker()
+        let extractionWorker = FileExtractionWorker()
         var ownedStore: AssistantStore?, ownedClient: LocalModelClient?
         var watchdog: Task<Void, Never>?
         var primaryFailure: (any Error)?
@@ -416,7 +417,13 @@ import Testing
                 await core.injectFault(.beforeCommit)
             }
             return result
-        }, modelClient: client, multiAgent: true, runBudgetFactory: { TaskRunBudget(activeLimit: 240, lifetimeLimit: 300) })
+        }, executeFileRead: { call, scope in
+            guard call.name == "read_file", let raw = call.arguments["path"]?.string,
+                  try oracle.matchesOwnedDestination(raw) else {
+                oracle.rejected += 1; throw ContinuationModelOracle.Failure.unexpectedProposal
+            }
+            return try await productionFiles.execute(call, fileReadScope: scope, fileReadWorker: extractionWorker)
+        }, fileReadWorker: extractionWorker, modelClient: client, multiAgent: true, runBudgetFactory: { TaskRunBudget(activeLimit: 240, lifetimeLimit: 300) })
         ownedStore = store
         store.configuration = .init(modelPath: model.path, computeBackend: "gpu", model: "Gemma 4 E4B")
         store.grants = [ScopeGrant(path: selected.path, writable: true)]
@@ -472,10 +479,12 @@ import Testing
         ownedStore?.stop()
         await ownedStore?.waitForConversationTaskToSettle()
         await proofWorker.drain()
+        await extractionWorker.drain()
         var historyClosed = false
         do { try await history.close(); historyClosed = true } catch { if primaryFailure == nil { primaryFailure = error } }
         ownedClient?.unload()
         let cleanup: [String: Any] = ["taskDrained": true, "proofWorkerDrained": proofWorker.activeCount == 0,
+            "fileExtractionWorkerDrained": extractionWorker.activeCount == 0,
             "modelUnloaded": true, "historyClosed": historyClosed, "thrownFailure": primaryFailure != nil,
             "generations": oracle.generations, "writeProposals": oracle.writeProposals,
             "writeDispatches": oracle.writeDispatches, "verifiedWrites": oracle.verifiedWrites,

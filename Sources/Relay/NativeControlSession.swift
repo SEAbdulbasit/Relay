@@ -249,7 +249,11 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
             let validateSource: @MainActor () throws -> Void = { try observer.validateOriginalSource(lease) }
             let validateCapture: @MainActor () throws -> Void = { try observer.validateTarget(lease) }
             let validateInput: @MainActor () throws -> Void = { try observer.validateForInput(lease) }
-            let target = Target(sourceID: lease.sourceID, application: snapshot.application, window: snapshot.window,
+            // A retained source may outlive this image generation. Escaping
+            // target closures keep only these immutable identity values.
+            let applicationIdentity = snapshot.application
+            let windowInfo = snapshot.window
+            let target = Target(sourceID: lease.sourceID, application: applicationIdentity, window: windowInfo,
                 validateOriginalSource: validateSource, validateForInput: validateInput,
                 capture: { reserved in
                     if let reserved { return try await observer.observeOriginal(lease, reserved: reserved) }
@@ -257,7 +261,7 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
                 }, isCurrent: { observer.isCurrent($0) },
                 captureFocusForReview: { authorization in
                     try authorization()
-                    return try Self.captureFocusForReview(application: snapshot.application, originalWindow: originalWindow,
+                    return try Self.captureFocusForReview(application: applicationIdentity, originalWindow: originalWindow,
                         validateSource: { try authorization(); try validateSource() },
                         validateCapture: { try authorization(); try validateCapture() },
                         validateInput: { try authorization(); try validateInput() })
@@ -265,14 +269,14 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
                     await observer.restoreReviewedOriginalFocus(lease, authorization: authorization, gate: gate, notAfter: deadline)
                 }, captureInsertionForReview: { gate, authorization in
                     try authorization(); try validateCapture()
-                    return try NativeFocusedAXInsertion.captureForReview(application: snapshot.application,
+                    return try NativeFocusedAXInsertion.captureForReview(application: applicationIdentity,
                         originalWindow: originalWindow,
                         validateOriginalSource: { try authorization(); try validateSource() },
                         validateForInput: { try authorization(); try validateInput() },
                         sessionIsActive: active, admissionGate: gate)
                 }, policyTarget: {
                     try validateSource()
-                    return NativeOriginalPolicyTarget(sourceID: lease.sourceID, application: snapshot.application,
+                    return NativeOriginalPolicyTarget(sourceID: lease.sourceID, application: applicationIdentity,
                         originalWindow: originalWindow, validateOriginalSource: validateSource)
                 })
             try target.validateOriginalSource()

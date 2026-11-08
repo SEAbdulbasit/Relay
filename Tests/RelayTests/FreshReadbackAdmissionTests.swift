@@ -12,6 +12,7 @@ import Testing
 }
 @MainActor private final class FreshReadbackFixture {
     let root: URL, file: URL, worker: SelectedFileProofWorker, book: MultiAgentContinuation
+    let extractionWorker = FileExtractionWorker()
     let initialContext: MultiAgentContinuation.Context
     let scope: FreshReadbackScope
     init(data: Data = Data("OWNED caf\u{65}\u{301} 你好\n".utf8)) throws {
@@ -27,7 +28,7 @@ import Testing
     func read(_ url: URL? = nil) async throws -> (Relay.ToolCall, ToolResult) {
         let call = Relay.ToolCall(id: UUID().uuidString, name: "read_file", arguments: ["path": .string((url ?? file).path)])
         let tools = MacTools(); tools.grants = scope.grants
-        return (call, try await tools.execute(call))
+        return (call, try await tools.execute(call, fileReadWorker: extractionWorker))
     }
     func admission(_ call: Relay.ToolCall, _ result: ToolResult) async throws -> (@MainActor @Sendable () async throws -> Void) {
         let context = scope.context ?? initialContext, scope = scope
@@ -48,10 +49,12 @@ import Testing
         try await body(fixture)
         fixture.scope.active = false; fixture.scope.context = nil
         await fixture.worker.drain()
+        await fixture.extractionWorker.drain()
         try FileManager.default.removeItem(at: fixture.root)
     } catch {
         fixture.scope.active = false; fixture.scope.context = nil
         await fixture.worker.drain()
+        await fixture.extractionWorker.drain()
         try? FileManager.default.removeItem(at: fixture.root)
         throw error
     }
@@ -200,7 +203,7 @@ private final class FreshReadBarrier: @unchecked Sendable {
             let run = try AssistantConversationHistory.Run(logicalTaskID: f.initialContext.logicalTaskID, cause: .newRequest)
             let prepared = try await f.book.prepare(call, proposalID: UUID(), run: run, context: f.initialContext, grants: { f.scope.grants })
             let tools = MacTools(); tools.grants = f.scope.grants
-            let result = try await tools.execute(call)
+            let result = try await tools.execute(call, fileReadWorker: f.extractionWorker)
             await f.book.record(result, prepared: prepared, grants: { f.scope.grants }); f.book.acknowledge(prepared)
             let snapshot = try await f.book.snapshot(context: f.initialContext, isCurrent: { true }); try await snapshot.validate()
             #expect(snapshot.included == 1 && snapshot.omitted == 0)
@@ -224,7 +227,7 @@ private final class FreshReadBarrier: @unchecked Sendable {
             let prepared = try #require(try await f.book.prepare(call, proposalID: UUID(), run: run, context: f.initialContext, grants: { f.scope.grants }))
             if kind == "ABA" { try Data("STATE_B".utf8).write(to: file) }
             let tools = MacTools(); tools.grants = f.scope.grants
-            var result = try await tools.execute(call)
+            var result = try await tools.execute(call, fileReadWorker: f.extractionWorker)
             if kind == "ABA" { try #require(result.summary == "STATE_B"); try Data("STATE_A".utf8).write(to: file) }
             if kind == "mismatch" {
                 // The old actual pre-read proof still validates: the selected

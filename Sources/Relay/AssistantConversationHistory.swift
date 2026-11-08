@@ -13,6 +13,29 @@ import RelayJournal
             relation = try JournalRunRelation(logicalTaskID: logicalTaskID, predecessorRunID: predecessor?.taskID, cause: cause)
         }
     }
+    /// Process-only proof of this bridge's actual successful result checkpoint.
+    /// Only this file can mint it, after the saved record is returned by SQLite.
+    final class FileReadSettlement {
+        let receipt: FileExtractionReceipt
+        let runID: UUID, attemptID: UUID, proposalID: UUID
+        let providerID: Data, callDigest: String, resultDigest: Data
+        let sequence: Int64
+        fileprivate init?(call: ToolCall, result: ToolResult, run: Run, intent: JournalIntent, record: JournalRecord) {
+            guard call.name == "read_file", result.verified, let receipt = result.fileExtractionReceipt,
+                  record.event.taskID == run.taskID, record.event.attemptID == run.attemptID,
+                  case let .result(outcome) = record.event.payload,
+                  outcome.kind == .returnedVerified, outcome.invocationID == intent.invocationID,
+                  outcome.callDigest == intent.callDigest, record.sequence > 0 else { return nil }
+            self.receipt = receipt; runID = run.taskID; attemptID = run.attemptID; proposalID = intent.proposalID
+            providerID = Data(call.id.utf8); callDigest = ToolPolicy.fingerprint(call)
+            resultDigest = FileExtractionReceipt.resultDigest(for: result); sequence = record.sequence
+        }
+        func matches(call: ToolCall, result: ToolResult, run: Run, proposalID: UUID) -> Bool {
+            result.fileExtractionReceipt === receipt && run.taskID == runID && run.attemptID == attemptID
+                && self.proposalID == proposalID && Data(call.id.utf8) == providerID
+                && ToolPolicy.fingerprint(call) == callDigest && FileExtractionReceipt.resultDigest(for: result) == resultDigest
+        }
+    }
     struct Restored { let messages: [ChatMessage]; let activity: [ActivityEntry]; let interrupted: Bool; let latestOutcome: JournalTaskOutcome? }
     private struct Pending { let run: Run; let message: ChatMessage; let text: JournalVisibleText }
     private struct Opened: Sendable { let journal: ConversationJournal; let scope: JournalScope; let records: [JournalRecord]; let interrupted: Bool }
@@ -184,7 +207,8 @@ import RelayJournal
                          unsavedResult: @escaping @MainActor (ToolResult) -> Void,
                          journalOutcome: (@MainActor (Output, JournalIntent) -> JournalToolOutcome)? = nil,
                          failureOutcome: (@MainActor (any Error, JournalIntent) -> JournalToolOutcome?)? = nil,
-                         metadataFailure: @escaping @MainActor (ToolResult) -> Void = { _ in }) async throws -> Output {
+                         metadataFailure: @escaping @MainActor (ToolResult) -> Void = { _ in },
+                         settledFileResult: @escaping @MainActor (ToolResult, FileReadSettlement) -> Void = { _,_ in }) async throws -> Output {
         _ = try await flush(); let opened = try await load(); try await start(run, opened: opened)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys,.withoutEscapingSlashes]
         let encoded = try encoder.encode(call); guard encoded.count <= 128 * 1024 else { throw JournalError.tooLarge }
@@ -193,9 +217,10 @@ import RelayJournal
         let event = JournalEvent(id: try JournalOpaqueID(UUID().uuidString), taskID: run.taskID, attemptID: run.attemptID, createdAtMilliseconds: Self.nowMilliseconds, payload: .intent(intent))
         let checkpoint = checkpoints[run.taskID] ?? JournalDispatchCheckpoint(journal: opened.journal)
         checkpoints[run.taskID] = checkpoint
-        var output: Output?, actionError: (any Error)?, serializationError: (any Error)?
+        var output: Output?, observedOutput: ToolResult?, actionError: (any Error)?, serializationError: (any Error)?
+        let savedResult: JournalRecord
         do {
-        _ = try await checkpoint.execute(event, expectedScope: opened.scope, validate: validate, admitAction: admitAction, action: {
+        savedResult = try await checkpoint.execute(event, expectedScope: opened.scope, validate: validate, admitAction: admitAction, action: {
             let value: Output
             do { value = try await action() }
             catch {
@@ -204,6 +229,7 @@ import RelayJournal
             }
             output = value
             let observed = result(value)
+            observedOutput = observed
             if let journalOutcome { return journalOutcome(value, intent) }
             do {
                 let references = try observed.artifactPath.map { [try JournalArtifactReference(visiblePath: $0)] } ?? []
@@ -233,7 +259,12 @@ import RelayJournal
             throw serializationError
         }
         if let actionError { throw actionError }
-        guard let output else { throw JournalError.invalidEvent }; return output
+        guard let output else { throw JournalError.invalidEvent }
+        if let observed = observedOutput,
+           let settlement = FileReadSettlement(call: call, result: observed, run: run, intent: intent, record: savedResult) {
+            settledFileResult(observed, settlement)
+        }
+        return output
     }
     func prepare(_ run: Run) async throws {
         _ = try await flush(); let opened = try await load(); try await start(run, opened: opened)

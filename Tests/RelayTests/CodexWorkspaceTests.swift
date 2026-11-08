@@ -60,27 +60,49 @@ struct CodexWorkspaceTests {
     }
 
     @Test func hostedWorkspaceExcludesPriorLocalMessagesGrantsAndMemory() async throws {
-        let path = "/synthetic/RELAY_PRIVATE_GRANT.txt"
-        let artifact = "/synthetic/RELAY_PRIVATE_ARTIFACT.txt"
+        let temporary = FileManager.default.temporaryDirectory.appending(path: "relay-provider-isolation-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        let root = try ToolPolicy.canonicalURL(temporary.path)
+        let source = root.appending(path: "RELAY_PRIVATE_GRANT.txt")
+        let artifactURL = root.appending(path: "RELAY_PRIVATE_ARTIFACT.txt")
+        let path = source.path, artifact = artifactURL.path
+        let sourceText = "RELAY_PRIOR_LOCAL_RESULT\nRELAY_PRIOR_LOCAL_EVIDENCE"
+        try Data(sourceText.utf8).write(to: source)
         let read = ToolCall(id: "local-read", name: "read_file", arguments: ["path": .string(path)])
+        let write = ToolCall(id: "local-write", name: "write_file", arguments: ["path": .string(artifact), "content": .string("OWNED_PROVIDER_ARTIFACT")])
         let markers = ["RELAY_PRIOR_LOCAL_PROMPT", "RELAY_PRIVATE_GRANT", "RELAY_PRIVATE_MEMORY",
                        "RELAY_PRIOR_LOCAL_RESULT", "RELAY_PRIOR_LOCAL_EVIDENCE", "RELAY_PRIOR_LOCAL_REPLY", "RELAY_PRIVATE_ARTIFACT"]
-        var localTurns = 0
+        let tools = MacTools(), grants = [ScopeGrant(path: root.path, writable: true)]
+        tools.grants = grants
+        let worker = FileExtractionWorker(extractionTimeout: .seconds(5), validationTimeout: .seconds(5))
+        let history = AssistantConversationHistory(stateURL: nil)
+        var localTurns = 0, reads = 0, writes = 0
         var received: [[ModelMessage]] = []
         var definitions: [ToolDefinition] = []
         let store = AssistantStore(
             persistenceURL: nil,
-            complete: { _, _, _ in
+            complete: { input, _, _ in
                 localTurns += 1
-                return localTurns == 1
-                    ? ModelReply(content: "", toolCalls: [read])
-                    : ModelReply(content: "RELAY_PRIOR_LOCAL_REPLY", toolCalls: [])
+                switch localTurns {
+                case 1: return ModelReply(content: "", toolCalls: [read])
+                case 2:
+                    let readback = try #require(input.first { $0.role == "tool" && $0.toolCallID == read.id })
+                    let feedback = try JSONDecoder().decode(ToolResult.self, from: Data(readback.content.utf8))
+                    #expect(feedback.summary == sourceText && feedback.verified)
+                    return ModelReply(content: "RELAY_PRIOR_LOCAL_REPLY", toolCalls: [])
+                case 3: return ModelReply(content: "", toolCalls: [write])
+                default: return ModelReply(content: "The owned artifact is ready.", toolCalls: [])
+                }
             },
+            conversationHistory: history,
             execute: { call in
-                #expect(call == read)
-                return ToolResult(summary: "RELAY_PRIOR_LOCAL_RESULT", evidence: "RELAY_PRIOR_LOCAL_EVIDENCE",
-                                  verified: true, artifactPath: artifact)
+                #expect(call == write); writes += 1
+                return try await tools.execute(call, fileReadWorker: worker)
             },
+            executeFileRead: { call, scope in
+                #expect(call == read); reads += 1
+                return try await tools.execute(call, fileReadScope: scope, fileReadWorker: worker)
+            }, fileReadWorker: worker,
             codexComplete: { input, tools in
                 received.append(input)
                 definitions = tools
@@ -88,32 +110,47 @@ struct CodexWorkspaceTests {
             },
             codexCheck: {}
         )
-        defer { if store.isRunning { store.stop() } }
-        store.grants = [ScopeGrant(path: path)]
-        store.memories = [MemoryItem(text: "RELAY_PRIVATE_MEMORY")]
-        store.draft = "Read the selected fixture. RELAY_PRIOR_LOCAL_PROMPT"
-        store.send()
-        await settle(store)
-        #expect(localTurns == 2)
-        #expect(store.messages.last?.text.contains("RELAY_PRIOR_LOCAL_RESULT") == true)
-        #expect(store.messages.last?.artifacts == [artifact])
+        do {
+            store.grants = grants
+            store.memories = [MemoryItem(text: "RELAY_PRIVATE_MEMORY")]
+            store.draft = "Read the selected fixture. RELAY_PRIOR_LOCAL_PROMPT"
+            store.send()
+            await settle(store)
+            #expect(localTurns == 2 && reads == 1 && writes == 0)
+            #expect(store.messages.last?.text.contains("RELAY_PRIOR_LOCAL_RESULT") == true)
+            store.draft = "Write the owned provider-isolation artifact."
+            store.send()
+            await settle(store)
+            #expect(localTurns == 5 && reads == 1 && writes == 1)
+            let displayedArtifacts = store.messages.last?.artifacts ?? []
+            let expectedArtifacts = [artifact]
+            #expect(displayedArtifacts == expectedArtifacts)
+            #expect(store.phase == .idle && store.errorMessage == nil)
+            #expect(try Data(contentsOf: artifactURL) == Data("OWNED_PROVIDER_ARTIFACT".utf8))
 
-        await store.selectWorkspaceCodex()
-        let current = "Answer this hosted fixture question."
-        store.draft = current
-        store.send(useWorkspaceProvider: true)
-        await settle(store)
+            await store.selectWorkspaceCodex()
+            let current = "Answer this hosted fixture question."
+            store.draft = current
+            store.send(useWorkspaceProvider: true)
+            await settle(store)
 
-        #expect(received.count == 1)
-        let input = try #require(received.first)
-        #expect(input.map(\.role) == ["system", "user"])
-        #expect(input.last?.content == current)
-        #expect(input.allSatisfy { $0.toolCalls.isEmpty && $0.toolCallID == nil })
-        let wire = String(decoding: try JSONEncoder().encode(input), as: UTF8.self)
-            + String(decoding: try JSONEncoder().encode(definitions), as: UTF8.self)
-        #expect(markers.allSatisfy { !wire.contains($0) })
-        #expect(!definitions.map(\.name).contains("read_file"))
-        #expect(store.messages.last?.text.hasPrefix("Hosted fixture answer.") == true)
+            #expect(received.count == 1)
+            let input = try #require(received.first)
+            #expect(input.map(\.role) == ["system", "user"])
+            #expect(input.last?.content == current)
+            #expect(input.allSatisfy { $0.toolCalls.isEmpty && $0.toolCallID == nil })
+            let wire = String(decoding: try JSONEncoder().encode(input), as: UTF8.self)
+                + String(decoding: try JSONEncoder().encode(definitions), as: UTF8.self)
+            #expect(markers.allSatisfy { !wire.contains($0) })
+            #expect(!definitions.map(\.name).contains("read_file"))
+            #expect(store.messages.last?.text.hasPrefix("Hosted fixture answer.") == true)
+            #expect(reads == 1 && writes == 1)
+            store.stop(); await store.waitForConversationTaskToSettle(); await worker.drain()
+            try await history.close(); try FileManager.default.removeItem(at: root)
+        } catch {
+            store.stop(); await store.waitForConversationTaskToSettle(); await worker.drain()
+            try? await history.close(); try? FileManager.default.removeItem(at: root); throw error
+        }
     }
 
     @Test(arguments: ["calculate", "open_app"])

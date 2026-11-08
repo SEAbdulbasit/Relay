@@ -24,6 +24,8 @@ import Foundation
 @MainActor struct NativeSourcedToolResult {
     let result: ToolResult
     let source: NativeCurrentReadbackSource?
+    /// Actual settled effect coverage only; never part of ToolResult/Codable.
+    var goalSeed: NativeGoalEffectSeed? = nil
 }
 
 /// Bounded metadata/source cache, never an executable ledger. Eviction only

@@ -4,17 +4,24 @@ import Testing
 @testable import Relay
 
 @MainActor struct SidekickContentCanvasTests {
-    @Test func actualVisualReviewEnlargesOnlyTheNeededCanvasAndKeepsTheCutoutAnchor() {
+    @Test func everyPhaseUsesTheSameCanvasAndKeepsTheCutoutAnchor() {
         let layout = SidekickPanelLayout(screen: .init(x: 0, y: 0, width: 1_440, height: 900),
             visibleTop: 868, notchInset: 32, notchWidth: 220)
         let surface = layout.frame(for: .init(width: 530, height: 420), compact: false)
         let canvas = layout.canvas(containing: surface)
         #expect(canvas.contains(surface) && canvas.height == 452 && canvas.width == 570)
         #expect(canvas.maxY == layout.topEdge && canvas.maxY == layout.hardwareOpening?.maxY)
-        #expect(canvas.height > layout.canvas.height)
+        #expect(canvas == layout.canvas)
         let compact = layout.frame(for: .init(width: 210, height: 34), compact: true)
         #expect(compact == layout.hardwareOpening)
         #expect(layout.canvas(containing: compact) == layout.canvas)
+        for size in [CGSize(width: 512, height: 125), CGSize(width: 420, height: 64),
+                     CGSize(width: 530, height: 140), CGSize(width: 530, height: 240),
+                     CGSize(width: 530, height: 256), CGSize(width: 530, height: 260)] {
+            let phase = layout.frame(for: size, compact: false)
+            #expect(layout.canvas(containing: phase) == canvas)
+            #expect(canvas.contains(phase) && phase.maxY == compact.maxY)
+        }
     }
     @Test(arguments: [false, true]) func nonNotchedAndNegativeOriginDisplaysContainTheirSurface(_ negative: Bool) {
         let screen = negative ? CGRect(x: -1_920, y: -300, width: 1_920, height: 1_080) : CGRect(x: 0, y: 0, width: 1_920, height: 1_080)

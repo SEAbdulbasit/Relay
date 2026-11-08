@@ -82,6 +82,9 @@ nonisolated struct ToolResult: Codable, Sendable {
     var evidence: String
     var verified: Bool
     var artifactPath: String? = nil
+    /// Process-only source proof from actual extraction, never serialized or restored.
+    var fileExtractionReceipt: FileExtractionReceipt? = nil
+    private enum CodingKeys: String, CodingKey { case summary, evidence, verified, artifactPath }
 }
 nonisolated struct ScopeGrant: Codable, Sendable, Identifiable, Hashable {
     var id: UUID = UUID()

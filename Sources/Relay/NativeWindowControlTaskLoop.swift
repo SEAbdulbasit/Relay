@@ -11,13 +11,16 @@ import Foundation
     private let completeBound: NativeWindowControlPlanningPhase.BoundComplete?
     private let acceptReply: AcceptReply
     private let planningAdmission: NativeVisualPlanningAdmission
+    private let observeUnverifiedEffect: (@MainActor (NativeVisualProposalIdentity, NativeGoalEffectSeed?) -> Void)?
 
     init(owner: NativeComputerTaskSession, journal: NativeVisualTaskJournal,
          complete: @escaping NativeWindowControlPlanningPhase.Complete, acceptReply: @escaping AcceptReply,
          planningAdmission: NativeVisualPlanningAdmission,
-         completeBound: NativeWindowControlPlanningPhase.BoundComplete? = nil) {
+         completeBound: NativeWindowControlPlanningPhase.BoundComplete? = nil,
+         observeUnverifiedEffect: (@MainActor (NativeVisualProposalIdentity, NativeGoalEffectSeed?) -> Void)? = nil) {
         self.owner = owner; self.journal = journal; self.complete = complete; self.acceptReply = acceptReply
         self.planningAdmission = planningAdmission; self.completeBound = completeBound
+        self.observeUnverifiedEffect = observeUnverifiedEffect
     }
 
     func control(_ outer: NativeVisualProposalIdentity) async throws -> ToolResult {
@@ -111,15 +114,26 @@ import Foundation
                     return NativeSourcedToolResult(result: result, source: Self.readbackSource(prepared.source, scope: scope))
                 case .input:
                     guard let ticket = prepared.preparedAction else { throw NativeVisualTaskFailure.staleProposal }
-                    let fact = try await journal.effect(identity: prepared.identity, inputProof: prepared.operation.inputProof) {
+                    let settled = try await journal.settledEffect(identity: prepared.identity, inputProof: prepared.operation.inputProof) { [self] in
                         // The controller's admitted execute calls the retained
                         // request's shared one-attempt callback exactly once.
                         // Do not perform a post-effect scope check here. A late
                         // actual/partial outcome belongs in this original run's
                         // checkpoint before owner fencing returns cancellation.
-                        return await connection.executeAdmitted(ticket)
+                        let fact = await connection.executeAdmitted(ticket)
+                        // Metadata only, in the original effect closure before
+                        // persistence/owner awaits. A late/unsaved uncertainty
+                        // cannot disappear when the same logical task resumes.
+                        if !fact.toolResult.verified { observeUnverifiedEffect?(outer, nil) }
+                        return fact
                     }
-                    return NativeSourcedToolResult(result: fact.toolResult, source: Self.readbackSource(prepared.source, scope: scope))
+                    var seed: NativeGoalEffectSeed?
+                    if NativeGoalEffectSeed.canCover(settled.fact) {
+                        seed = try? NativeGoalEffectSeed(settled: settled, outer: outer, owner: owner, scope: scope)
+                    }
+                    if !settled.fact.toolResult.verified { observeUnverifiedEffect?(outer, seed) }
+                    return NativeSourcedToolResult(result: settled.fact.toolResult,
+                        source: Self.readbackSource(prepared.source, scope: scope), goalSeed: seed)
                 }
             }
         }

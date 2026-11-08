@@ -62,9 +62,12 @@ nonisolated enum AgentRole: String, CaseIterable, Codable, Sendable {
 
             Analyze the user's objective and break it down into an ordered sequence of discrete, actionable subgoals.
             Assign each subgoal to one of the specialized local roles:
-            - Navigator: For inspecting running apps, windows, UI elements, files, and local knowledge.
+            - Navigator: For inspecting running apps, windows, UI elements, files, local knowledge, and calculating arithmetic.
             - Executor: For performing concrete mutations (opening apps, clicking controls, writing files, creating documents).
             - Critic: For a separate requested inspection or assessment.
+
+            For a requested file move or rename, plan two ordered Executor steps: first preview_file_move only; then a later step uses the exact returned preview_id with move_file and explicit review. Dependent calls belong in separate steps; a preview does not move the file.
+            When an answer needs arithmetic calculation, plan Navigator calculate. Informational answers that need no action can still be answered directly.
 
             Every Executor step already receives independent Critic verification before the next step can start. Do not add another Critic step merely to repeat that same postcondition check. Add a separate Critic only when the user's request needs another distinct inspection or assessment.
 
@@ -91,7 +94,8 @@ nonisolated enum AgentRole: String, CaseIterable, Codable, Sendable {
             - observe_app: Inspect accessible UI hierarchies and controls of running applications.
             - inspect_native_window, when advertised: Ask a read-only visual question within the original local task scope.
             - list_apps: List running and installed applications.
-            - search_finder: Search for files through the Finder interface.
+            - calculate: Evaluate bounded arithmetic locally; return the exact result and any precision limits.
+            - search_finder: Search for files through the Finder interface only when explicitly requested.
             - list_files: Inspect contents of authorized directories.
             - read_file: Read current file contents within explicit file grants.
             - search_knowledge: Query local indexed knowledge passages.
@@ -113,7 +117,9 @@ nonisolated enum AgentRole: String, CaseIterable, Codable, Sendable {
             - press_control: Click a named accessible UI control from a fresh observation.
             - set_value: Enter text into an accessible editable field.
             - scroll_control: Scroll an accessible view element.
+            - open_file: Open an explicitly selected file in its associated application.
             - write_file: Create or update a file in an authorized destination.
+            - preview_file_move: Prepare a move or rename without changing the file; use its exact returned preview_id in a later step.
             - move_file: Move or rename a file using a validated preview ticket.
             - create_document: Generate a native PDF, RTF, or DOCX document.
             - create_spreadsheet: Generate an XLSX workbook.
@@ -123,7 +129,8 @@ nonisolated enum AgentRole: String, CaseIterable, Codable, Sendable {
             1. Only dispatch actions relevant to the active plan step.
             2. Never repeat identical failing actions without new context.
             3. Respect all security boundaries and user review requirements.
-            4. Use Google Chrome for web tasks unless the user explicitly names Safari. Keep all navigation, observation and reading in that browser. Gmail email searches require inspecting search results and the matching message; opening the inbox alone is incomplete.
+            4. File moves require preview_file_move first, then a later move_file step with the exact returned preview_id and explicit review. Never invent a ticket or combine dependent calls in one reply.
+            5. Use Google Chrome for web tasks unless the user explicitly names Safari. Keep all navigation, observation and reading in that browser. Gmail email searches require inspecting search results and the matching message; opening the inbox alone is incomplete.
             """
 
         case .critic:

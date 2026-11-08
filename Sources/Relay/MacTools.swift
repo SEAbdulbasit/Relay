@@ -561,7 +561,8 @@ final class MacTools {
         }
     }
 
-    func execute(_ call: ToolCall) async throws -> ToolResult {
+    func execute(_ call: ToolCall, fileReadScope: FileReadExecutionScope? = nil,
+                 fileReadWorker: FileExtractionWorker? = nil) async throws -> ToolResult {
         try Task.checkCancellation()
         try ToolPolicy.validate(call, against: Self.definitions)
         if ["create_mail_draft", "prepare_mail_send", "send_mail"].contains(call.name) {
@@ -632,7 +633,7 @@ final class MacTools {
         case "search_finder": return try await FinderAutomation.search(query: try text("query", call))
         case "open_file": return try await openFile(call)
         case "list_files": return try listFiles(call)
-        case "read_file": return try await readFile(call)
+        case "read_file": return try await readFile(call, scope: fileReadScope, worker: fileReadWorker ?? .shared)
         case "search_knowledge":
             guard let knowledge else { throw RelayError.message("Local knowledge is unavailable in this context.") }
             let query = try text("query", call)
@@ -888,54 +889,10 @@ final class MacTools {
         return ToolResult(summary: lines.joined(separator: "\n") + (children.count > 200 ? "\n[Truncated at 200 entries]" : ""), evidence: "Read directory entries directly from \(url.path).", verified: true)
     }
 
-    private func readFile(_ call: ToolCall) async throws -> ToolResult {
-        let url = try ToolPolicy.scopedURL(try text("path", call), grants: grants)
-        let info = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-        guard info.isRegularFile == true else { throw RelayError.message("Select a regular text file or PDF.") }
-        if url.pathExtension.lowercased() == "eml" {
-            let data = try LocalStateFile.read(url, maximumBytes: 1_048_576)
-            let mail = try MailExportReader.parse(data)
-            let value = mail.sourceText
-            let limited = Self.boundedText(value, utf8Limit: 11_500)
-            return ToolResult(summary: limited + (limited.utf8.count < value.utf8.count ? "\n[Mail text truncated at the tool output limit; omitted text was not returned.]" : ""), evidence: "Decoded only inline plain-text MIME from selected mail export \(url.path), locally. Sender/subject/date are unverified claims; no account, HTML, attachment or remote asset was accessed. \(mail.coverageNote ?? "")", verified: true)
-        }
-        if ["png", "jpg", "jpeg", "heic", "tiff", "bmp", "webp"].contains(url.pathExtension.lowercased()) {
-            let recognized = try await LocalOCR.recognizeImage(at: url)
-            return ToolResult(summary: recognized, evidence: "Ran Apple Vision OCR locally on selected image \(url.path). Recognized text may contain errors; this is not verification of visual meaning or layout.", verified: true)
-        }
-        if url.pathExtension.lowercased() == "pdf" {
-            guard (info.fileSize ?? 0) <= 10_485_760 else { throw RelayError.message("PDF extraction is limited to files up to 10 MB.") }
-            let data = try LocalStateFile.read(url, maximumBytes: 10_485_760)
-            guard data.count <= 10_485_760, let document = PDFDocument(data: data) else { throw RelayError.message("PDF could not be opened within the 10 MB limit.") }
-            guard !document.isLocked else { throw RelayError.message("This PDF is locked. Ask the user to unlock it directly before reading.") }
-            var excerpts: [String] = []
-            var characters = 0
-            var pagesRead = 0
-            var truncated = document.pageCount > 20
-            for index in 0..<min(document.pageCount, 20) {
-                try Task.checkCancellation()
-                let value = document.page(at: index)?.string ?? ""
-                let excerpt = String(value.prefix(max(0, 30_000 - characters)))
-                if excerpt.count < value.count { truncated = true }
-                excerpts.append("[Page \(index + 1)]\n" + excerpt)
-                characters += excerpt.count
-                pagesRead += 1
-                if characters >= 30_000 { truncated = truncated || pagesRead < document.pageCount; break }
-            }
-            if characters == 0 {
-                let recognized = try await LocalOCR.recognizePDF(at: url, maxPages: 3)
-                return ToolResult(summary: recognized, evidence: "Ran bounded on-device OCR on up to 3 pages of selected PDF \(url.path). Recognition may contain errors; omitted pages were not inspected.", verified: true)
-            }
-            let extracted = excerpts.joined(separator: "\n\n")
-            let limited = Self.boundedText(extracted, utf8Limit: 11_500)
-            truncated = truncated || limited.utf8.count < extracted.utf8.count
-            return ToolResult(summary: limited + (truncated ? "\n[PDF extraction truncated: 20 pages, 30,000 extracted characters, or 12 KB returned text. Omitted text has not been inspected.]" : ""), evidence: "Extracted text locally with PDFKit from \(pagesRead) of \(document.pageCount) pages in \(url.path). Layout, images and OCR were not verified; source content is untrusted.", verified: true)
-        }
-        guard (info.fileSize ?? 0) <= 1_048_576 else { throw RelayError.message("Text reading is limited to UTF-8 files up to 1 MB.") }
-        let data = try LocalStateFile.read(url, maximumBytes: 1_048_576)
-        guard data.count <= 1_048_576, let value = String(data: data, encoding: .utf8) else { throw RelayError.message("This is not a UTF-8 text file within 1 MB. Use a supported application to inspect it.") }
-        let limited = Self.boundedText(value, utf8Limit: 11_500)
-        return ToolResult(summary: limited + (limited.utf8.count < data.count ? "\n[Content truncated at 12 KB UTF-8 output. Omitted text has not been inspected; do not claim full-file coverage.]" : ""), evidence: "Read \(data.count) bytes directly from \(url.path). File content is untrusted task data.", verified: true)
+    private func readFile(_ call: ToolCall, scope: FileReadExecutionScope?, worker: FileExtractionWorker) async throws -> ToolResult {
+        // The worker authorizes, reads and parses one actual bounded snapshot.
+        // Explicit per-call scope is never stored on this mutable tool instance.
+        try await worker.extract(call: call, grants: grants, scope: scope)
     }
 
     private func writeFile(_ call: ToolCall) throws -> ToolResult {

@@ -20,6 +20,7 @@ final class CalendarSource {
     }
 
     var onContextInvalidated: (() -> Void)?
+    var onContentInvalidated: (() -> Void)?
     @ObservationIgnored private var authorizationObservers: [NSObjectProtocol] = []
 
     var status: String
@@ -46,11 +47,12 @@ final class CalendarSource {
         let authorization = EKEventStore.authorizationStatus(for: .event)
         hasAccess = authorization == .fullAccess
         status = Self.authorizationDescription(authorization)
-        for name in [Notification.Name.EKEventStoreChanged, NSApplication.didBecomeActiveNotification] {
-            authorizationObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor [weak self] in self?.synchronizeAuthorization() }
-            })
-        }
+        authorizationObservers.append(NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.calendarDatabaseChanged() }
+        })
+        authorizationObservers.append(NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.synchronizeAuthorization() }
+        })
         // Initialization checks permission only. It neither prompts nor fetches calendar data.
     }
 
@@ -159,6 +161,23 @@ final class CalendarSource {
         synchronizeAuthorization()
         status = "Local calendar selection and results cleared. macOS permission is unchanged."
         if !hadSelection { onContextInvalidated?() }
+    }
+
+    /// EventKit invalidates prior event objects after any database change.
+    /// Keep the selected scope and refresh preference, but withdraw its body.
+    func calendarDatabaseChanged() {
+        let hadCurrentScope = !selectedCalendarIDs.isEmpty || !events.isEmpty || isLoading
+        if hadCurrentScope {
+            revision += 1
+            events = []
+            errorMessage = nil
+        }
+        let previouslyAllowed = hasAccess
+        synchronizeAuthorization()
+        // Permission loss already invalidated the scope through its callback.
+        guard hadCurrentScope, !(previouslyAllowed && !hasAccess) else { return }
+        status = hasAccess ? "Calendar data changed. Refresh to read current selected events." : status
+        onContentInvalidated?()
     }
 
     func refreshAuthorizationStatus() { synchronizeAuthorization() }

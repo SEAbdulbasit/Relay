@@ -204,7 +204,7 @@ struct NativeWindowReadStoreIntegrationTests {
         client.unload()
     }
 
-    @Test(arguments: [false, true]) func nativeKnownResultSaveFailureKeepsExactlyOnePairWithoutReplayingRead(_ multi: Bool) async throws {
+    @Test(arguments: [false, true]) func nativeKnownResultSaveFailureRetainsVisibleFactAndOmitsUnadmittedOldRunBodyWithoutReplayingRead(_ multi: Bool) async throws {
         let fixture = NativeReadTaskFixture(), runtime = NativeReadTaskRuntime()
         let client = LocalModelClient(runtimeFactory: { _,_,_ in runtime }, visionRuntimeFactory: { _,_,_ in runtime })
         let folder = try fixture.folder(); defer { try? FileManager.default.removeItem(at: folder) }
@@ -225,13 +225,22 @@ struct NativeWindowReadStoreIntegrationTests {
         store.send(nativeReadRestrictions: [fixture.admission]); await store.waitForConversationTaskToSettle()
         #expect(store.phase == .failed && fixture.captures == 1 && runtime.imagePayloads.count == 1)
         #expect(store.activity.contains { $0.detail.contains(runtime.answer) })
-        // Switch to the ordinary loop so the exact global protocol is inspected;
-        // this catches both an orphan ordinary-multi result and duplicate native pairs.
+        // The known factual answer remains reviewable locally. A new run must
+        // omit the entire old private pair when no current proof was admitted.
+        // It must not recreate that data by replaying the original read.
         store.multiAgentEnabled = false; store.resume(); await store.waitForConversationTaskToSettle()
         #expect(fixture.captures == 1 && runtime.imagePayloads.count == 1)
         #expect(!resumed.isEmpty && ContextWindow.isWellFormed(resumed))
         let results = resumed.filter { $0.role == "tool" && $0.toolCallID?.utf8.elementsEqual("known-native".utf8) == true }
-        #expect(results.count == 1 && results.first?.content.contains(runtime.answer) == true)
+        #expect(results.isEmpty)
+        #expect(!resumed.contains { $0.content.contains(runtime.answer) })
+        let omission = try #require(resumed.first { $0.content.hasPrefix("Local source-history coverage (app-owned metadata, not authorization or goal proof):") })
+        let coverageJSON = try #require(omission.content.split(separator: "\n", maxSplits: 1).last)
+        let coverage = try JSONDecoder().decode(JSONValue.self, from: Data(coverageJSON.utf8))
+        #expect(coverage.object?["omitted_complete_groups"]?.int == 1)
+        #expect(omission.content.contains(NativeWindowReadTool.name))
+        #expect(omission.content.contains("Do not repeat completed or uncertain effects"))
+        #expect(store.activity.contains { $0.detail.contains(runtime.answer) })
         let scope = try await core.scope()
         let records = try await core.page(expectedScope: scope)
         #expect(records.records.filter { if case .result = $0.event.payload { true } else { false } }.count == 1)

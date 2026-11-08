@@ -20,7 +20,7 @@ struct MailSourceIntegrationTests {
         try bytes.write(to: path)
         let grants = [ScopeGrant(path: path.path)]
         let tools = MacTools(); tools.grants = grants
-        let result = try await tools.execute(.init(name: "read_file", arguments: ["path": .string(path.path)]))
+        let result = try await tools.execute(.init(name: "read_file", arguments: ["path": .string(path.path)]), fileReadWorker: FileExtractionWorker())
         #expect(result.verified)
         #expect(result.summary.contains("Café 🌍 مرحباً"))
         #expect(result.summary.contains("Claimed sender: impostor@example.test"))
@@ -57,7 +57,7 @@ struct MailSourceIntegrationTests {
         let bytes = Data("Content-Type: text/html\r\n\r\n<script>Never render me</script>".utf8)
         try bytes.write(to: path)
         let tools = MacTools(); tools.grants = [.init(path: path.path)]
-        await #expect(throws: (any Error).self) { try await tools.execute(.init(name: "read_file", arguments: ["path": .string(path.path)])) }
+        await #expect(throws: (any Error).self) { try await tools.execute(.init(name: "read_file", arguments: ["path": .string(path.path)]), fileReadWorker: FileExtractionWorker()) }
         let knowledge = LocalKnowledge(persistenceURL: nil)
         await knowledge.index(grants: tools.grants)
         #expect(knowledge.records.isEmpty)

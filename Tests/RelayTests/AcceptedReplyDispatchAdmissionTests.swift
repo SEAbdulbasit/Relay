@@ -15,6 +15,7 @@ import Testing
     let history: AssistantConversationHistory
     let run: AssistantConversationHistory.Run
     let worker: SelectedFileProofWorker
+    let extractionWorker = FileExtractionWorker(extractionTimeout: .seconds(5), validationTimeout: .seconds(5))
     let book: MultiAgentContinuation
     let scope: AcceptedSourceScope
     init() throws {
@@ -35,7 +36,7 @@ import Testing
         let call = Relay.ToolCall(id: "actual-read", name: "read_file", arguments: ["path": .string(input.path)])
         let prepared = try await book.prepare(call, proposalID: UUID(), run: run, context: scope.context, grants: { self.scope.grants })
         let tools = MacTools(); tools.grants = scope.grants
-        let result = try await tools.execute(call)
+        let result = try await tools.execute(call, fileReadWorker: extractionWorker)
         await book.record(result, prepared: prepared, grants: { self.scope.grants }); book.acknowledge(prepared)
         return (call, result)
     }
@@ -52,10 +53,10 @@ import Testing
     let fixture = try AcceptedSourceFixture()
     do {
         try await body(fixture)
-        fixture.scope.active = false; await fixture.worker.drain(); try await fixture.history.close()
+        fixture.scope.active = false; await fixture.worker.drain(); await fixture.extractionWorker.drain(); try await fixture.history.close()
         try FileManager.default.removeItem(at: fixture.root)
     } catch {
-        fixture.scope.active = false; await fixture.worker.drain(); try? await fixture.history.close()
+        fixture.scope.active = false; await fixture.worker.drain(); await fixture.extractionWorker.drain(); try? await fixture.history.close()
         try? FileManager.default.removeItem(at: fixture.root); throw error
     }
 }
@@ -151,7 +152,11 @@ private final class AcceptedIntentBarrier: @unchecked Sendable {
                 if call.name == "write_file" { writes += 1 }
                 let tools = MacTools(); tools.grants = f.scope.grants
                 return try await tools.execute(call)
-            }, multiAgent: true)
+            }, executeFileRead: { @MainActor call, scope in
+                reads += 1
+                let tools = MacTools(); tools.grants = f.scope.grants
+                return try await tools.execute(call, fileReadScope: scope, fileReadWorker: f.extractionWorker)
+            }, fileReadWorker: f.extractionWorker, multiAgent: true)
             await store.waitForConversationTaskToSettle()
             store.grants = f.scope.grants
             store.draft = "Read the selected source and create the selected output from its current facts."
@@ -180,6 +185,71 @@ private final class AcceptedIntentBarrier: @unchecked Sendable {
             } catch {
                 store.stop(); barrier.release(); await store.waitForConversationTaskToSettle(); throw error
             }
+        }
+    }
+
+    @Test(arguments: ["source", "grants", "configuration", "stop"])
+    func ordinaryComposerRetainsItsProjectedInputProofAcrossTheActualIntentCommit(_ change: String) async throws {
+        try await withAcceptedSourceFixture { f in
+            let journal = try await f.history.journalForTesting(), barrier = AcceptedIntentBarrier()
+            defer { barrier.release() }
+            var turns = 0, reads = 0, writes = 0, sawCurrentSource = false
+            let store = AssistantStore(persistenceURL: nil, complete: { @MainActor input, _, _ in
+                turns += 1
+                if turns == 1 {
+                    return ModelReply(content: "", toolCalls: [.init(id: "ordinary-read-A", name: "read_file",
+                        arguments: ["path": .string(f.input.path)])])
+                }
+                try #require(turns == 2)
+                sawCurrentSource = input.contains { $0.content.contains("OWNED_SOURCE_A_你好") }
+                await journal.atNextBoundary(.afterCommit) { barrier.pause() }
+                return ModelReply(content: "", toolCalls: [.init(id: "ordinary-write-A", name: "write_file",
+                    arguments: ["path": .string(f.output.path), "content": .string("ACCEPTED_FROM_A")])])
+            }, conversationHistory: f.history, continuationProofWorker: f.worker, execute: { @MainActor call in
+                if call.name == "read_file" { reads += 1 }
+                if call.name == "write_file" { writes += 1 }
+                let tools = MacTools(); tools.grants = f.scope.grants
+                return try await tools.execute(call)
+            }, executeFileRead: { @MainActor call, scope in
+                reads += 1
+                let tools = MacTools(); tools.grants = f.scope.grants
+                return try await tools.execute(call, fileReadScope: scope, fileReadWorker: f.extractionWorker)
+            }, fileReadWorker: f.extractionWorker)
+            await store.waitForConversationTaskToSettle()
+            store.grants = f.scope.grants
+            store.draft = "Read the selected source, then write the owned output from its currently admitted facts."
+            let ticket = try #require(store.send())
+            #expect(await ticket.waitForAcknowledgment() == .saved)
+            do {
+                try await awaitAcceptedIntent { barrier.isEntered }
+                switch change {
+                case "source": try Data("OWNED_SOURCE_B_你好\n".utf8).write(to: f.input)
+                case "grants": store.grants = []
+                case "configuration": store.configuration.model = "another-model"
+                default: store.stop()
+                }
+                barrier.release(); await store.waitForConversationTaskToSettle()
+                #expect(!barrier.timedOut && sawCurrentSource && turns == 2 && reads == 1 && writes == 0)
+                if change == "stop" { #expect(store.phase == .stopped) }
+                else {
+                    #expect(store.phase == .failed)
+                    #expect(store.errorMessage?.contains("could not be rechecked") == true)
+                    #expect(store.messages.contains { $0.role == "assistant" && $0.text.contains("could not be rechecked") })
+                }
+                #expect(!FileManager.default.fileExists(atPath: f.output.path))
+                let records = try await acceptedIntentRecords(journal)
+                let intents = records.compactMap { record -> JournalIntent? in
+                    if case let .intent(intent) = record.event.payload, intent.toolName == "write_file" { return intent }; return nil
+                }
+                let intent = try #require(intents.first); #expect(intents.count == 1)
+                let outcomes = records.compactMap { record -> JournalToolOutcome? in
+                    if case let .result(outcome) = record.event.payload, outcome.invocationID == intent.invocationID { return outcome }; return nil
+                }
+                #expect(outcomes.count == 1 && outcomes.first?.kind == .notDispatched)
+            } catch {
+                store.stop(); barrier.release(); await store.waitForConversationTaskToSettle(); throw error
+            }
+            store.stop()
         }
     }
 

@@ -26,6 +26,15 @@ nonisolated enum LocalOCR {
     @concurrent static func recognizeImage(at url: URL) async throws -> String {
         try Task.checkCancellation()
         let data = try boundedData(at: url, maximumBytes: maximumImageBytes)
+        return try await recognizeImage(data: data)
+    }
+
+    /// Parse exactly the already authorized snapshot bytes; no file IO occurs.
+    @concurrent static func recognizeImage(data: Data) async throws -> String {
+        try Task.checkCancellation()
+        guard !data.isEmpty, data.count <= maximumImageBytes else {
+            throw RelayError.message("Image OCR needs a nonempty image up to 20 MB.")
+        }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
@@ -49,6 +58,16 @@ nonisolated enum LocalOCR {
         try validatePDFPageLimit(maxPages)
         try Task.checkCancellation()
         let data = try boundedData(at: url, maximumBytes: maximumPDFBytes)
+        return try await recognizePDF(data: data, maxPages: maxPages)
+    }
+
+    /// PDF text and OCR fallback share these exact bytes, including every page.
+    @concurrent static func recognizePDF(data: Data, maxPages: Int = 3) async throws -> String {
+        try validatePDFPageLimit(maxPages)
+        try Task.checkCancellation()
+        guard !data.isEmpty, data.count <= maximumPDFBytes else {
+            throw RelayError.message("PDF OCR needs a nonempty PDF up to 10 MB.")
+        }
         guard let document = PDFDocument(data: data), !document.isLocked else {
             throw RelayError.message("PDF OCR needs an unlocked, readable PDF up to 10 MB.")
         }

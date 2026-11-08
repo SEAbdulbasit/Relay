@@ -80,6 +80,7 @@ import Foundation
     private var retiring: Task<Void, Never>?
     private var stopped = false
     private var busy = false
+    private let goalReadOwnerID = UUID()
     private struct Waiter { let id: UUID; let continuation: CheckedContinuation<Void, Error> }
     private var waiters: [Waiter] = []
 
@@ -172,6 +173,55 @@ import Foundation
             application: source.observation.snapshot.application, validateOriginalSource: {
                 try validateOwner(); try validateOriginal(); try validateOwner()
             })
+    }
+
+    /// Derive source-only access from the ACTUAL retained source while this
+    /// shared owner is alive. The returned closures do not capture the old
+    /// Observation/image and offer no focus/input operation.
+    func originalGoalReadTarget(from observation: NativeControlSession.Observation) throws -> NativeOriginalGoalReadTarget {
+        try validate()
+        guard let current = connection else { throw NativeVisualTaskFailure.staleTask }
+        let controller = current.controller, connectionID = current.id
+        let original = try controller.source(from: observation)
+        let application = observation.snapshot.application
+        let window = observation.snapshot.window
+        let check: @MainActor () throws -> Void = { [weak self, weak controller] in
+            guard let self, let controller else { throw NativeVisualTaskFailure.stopped }
+            try self.validate()
+            guard self.connection?.id == connectionID else { throw NativeVisualTaskFailure.staleProposal }
+            try controller.validateOriginalSource(original); try self.validate()
+        }
+        try check()
+        return NativeOriginalGoalReadTarget(sourceID: original.id, connectionID: connectionID, ownerID: goalReadOwnerID,
+            application: application, validate: check, capture: { [weak self] in
+                guard let self else { throw NativeVisualTaskFailure.stopped }
+                try check()
+                return try await self.withReadOperation(validateSource: check) { active in
+                    guard active.id == connectionID else { throw NativeVisualTaskFailure.staleProposal }
+                    // This refresh requires the app-selected capture window to
+                    // remain the original. It never selects/focuses a replacement.
+                    let observation = try await active.controller.refreshOriginalForRead(original)
+                    try check()
+                    guard observation.snapshot.application == application,
+                          observation.snapshot.window.matchesExactly(window) else { throw NativeVisualTaskFailure.staleProposal }
+                    let retained = NativeCurrentReadbackSource(sourceID: original.id, application: application,
+                        validateOriginalSource: check)
+                    return NativeWindowTaskAdapter.Capture(snapshot: observation.snapshot,
+                        isCurrent: { [weak active] in
+                            guard let active else { return false }
+                            do { try check(); return active.controller.isCurrent(observation) }
+                            catch { return false }
+                        }, refreshOriginal: nil, sourceValidation: retained)
+                }
+            })
+    }
+
+    func validateGoalReadTarget(_ target: NativeOriginalGoalReadTarget) throws {
+        try validate()
+        guard target.ownerID == goalReadOwnerID, connection?.id == target.connectionID else {
+            throw NativeVisualTaskFailure.staleProposal
+        }
+        try target.validate(); try validate()
     }
 
     func stop() {

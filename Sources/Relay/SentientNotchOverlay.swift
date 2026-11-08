@@ -125,10 +125,11 @@ nonisolated struct SidekickPanelLayout: Equatable, Sendable {
         return topAligned(width: notchWidth > 0 ? notchWidth : 200, height: boundedNotchInset)
     }
 
-    var canvas: CGRect { topAligned(width: 570, height: 282 + boundedNotchInset) }
+    var canvas: CGRect { topAligned(width: 570, height: 420 + boundedNotchInset) }
 
-    /// The actual content surface determines additional space. The base canvas
-    /// remains for compact/hover interaction; review content never clips at282.
+    /// One fixed canvas fits every normal phase, including visual review.
+    /// Morphing the silhouette never resizes its panel or moves the bezel edge.
+    /// An unusually larger surface is still bounded to its actual display.
     func canvas(containing surface: CGRect) -> CGRect {
         guard validScreen else { return .zero }
         guard !surface.isNull, !surface.isInfinite,
@@ -426,8 +427,22 @@ final class NotchOverlayController {
         if let review = owner.pendingReview { return CGSize(width: 530, height: review.visualPresentation == nil ? 256 : 420) }
         if ownsDictation { return CGSize(width: 530, height: 260) }
         if owner.isRunning { return CGSize(width: 420, height: 64) }
-        if latestResult(in: owner.messages) != nil { return CGSize(width: 530, height: 215) }
+        if let result = latestResult(in: owner.messages) { return resultContentSize(for: result) }
         return CGSize(width: 512, height: errorMessage == nil ? 125 : 155)
+    }
+
+    private func resultContentSize(for result: ChatMessage) -> CGSize {
+        let response = RelayResponseText(result.text)
+        // Match the rendered14-point body within the actual bounded surface.
+        // Long responses use the reading limit directly and remain scrollable.
+        let width = min(530, max(1, (panelLayout?.screen.width ?? 546) - 16))
+        guard response.body.utf8.count <= 2_048 else { return CGSize(width: 530, height: 240) }
+        let text = NSAttributedString(string: response.body, attributes: [.font: NSFont.systemFont(ofSize: 14)])
+        let bodyHeight = text.boundingRect(with: CGSize(width: max(1, width - 32), height: 240),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]).height
+        let evidenceHeight: CGFloat = response.evidence == nil ? 0 : 32
+        // Header/footer, padding and gaps stay consistent with the result view.
+        return CGSize(width: 530, height: min(240, max(140, ceil(bodyHeight) + 96 + evidenceHeight)))
     }
 
     func open() {

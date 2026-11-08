@@ -18,6 +18,72 @@ struct CalendarSourceTests {
         #expect(invalidations == 3)
         #expect(source.events.isEmpty)
     }
+    @Test @MainActor func databaseChangesInvalidateSelectedContentWithoutDroppingItsScope() {
+        let source = CalendarSource()
+        var scopeInvalidations = 0, contentInvalidations = 0
+        source.onContextInvalidated = { scopeInvalidations += 1 }
+        source.onContentInvalidated = { contentInvalidations += 1 }
+        source.selectedCalendarIDs = ["owned-synthetic-selection"]
+        #expect(scopeInvalidations == 1)
+        source.calendarDatabaseChanged()
+        #expect(contentInvalidations == 1 && scopeInvalidations == 1)
+        #expect(source.selectedCalendarIDs == ["owned-synthetic-selection"] && source.events.isEmpty)
+        source.calendarDatabaseChanged()
+        #expect(contentInvalidations == 2 && scopeInvalidations == 1)
+    }
+
+    @Test @MainActor func unselectedDatabaseChangesDoNotInvalidateUnrelatedContent() {
+        let source = CalendarSource()
+        var invalidations = 0
+        source.onContentInvalidated = { invalidations += 1 }
+        source.calendarDatabaseChanged()
+        #expect(invalidations == 0 && source.events.isEmpty)
+    }
+
+    @Test @MainActor func databaseChangeStopsAReplyThatAlreadyReadCalendarContext() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "relay-calendar-revocation-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let lateFile = directory.appending(path: "late.txt")
+        var sends = 0, writes = 0, secondInputHadCalendar = false
+        var blocked: CheckedContinuation<Void, Never>?
+        let store = AssistantStore(persistenceURL: nil, complete: { messages, _, _ in
+            sends += 1
+            if sends == 1 {
+                return ModelReply(content: "", toolCalls: [.init(name: "read_calendar", arguments: ["days": .string("7")])])
+            }
+            secondInputHadCalendar = messages.contains { $0.content.contains("OWNED_EVENT_CONTEXT") }
+            await withCheckedContinuation { blocked = $0 }
+            return ModelReply(content: "LATE_CALENDAR_REPLY", toolCalls: [.init(name: "write_file", arguments: ["path": .string(lateFile.path), "content": .string("late")])])
+        }, execute: { call in
+            if call.name == "read_calendar" {
+                // No EventKit account or event access: only the Store boundary
+                // is exercised with an inert calendar result.
+                return ToolResult(summary: "OWNED_EVENT_CONTEXT", evidence: "Synthetic selected-event body", verified: true)
+            }
+            writes += 1
+            return ToolResult(summary: "Unexpected late write", evidence: "Inert executor", verified: true)
+        })
+        store.grants = [.init(path: directory.path, writable: true)]
+        store.calendarSource.selectedCalendarIDs = ["owned-synthetic-selection"]
+        store.draft = "Read my selected calendar and describe the events."
+        store.send()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while blocked == nil && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        #expect(blocked != nil && secondInputHadCalendar)
+        store.calendarSource.calendarDatabaseChanged()
+        blocked?.resume(); blocked = nil
+        await store.waitForConversationTaskToSettle()
+        #expect(writes == 0 && !store.isRunning)
+        #expect(!store.messages.contains { $0.text.contains("LATE_CALENDAR_REPLY") })
+        #expect(!FileManager.default.fileExists(atPath: lateFile.path))
+        #expect(store.calendarSource.selectedCalendarIDs == ["owned-synthetic-selection"])
+        #expect(store.selectionNotice?.contains("Calendar data changed") == true)
+        store.stop()
+    }
+
     @Test func dateRangeIsBoundedAndRejectsInvalidDates() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!

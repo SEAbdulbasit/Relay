@@ -134,7 +134,7 @@ struct ToolTests {
         try (data as Data).write(to: file)
         let tools = MacTools()
         tools.grants = [ScopeGrant(path: folder.path)]
-        let result = try await tools.execute(ToolCall(name: "read_file", arguments: ["path": .string(file.path)]))
+        let result = try await tools.execute(ToolCall(name: "read_file", arguments: ["path": .string(file.path)]), fileReadWorker: FileExtractionWorker())
         #expect(result.summary.contains("Locally extracted project notes"))
         #expect(result.summary.contains("[Page 1]"))
         #expect(result.evidence.contains("PDFKit"))
@@ -180,7 +180,7 @@ struct ToolTests {
         try Data(String(repeating: "مرحبا🌍 ", count: 4000).utf8).write(to: file)
         let tools = MacTools()
         tools.grants = [ScopeGrant(path: folder.path)]
-        let result = try await tools.execute(ToolCall(name: "read_file", arguments: ["path": .string(file.path)]))
+        let result = try await tools.execute(ToolCall(name: "read_file", arguments: ["path": .string(file.path)]), fileReadWorker: FileExtractionWorker())
         #expect(result.summary.utf8.count < 12_000)
         #expect(result.summary.contains("Content truncated"))
         #expect(result.summary.contains("Omitted text has not been inspected"))

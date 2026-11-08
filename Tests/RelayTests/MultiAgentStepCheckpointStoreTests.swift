@@ -158,6 +158,7 @@ import Testing
         let journal: ConversationJournal
         let fault: JournalFault?
         private let fileTools = MacTools()
+        private let extractionWorker = FileExtractionWorker(extractionTimeout: .seconds(5), validationTimeout: .seconds(5))
         let expected = Data("OWNED_EXACT_cafe\u{301}_🌍\n".utf8)
         let receiptMarker = "OWNED_STEP_RECEIPT_ONLY_ONCE"
         var goal: String {
@@ -189,7 +190,10 @@ import Testing
             }, conversationHistory: history, continuationProofWorker: SelectedFileProofWorker(), execute: { [weak self] call in
                 guard let self else { throw CancellationError() }
                 return try await self.action(call)
-            }, multiAgent: true)
+            }, executeFileRead: { [weak self] call, scope in
+                guard let self else { throw CancellationError() }
+                return try await self.action(call, fileReadScope: scope)
+            }, fileReadWorker: extractionWorker, multiAgent: true)
             value.grants = [.init(path: root.path, writable: true)]
             return value
         }()
@@ -244,7 +248,7 @@ import Testing
             return .init(content: Data(actual.utf8) == target ? "VERIFIED: Exact current owned bytes match." : "UNVERIFIED: The current owned bytes differ.", toolCalls: [])
         }
 
-        func action(_ call: ToolCall) async throws -> ToolResult {
+        func action(_ call: ToolCall, fileReadScope: FileReadExecutionScope? = nil) async throws -> ToolResult {
             let path = try #require(call.arguments["path"]?.string)
             if call.name == "write_file" {
                 writtenPaths.append(path)
@@ -263,7 +267,7 @@ import Testing
             // verified string. The upcoming one-verdict source proof must bind
             // these exact returned summary bytes to the real selected file.
             fileTools.grants = store.grants
-            let actual = try await fileTools.execute(call)
+            let actual = try await fileTools.execute(call, fileReadScope: fileReadScope, fileReadWorker: extractionWorker)
             #expect(Data(actual.summary.utf8) == bytes)
             lastRead = bytes
             return actual

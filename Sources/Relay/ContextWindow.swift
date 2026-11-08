@@ -3,7 +3,18 @@ import Foundation
 /// Builds an inference view without changing the audit history. Fresh sources,
 /// exact requests, call arguments and opaque workflow receipts remain intact.
 nonisolated enum ContextWindow {
-    struct Result { let messages: [ModelMessage]; let omittedMessages: Int; let compactedMessages: Int }
+    struct Result {
+        let messages: [ModelMessage]
+        let omittedMessages: Int
+        let compactedMessages: Int
+        /// Actual input positions aligned with transformed output. A notice has
+        /// nil provenance; source bytes/arguments are never used as identity.
+        let originalIndices: [Int?]
+        init(messages: [ModelMessage], omittedMessages: Int, compactedMessages: Int, originalIndices: [Int?] = []) {
+            self.messages = messages; self.omittedMessages = omittedMessages
+            self.compactedMessages = compactedMessages; self.originalIndices = originalIndices
+        }
+    }
     static func boundedObservation(_ message: ModelMessage, maximumBytes: Int = 4_000) -> ModelMessage {
         guard message.role == "tool", message.content.utf8.count > maximumBytes else { return message }
         let object = message.content.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
@@ -63,7 +74,10 @@ nonisolated enum ContextWindow {
             retainedStart = boundary
         }
         var selected = Array(inferenceHistory[retainedStart..<start]) + active
+        // compactActive changes contents only; no message is inserted/removed.
+        var originalIndices = (retainedStart..<history.count).map { Optional($0) }
         if retainedStart > 0 {
+            originalIndices.insert(nil, at: 0)
             selected.insert(ModelMessage(role: "user", content: "Context window notice: earlier completed conversation is omitted from this inference window to fit the local model. Full history remains in Relay. Do not guess omitted facts, prior approvals, recipients or outcomes; inspect or ask if essential. The current request follows."), at: 0)
         }
         guard bytes(selected) <= budget, selected.count <= maximumMessages else {
@@ -72,7 +86,8 @@ nonisolated enum ContextWindow {
         guard isWellFormed(selected) else {
             throw RelayError.message("The local context could not preserve complete tool pairs. No action was dispatched.")
         }
-        return Result(messages: selected, omittedMessages: retainedStart, compactedMessages: compacted.count)
+        return Result(messages: selected, omittedMessages: retainedStart, compactedMessages: compacted.count,
+            originalIndices: originalIndices)
     }
 
     /// Only memory pressure permits abbreviation. The newest native snapshot is

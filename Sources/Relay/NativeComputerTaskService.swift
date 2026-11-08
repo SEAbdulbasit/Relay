@@ -9,6 +9,8 @@ import Foundation
     private let loop: NativeWindowControlTaskLoop
     private let scope: NativeVisualTaskScope
     private let readbacks: NativeCurrentReadbackReceipts
+    private let completeRead: NativeWindowReadService.Complete
+    private var goalReader: NativeWindowReadService?
 
     init(scope: NativeVisualTaskScope, history: AssistantConversationHistory,
          factory: NativeVisualTaskConnectionFactory,
@@ -19,8 +21,10 @@ import Foundation
          fallbackReadBackend: @escaping NativeWindowReadService.MakeBackend,
          unsavedFact: @escaping @MainActor (ToolResult) -> Void,
          planningAdmission: NativeVisualPlanningAdmission,
-         completeBound: NativeWindowControlPlanningPhase.BoundComplete? = nil) {
+         completeBound: NativeWindowControlPlanningPhase.BoundComplete? = nil,
+         observeUnverifiedEffect: (@MainActor (NativeVisualProposalIdentity, NativeGoalEffectSeed?) -> Void)? = nil) {
         self.scope = scope
+        self.completeRead = completeRead
         readbacks = NativeCurrentReadbackReceipts(scope: scope)
         let policy = NativeOrdinaryVisualPolicy(inspect: inspect, review: review)
         let owner = NativeComputerTaskSession(scope: scope, factory: factory, policy: policy)
@@ -31,7 +35,7 @@ import Foundation
             // Exactly one mint for this accepted finite reply, after decoding and
             // source/provider checks. Storage retry never invokes this callback.
             return try NativeVisualProposalIdentity(scope: scope, acceptedReplyID: UUID(), call: operation.call)
-        }, planningAdmission: planningAdmission, completeBound: completeBound)
+        }, planningAdmission: planningAdmission, completeBound: completeBound, observeUnverifiedEffect: observeUnverifiedEffect)
         let ownership = NativeWindowTaskAdapter.Ownership(taskID: scope.logicalTaskID,
             isCurrent: { do { try scope.validate(); return true } catch { return false } },
             admitApplication: { try scope.admitRead($0) })
@@ -47,13 +51,17 @@ import Foundation
     var definitions: [ToolDefinition] {
         [NativeWindowReadTool.definition] + (owner.controlIsAvailable ? [NativeWindowControlTools.outerDefinition] : [])
     }
-    var isBusy: Bool { reader.isBusy || owner.isBusy }
+    var isBusy: Bool { reader.isBusy || owner.isBusy || goalReader?.isBusy == true }
     var controlIsAvailable: Bool { owner.controlIsAvailable }
 
     /// Call this directly from the Store's accepted-proposal handler, rather
     /// than inside another history.perform. The loop owns sequential planning
     /// and physical-effect checkpoints and returns one outer protocol result.
     func control(_ call: ToolCall, acceptedProposalID: UUID, inputProof: ModelInputSourceProof? = nil) async throws -> ToolResult {
+        try await controlWithOutcome(call, acceptedProposalID: acceptedProposalID, inputProof: inputProof).result
+    }
+    func controlWithOutcome(_ call: ToolCall, acceptedProposalID: UUID,
+                            inputProof: ModelInputSourceProof? = nil) async throws -> NativeSourcedToolResult {
         try scope.validate()
         guard owner.controlIsAvailable else { throw NativeVisualTaskFailure.unavailableDependency("the qualified shared native task owner") }
         try ToolPolicy.validate(call, against: [NativeWindowControlTools.outerDefinition])
@@ -61,6 +69,37 @@ import Foundation
         let returned = try await loop.controlWithSource(identity, inputProof: inputProof)
         try scope.validate()
         try readbacks.record(returned, call: call, acceptedProposalID: acceptedProposalID, inputProof: inputProof)
+        return returned
+    }
+
+    /// Fresh read on a seed's actual original target, never a new app-level
+    /// selection. The temporary facade shares the existing owner/client/FIFO.
+    func readOriginalGoal(_ call: ToolCall, acceptedProposalID: UUID, objective: String,
+                          target: NativeOriginalGoalReadTarget) async throws -> ToolResult {
+        try scope.validate(); try owner.validateGoalReadTarget(target)
+        guard goalReader == nil else { throw NativeWindowTaskAdapter.Failure.busy }
+        try ToolPolicy.validate(call, against: [NativeWindowReadTool.definition])
+        guard call.arguments["bundle_id"]?.string?.utf8.elementsEqual(target.application.bundleID.utf8) == true else {
+            throw NativeVisualTaskFailure.staleProposal
+        }
+        let ownership = NativeWindowTaskAdapter.Ownership(taskID: scope.logicalTaskID,
+            isCurrent: { [scope] in (try? scope.validate()) != nil },
+            admitApplication: { [scope] in try scope.admitRead($0) })
+        let owned = NativeWindowReadService(ownership: ownership, makeBackend: { [owner] _ in
+            try owner.validateGoalReadTarget(target)
+            return .init(initial: { admission in
+                try admission.validate(); try owner.validateGoalReadTarget(target)
+                guard admission.application == target.application else { throw NativeVisualTaskFailure.staleProposal }
+                let captured = try await target.capture()
+                try owner.validateGoalReadTarget(target)
+                return captured
+            }, stop: {}, drain: {})
+        }, complete: completeRead)
+        goalReader = owned
+        defer { owned.stop(); goalReader = nil }
+        let returned = try await owned.readWithSource(call, objective: objective)
+        try scope.validate(); try owner.validateGoalReadTarget(target)
+        try readbacks.record(returned, call: call, acceptedProposalID: acceptedProposalID)
         return returned.result
     }
 
@@ -86,6 +125,6 @@ import Foundation
         try await proof.validate(); try scope.validate()
         return proof
     }
-    func stop() { readbacks.stop(); owner.stop(); reader.stop() }
-    func drain() async { await reader.drain(); await owner.drain() }
+    func stop() { readbacks.stop(); owner.stop(); reader.stop(); goalReader?.stop() }
+    func drain() async { await reader.drain(); await goalReader?.drain(); await owner.drain() }
 }

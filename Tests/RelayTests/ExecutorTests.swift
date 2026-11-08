@@ -276,7 +276,8 @@ struct ExecutorTests {
     }
 
     @Test func revocationExcludesLatePrivateResultButPreservesNewUserRequest() async throws {
-        var turn = 0
+        var turn = 0, reads = 0
+        let history = AssistantConversationHistory(stateURL: nil)
         var release: CheckedContinuation<Void, Never>?
         var nextInput: [ModelMessage] = []
         let store = AssistantStore(persistenceURL: nil, complete: { input, _, _ in
@@ -286,28 +287,46 @@ struct ExecutorTests {
             }
             nextInput = input
             return ModelReply(content: "Public answer", toolCalls: [])
-        }, execute: { _ in
+        }, conversationHistory: history, execute: { _ in
+            reads += 1
             await withCheckedContinuation { release = $0 }
             return ToolResult(summary: "PRIVATE_LATE_SOURCE", evidence: "Private excerpt", verified: true)
         })
+        do {
         let grant = ScopeGrant(path: "/private/source.txt", writable: false)
         store.grants = [grant]
         store.draft = "Read PRIVATE_OLD_OBJECTIVE"
         store.send()
-        for _ in 0..<150 where release == nil { await Task.yield() }
-        #expect(release != nil)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while release == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(1)) }
+        try #require(release != nil)
         store.removeGrant(grant.id)
         store.draft = "New public question"
         store.send()
-        release?.resume()
-        for _ in 0..<200 where store.isRunning { await Task.yield() }
+        release?.resume(); release = nil
+        await store.waitForConversationTaskToSettle()
         #expect(turn == 2)
         let context = nextInput.map(\.content).joined(separator: "\n")
         #expect(context.contains("New public question"))
         #expect(!context.contains("PRIVATE_LATE_SOURCE"))
         #expect(!context.contains("PRIVATE_OLD_OBJECTIVE"))
         #expect(ContextWindow.isWellFormed(nextInput))
-        #expect(store.messages.contains { $0.text.contains("PRIVATE_LATE_SOURCE") })
+        #expect(!store.messages.contains { $0.text.contains("PRIVATE_LATE_SOURCE") })
+        #expect(!store.activity.contains { $0.detail.contains("PRIVATE_LATE_SOURCE") })
+        #expect(reads == 1)
+        #expect(store.activity.contains { $0.name == "read_file" && $0.status == "requested" })
+        let core = try await history.journalForTesting(), scope = try await core.scope()
+        let page = try await core.page(expectedScope: scope)
+        #expect(page.records.filter { if case .intent = $0.event.payload { true } else { false } }.count == 1)
+        let outcomes = page.records.compactMap { record -> JournalToolOutcome? in
+            if case let .result(outcome) = record.event.payload { return outcome }; return nil
+        }
+        #expect(outcomes.count == 1 && outcomes.first?.kind == .effectUncertain)
+        store.stop(); await store.waitForConversationTaskToSettle(); try await history.close()
+        } catch {
+            release?.resume(); release = nil
+            store.stop(); await store.waitForConversationTaskToSettle(); try? await history.close(); throw error
+        }
     }
 
     @Test func revokedInferenceContextStaysRevokedAfterRelaunch() async throws {

@@ -12,8 +12,9 @@ import Testing
         defer { try? FileManager.default.removeItem(at: root) }
         let nonce = UUID().uuidString, old = "PRIVATE_A_" + nonce, replacement = "PRIVATE_B_" + nonce
         let file = root.appending(path: "chosen.txt"); try Data(old.utf8).write(to: file)
-        let grants = [ScopeGrant(path: root.path, writable: true)], tools = MacTools(), worker = SelectedFileProofWorker()
+        let grants = [ScopeGrant(path: root.path, writable: true)], tools = MacTools(), worker = FileExtractionWorker(extractionTimeout: .seconds(5), validationTimeout: .seconds(5))
         tools.grants = grants
+        let legacyWorker = SelectedFileProofWorker(timeout: .seconds(5))
         let barrier = ReadBarrier(); defer { barrier.release() }
         var turns = 0, reads = 0, effects = 0, executorInspected = false
         let store = AssistantStore(persistenceURL: nil, complete: { input, _, _ in
@@ -28,15 +29,15 @@ import Testing
                 return .init(content: "The source changed; no action is proposed from omitted data.", toolCalls: [])
             }
             return .init(content: "UNVERIFIED: A fresh admitted read is needed before further action.", toolCalls: [])
-        }, continuationProofWorker: worker, execute: { call in
+        }, continuationProofWorker: legacyWorker, execute: { _ in effects += 1; throw CancellationError() }, executeFileRead: { call, scope in
             guard call.name == "read_file" else { effects += 1; throw CancellationError() }
-            let actual = try await tools.execute(call); reads += 1
+            let actual = try await tools.execute(call, fileReadScope: scope, fileReadWorker: worker); reads += 1
             #expect(actual.summary.utf8.elementsEqual(old.utf8))
             // This pauses the NEXT actual post-read proof kernel, after the
             // Navigator action has returned. It substitutes no proof/body.
-            worker.pauseAfterNextRead { barrier.pauseAfterActualRead() }
+            worker.pauseAfterNextSnapshot { barrier.pauseAfterActualRead() }
             return actual
-        }, multiAgent: true)
+        }, fileReadWorker: worker, multiAgent: true)
         store.grants = grants; store.draft = "Read the explicitly chosen file, then reassess before any further operation."
         let writer = Task { @MainActor in
             let end = ContinuousClock.now.advanced(by: .seconds(8))
@@ -49,11 +50,16 @@ import Testing
             await store.waitForConversationTaskToSettle(); try await writer.value
             #expect(executorInspected && reads == 1 && effects == 0 && store.phase == .needsInput)
             #expect(try Data(contentsOf: file) == Data(replacement.utf8))
-            // The known original result remains visible to its user; omitting
-            // it from a new inference never fabricates a replacement result.
-            #expect(store.activity.contains { $0.detail.contains(old) })
-        } catch { writer.cancel(); barrier.release(); store.stop(); throw error }
-        store.stop(); await worker.drain()
+            // The actual read fact remains; this body was never admitted for
+            // first publication. A separate settled-success test retains earlier shown facts.
+            #expect(!store.activity.contains { $0.detail.contains(old) })
+            #expect(store.activity.contains { $0.name == "read_file" && $0.detail.contains("The file result is unavailable for this task.") })
+        } catch {
+            writer.cancel(); barrier.release(); store.stop()
+            await store.waitForConversationTaskToSettle(); _ = await writer.result
+            await worker.drain(); await legacyWorker.drain(); throw error
+        }
+        store.stop(); await worker.drain(); await legacyWorker.drain()
     }
     nonisolated private final class ReadBarrier: @unchecked Sendable {
         private let lock = NSLock(), semaphore = DispatchSemaphore(value: 0)
