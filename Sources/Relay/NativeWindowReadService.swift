@@ -20,6 +20,10 @@ import Foundation
     }
 
     func read(_ call: ToolCall, objective: String) async throws -> ToolResult {
+        try await readWithSource(call, objective: objective).result
+    }
+
+    func readWithSource(_ call: ToolCall, objective: String, inputProof: ModelInputSourceProof? = nil) async throws -> NativeSourcedToolResult {
         try requireActive()
         guard !isBusy else { throw NativeWindowTaskAdapter.Failure.busy }
         try ToolPolicy.validate(call, against: [NativeWindowReadTool.definition])
@@ -30,7 +34,9 @@ import Foundation
         // Refuse scope expansion before opening a connection or capturing.
         _ = try ownership.admitApplication(bundle)
         isBusy = true; defer { isBusy = false }
+        try await inputProof?.validate(); try requireActive()
         let owned = try await ownedAdapter()
+        try await inputProof?.validate(); try requireActive()
         do {
             let captured = try await owned.observe(bundleID: bundle)
             try requireActive()
@@ -38,15 +44,17 @@ import Foundation
             // the main planner's pending request or copy unrelated source histories.
             // Store's complete ordinary protocol remains unchanged and receives one
             // result for this read after the phase returns.
-            let interpretation = try await NativeWindowReadOnlyTaskPhase.run(adapter: owned, objective: objective,
-                completeHistory: [], readQuestion: question, complete: complete)
-            try requireActive()
+            let returned = try await NativeWindowReadOnlyTaskPhase.runWithSource(adapter: owned, objective: objective,
+                completeHistory: [], readQuestion: question, inputProof: inputProof, complete: complete)
+            let interpretation = returned.reply
+            try requireActive(); try returned.source?.validate()
             guard !interpretation.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   interpretation.content.utf8.count <= 3000 else {
                 throw RelayError.message("The local visual read did not return a bounded answer. Ask a narrower read question; no input was performed.")
             }
-            return ToolResult(summary: "Read-only model interpretation of the chosen native window (may be inaccurate):\n" + interpretation.content,
+            let result = ToolResult(summary: "Read-only model interpretation of the chosen native window (may be inaccurate):\n" + interpretation.content,
                 evidence: captured.evidence + " The local model interpreted only that source. This verifies capture scope, not the interpretation's facts or any application effect. No input was performed.", verified: true)
+            return NativeSourcedToolResult(result: result, source: returned.source)
         } catch {
             if let transport = error as? NativeReadTransportError, transport.needsFreshConnection {
                 // Retire a definitely broken READ connection. Return this error

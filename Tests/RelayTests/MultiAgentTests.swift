@@ -37,7 +37,8 @@ struct AgentRoleTests {
     @Test("Role system prompts include unambiguous turn attribution prefixes")
     func roleSystemPromptsContainRolePrefixes() {
         #expect(AgentRole.planner.systemPrompt.contains("ROLE: Planner"))
-        #expect(AgentRole.planner.systemPrompt.contains("Gemma 4 E2B"))
+        #expect(AgentRole.planner.systemPrompt.contains("using the selected inference provider."))
+        #expect(AgentRole.allCases.allSatisfy { !$0.systemPrompt.contains("Gemma") })
 
         #expect(AgentRole.navigator.systemPrompt.contains("ROLE: Navigator"))
         #expect(AgentRole.navigator.systemPrompt.contains("NEVER modify system state"))
@@ -70,6 +71,7 @@ struct ToolPartitioningTests {
         #expect(toolNames.contains("list_apps"))
         #expect(toolNames.contains("search_finder"))
         #expect(toolNames.contains("list_files"))
+        #expect(toolNames.contains("read_file"))
         #expect(!toolNames.contains("press_control"))
         #expect(!toolNames.contains("write_file"))
     }
@@ -393,7 +395,7 @@ struct MultiAgentOrchestrationTests {
 
         #expect(rolesInvoked == [.planner])
         #expect(actionsDispatched == 0)
-        #expect(store.messages.last?.text.contains("100% offline") == true)
+        #expect(store.messages.last?.text == "Relay is a native macOS on-device assistant that operates 100% offline.\n\nNo computer actions were executed in this response.")
         #expect(store.phase == .idle)
     }
 
@@ -502,14 +504,23 @@ struct MultiAgentOrchestrationTests {
         store.send()
 
         // Wait for store to reach awaitingReview
-        for _ in 0..<500 where store.phase != .awaitingReview {
-            await Task.yield()
+        let reviewArrivalDeadline = ContinuousClock.now.advanced(by: .seconds(8))
+        while store.phase != .awaitingReview {
+            try #require(ContinuousClock.now < reviewArrivalDeadline)
+            try await Task.sleep(for: .milliseconds(2))
         }
         #expect(store.phase == .awaitingReview)
         #expect(store.pendingReview != nil)
 
         // Approve review
         store.approveReview()
+        let reviewFinishDeadline = ContinuousClock.now.advanced(by: .seconds(8))
+        while store.isRunning {
+            try #require(store.pendingReview == nil, "The approved fixture must not request a second review.")
+            try #require(ContinuousClock.now < reviewFinishDeadline)
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        await store.waitForConversationTaskToSettle()
         await settle(store)
 
         #expect(store.phase == .idle)

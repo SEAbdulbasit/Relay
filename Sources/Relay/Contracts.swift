@@ -112,7 +112,10 @@ nonisolated struct PendingReview: Identifiable, Sendable {
     var reason: String
     var revision: Int
     var sharesWithOpenAI = false
+    var visualPresentation: NativeVisualReviewPresentation? = nil
+    var canApprove: Bool { visualPresentation?.imageIsDecodable ?? true }
     var title: String {
+        if visualPresentation != nil { return "Review Mac action" }
         if sharesWithOpenAI { return "Share this excerpt with OpenAI?" }
         switch call.name {
         case "create_mail_draft": return "Create this Mail draft?"
@@ -121,6 +124,7 @@ nonisolated struct PendingReview: Identifiable, Sendable {
         }
     }
     var approvalTitle: String {
+        if visualPresentation != nil { return "Perform action" }
         if sharesWithOpenAI { return "Share Excerpt" }
         switch call.name {
         case "create_mail_draft": return "Create draft"

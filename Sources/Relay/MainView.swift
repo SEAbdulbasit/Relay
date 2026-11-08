@@ -119,6 +119,7 @@ struct MainView: View {
                                 conversation
                             }
                             conversationDock
+                                .layoutPriority(1)
                         }
                         if store.showActivity && viewportWidth >= 1200 {
                             Divider().overlay(RelayTheme.line).frame(width: 1)
@@ -751,6 +752,7 @@ struct MainView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxHeight: .infinity)
+            .accessibilityIdentifier("activity.content")
         }
         .padding(16)
     }
@@ -765,8 +767,11 @@ struct MainView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
+                    if let visual = review.visualPresentation {
+                        NativeVisualReviewView(presentation: visual).id(visual.id)
+                    }
                     Text(review.reason).font(.system(size: 14)).foregroundStyle(RelayTheme.ink).textSelection(.enabled)
-                    if !review.sharesWithOpenAI && !review.hasStructuredMailReview {
+                    if !review.sharesWithOpenAI && !review.hasStructuredMailReview && review.visualPresentation == nil {
                         DisclosureGroup("Action details") {
                             Text(review.call.name).font(.relayMono)
                             Text(JSONValue.object(review.call.arguments).pretty)
@@ -777,7 +782,12 @@ struct MainView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: review.hasStructuredMailReview ? 240 : 150).scrollIndicators(.visible)
+            // Keep the evidence readable before allocating spare height to the transcript.
+            .frame(minHeight: review.visualPresentation != nil ? 180 : 120,
+                   idealHeight: review.visualPresentation != nil ? 240 : review.hasStructuredMailReview ? 200 : 150,
+                   maxHeight: review.visualPresentation != nil ? 340 : review.hasStructuredMailReview ? 240 : 150)
+            .scrollIndicators(.visible)
+            .accessibilityIdentifier("review.content")
 
             Text(review.sharesWithOpenAI ? "Sharing sends the entire excerpt above to ChatGPT, including any text you scroll to view." : review.hasStructuredMailReview ? "Review the entire message above, including text you scroll to view. Approval applies only to this action." : "Approval applies only to this action.")
                 .font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
@@ -785,7 +795,7 @@ struct MainView: View {
             HStack {
                 Spacer()
                 Button(review.sharesWithOpenAI ? "Keep on This Mac" : "Decline") { store.denyReview() }.buttonStyle(RelaySecondaryButtonStyle())
-                Button(review.approvalTitle) { store.approveReview() }.buttonStyle(RelayPrimaryButtonStyle())
+                Button(review.approvalTitle) { store.approveReview() }.buttonStyle(RelayPrimaryButtonStyle()).disabled(!review.canApprove)
             }
         }
         .padding(16)

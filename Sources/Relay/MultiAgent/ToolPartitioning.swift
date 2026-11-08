@@ -19,6 +19,7 @@ nonisolated enum ToolPartitioning {
                 "list_apps",
                 "search_finder",
                 "list_files",
+                "read_file",
                 "search_knowledge",
                 "capability_probe"
             ]
@@ -27,6 +28,7 @@ nonisolated enum ToolPartitioning {
             // Concrete mutations, file operations, UI interaction, and app control.
             return [
                 "inspect_native_window",
+                "control_native_window",
                 "open_app",
                 "press_control",
                 "set_value",

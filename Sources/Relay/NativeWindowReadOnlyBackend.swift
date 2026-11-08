@@ -30,8 +30,16 @@ extension NativeWindowTaskAdapter.Backend {
             }
             let snapshot = try await observer.observe(observer.prepare(application: app))
             try admission.validate()
+            let original = try observer.retainTarget(for: snapshot)
+            let validation = NativeCurrentReadbackSource(sourceID: original.sourceID,
+                application: snapshot.application, validateOriginalSource: {
+                    try admission.validate()
+                    try observer.validateOriginalSource(original)
+                    try admission.validate()
+                })
+            try validation.validate()
             return NativeWindowTaskAdapter.Capture(snapshot: snapshot,
-                isCurrent: { observer.isCurrent(snapshot) }, refreshOriginal: nil)
+                isCurrent: { observer.isCurrent(snapshot) }, refreshOriginal: nil, sourceValidation: validation)
         }, stop: { observer.stop() }, drain: { await observer.drain() })
     }
 }

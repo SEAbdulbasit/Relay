@@ -8,11 +8,12 @@ import RelayJournal
 final class AssistantStore {
     var messages: [ChatMessage] = []
     var activity: [ActivityEntry] = []
-    var grants: [ScopeGrant] = []
-    var memories: [MemoryItem] = []
+    var grants: [ScopeGrant] = [] { didSet { continuationScopeID = UUID() } }
+    var memories: [MemoryItem] = [] { didSet { continuationScopeID = UUID() } }
+    @ObservationIgnored private var continuationScopeID = UUID()
     var draft = "" { didSet { draftRevision &+= 1 } }
     @ObservationIgnored private var draftRevision = 0
-    var configuration = ModelConfiguration()
+    var configuration = ModelConfiguration() { didSet { continuationScopeID = UUID() } }
     var availableModels: [String] = []
     let knowledge: LocalKnowledge
     let knowledgeSearch: KnowledgeSearchCoordinator
@@ -58,7 +59,7 @@ final class AssistantStore {
     var screenCaptureCheckStatus = ScreenCaptureCheckState.notRun
     var phase: RunPhase = .idle
     var pendingReview: PendingReview?
-    var errorMessage: String?
+    var errorMessage: String? { didSet { ownedHistoryErrorID = nil } }
     var showActivity = false
     var activeAgentRole: AgentRole?
     var agentActivities: [AgentActivityItem] = []
@@ -92,10 +93,16 @@ final class AssistantStore {
     @ObservationIgnored private var directKnownResult: ToolResult?
     @ObservationIgnored private var activeWindowObservation: String?
     @ObservationIgnored private var activeSidekickContext: SidekickTaskContext?
+    @ObservationIgnored private let multiAgentContinuation: MultiAgentContinuation
+    @ObservationIgnored private var multiAgentStepCheckpoint: MultiAgentStepCheckpoint?
     @ObservationIgnored private let conversationHistory: AssistantConversationHistory
     @ObservationIgnored private var historyRestoreTask: Task<Void, Never>?
     @ObservationIgnored private var historyRestoreEpoch = 0
     @ObservationIgnored private var historyFailure: (any Error)?
+    @ObservationIgnored private var historyFailureID: UUID?
+    @ObservationIgnored private var ownedHistoryErrorID: UUID?
+    private static let historyStorageErrorMessage = "Conversation storage needs attention. Further actions are stopped. Your draft and prior files are preserved; an earlier in-flight effect may have completed."
+    private struct HistoryRepairContext { let failureID: UUID?; let restoreEpoch: Int; let logicalTaskID: UUID }
     @ObservationIgnored private var journalRuns: [Int: AssistantConversationHistory.Run] = [:]
     @ObservationIgnored private var currentJournalRun: AssistantConversationHistory.Run?
     @ObservationIgnored private var nextJournalRun: AssistantConversationHistory.Run?
@@ -113,8 +120,9 @@ final class AssistantStore {
     @ObservationIgnored private var visibleMessageOrder: [UUID] = []
     @ObservationIgnored private var nativeTaskID = UUID()
     @ObservationIgnored private var nativeTaskReadAuthority: NativeLocalTaskReadAuthority?
-    @ObservationIgnored private var activeNativeReader: (revision: Int, service: NativeWindowReadService)?
+    @ObservationIgnored private var activeNativeTask: (revision: Int, service: NativeComputerTaskService)?
     @ObservationIgnored private let makeNativeWindowBackend: NativeWindowReadService.MakeBackend
+    @ObservationIgnored private let makeNativeTaskControl: NativeTaskControlDependencies.Make?
     @ObservationIgnored private var activeContextStart = 0
     // Revocation drops prior derived inference context only after any in-flight run settles.
     @ObservationIgnored private var pendingContextReset: Int?
@@ -128,6 +136,7 @@ final class AssistantStore {
     init(persistenceURL: URL? = AssistantStore.defaultStateURL,
          complete: (([ModelMessage], [ToolDefinition], ModelConfiguration) async throws -> ModelReply)? = nil,
          conversationHistory: AssistantConversationHistory? = nil,
+         continuationProofWorker: SelectedFileProofWorker? = nil,
          execute: ((ToolCall) async throws -> ToolResult)? = nil,
          voiceInput: LocalVoiceInput? = nil,
          speechOutput: LocalSpeechOutput? = nil,
@@ -141,6 +150,7 @@ final class AssistantStore {
          codexCheck: (() async throws -> Void)? = nil,
          preparationScheduler: PreparationScheduler? = nil,
          nativeWindowBackendFactory: NativeWindowReadService.MakeBackend? = nil,
+         nativeTaskControl: NativeTaskControlDependencies.Make? = nil,
          runBudgetFactory: @escaping () -> TaskRunBudget = { TaskRunBudget() }) {
         model = LocalInferenceRouter(embedded: modelClient ?? LocalModelClient(), server: lmStudioClient ?? LMStudioClient(), visionProbeFactory: lmStudioVisionProbeFactory)
         self.codexComplete = codexComplete ?? { try await CodexCLIClient().complete(messages: $0, tools: $1) }
@@ -150,9 +160,11 @@ final class AssistantStore {
         }
         self.persistenceURL = persistenceURL
         self.conversationHistory = conversationHistory ?? AssistantConversationHistory(stateURL: persistenceURL)
+        multiAgentContinuation = MultiAgentContinuation(worker: continuationProofWorker)
         self.multiAgentEnabled = multiAgent
         self.makeRunBudget = runBudgetFactory
         self.makeNativeWindowBackend = nativeWindowBackendFactory ?? { try await .openReadOnly(ownership: $0) }
+        self.makeNativeTaskControl = nativeTaskControl
         voice = voiceInput ?? LocalVoiceInput()
         speech = speechOutput ?? LocalSpeechOutput()
         self.nativeSources = nativeSources ?? NativePersonalSources()
@@ -517,11 +529,14 @@ final class AssistantStore {
         let wasRunning = isRunning
         if !wasRunning { historyFailure = nil; restoredTaskNeedsNewInvocation = false }
         if wasRunning {
+            multiAgentStepCheckpoint?.invalidateForSteering()
             activeObjective += "\nLatest user constraint: " + text
         } else {
             activeObjective = text
             activeRunUsesCodex = useWorkspaceProvider && workspaceUsesCodex
             nativeTaskID = UUID()
+            multiAgentContinuation.startTask(nativeTaskID)
+            multiAgentStepCheckpoint = MultiAgentStepCheckpoint(logicalTaskID: nativeTaskID)
             directAttemptTaskID = nil; directKnownResult = nil
             let originalTaskID = nativeTaskID
             nativeTaskReadAuthority = activeRunUsesCodex ? nil : .localUserInvocation(taskID: originalTaskID,
@@ -574,7 +589,7 @@ final class AssistantStore {
         guard let journalRun = nextJournalRun else { reportHistoryFailure(JournalError.invalidTransition); return }
         nextJournalRun = nil
         if !historyRestorationFinished { beginHistoryRestoration() }
-        activeNativeReader?.service.stop()
+        activeNativeTask?.service.stop()
         model.invalidateConversation()
         localVisionStatus = nil
         revision += 1
@@ -600,24 +615,27 @@ final class AssistantStore {
             do {
                 await self.historyRestoreTask?.value
                 if let failure = self.historyFailure { throw failure }
+                let repair = self.historyRepairContext()
                 try await self.conversationHistory.retryResultSaves()
                 try await self.flushVisibleHistory()
                 try self.gate(runRevision)
+                if self.finishHistoryRepair(repair) { self.multiAgentContinuation.storageRepaired(for: repair.logicalTaskID) }
             } catch {
                 self.resolveSubmissions(for: journalRun.taskID, as: .failed)
                 if self.revision == runRevision { self.phase = .failed; self.reportHistoryFailure(error) }
                 return
             }
             self.verifiedResults = []
-            let nativeReader = self.makeNativeReadService(revision: runRevision)
+            let budget = self.makeRunBudget()
+            let nativeTask = self.makeNativeTaskService(revision: runRevision, budget: budget)
             if self.multiAgentEnabled && !self.activeRunUsesCodex && self.activeWindowObservation == nil && self.activeSidekickContext == nil {
-                await self.runMultiAgent(revision: runRevision, nativeReader: nativeReader)
+                await self.runMultiAgent(revision: runRevision, nativeTask: nativeTask, budget: budget)
             } else {
-                await self.run(revision: runRevision, nativeReader: nativeReader)
+                await self.run(revision: runRevision, nativeTask: nativeTask, budget: budget)
             }
-            nativeReader?.stop()
-            await nativeReader?.drain()
-            if self.activeNativeReader?.revision == runRevision { self.activeNativeReader = nil }
+            nativeTask?.stop()
+            await nativeTask?.drain()
+            if self.activeNativeTask?.revision == runRevision { self.activeNativeTask = nil }
             do {
                 try await self.flushVisibleHistory()
                 // Delivering a response is not an independently verified logical-goal verdict.
@@ -667,40 +685,134 @@ final class AssistantStore {
         persist()
     }
 
-    private func makeNativeReadService(revision expected: Int) -> NativeWindowReadService? {
+    private func makeNativeTaskService(revision expected: Int, budget: TaskRunBudget) -> NativeComputerTaskService? {
         guard !activeRunUsesCodex, let authority = nativeTaskReadAuthority,
-              let selectedIdentity = configuration.inferenceIdentity else { return nil }
+              let selectedIdentity = configuration.inferenceIdentity,
+              let run = journalRuns[expected] else { return nil }
         let taskID = authority.taskID, selected = configuration
-        let ownership = NativeWindowTaskAdapter.Ownership(taskID: taskID, isCurrent: { [weak self] in
-            self?.revision == expected && self?.nativeTaskID == taskID
-                && self?.interactiveSessionActive == true && self?.isClearingConversation == false
-                && self?.configuration.inferenceIdentity == selectedIdentity
-        }, admitApplication: { try authority.admit($0) })
-        let reader = NativeWindowReadService(ownership: ownership, makeBackend: makeNativeWindowBackend,
-            complete: { [weak self] turn in
+        let selectedSourceRevision = nativeSourceRevision, selectedScope = continuationScopeID
+        let validate: @MainActor () throws -> Void = { [weak self] in
+            guard let self else { throw CancellationError() }
+            try self.gate(expected); try budget.check()
+            guard self.nativeTaskID == taskID, self.journalRuns[expected]?.taskID == run.taskID,
+                  self.currentJournalRun?.taskID == run.taskID, self.interactiveSessionActive,
+                  !self.isClearingConversation, self.historyFailure == nil,
+                  self.nativeSourceRevision == selectedSourceRevision, self.continuationScopeID == selectedScope,
+                  self.configuration.inferenceIdentity == selectedIdentity else { throw CancellationError() }
+        }
+        do {
+            let scope = try NativeVisualTaskScope(logicalTaskID: taskID, runRevision: expected,
+                run: run, originalObjective: activeObjective, inferenceIdentity: selectedIdentity,
+                readAuthority: authority, validateAcknowledgedStoreRun: validate)
+            let input = try NativeLocalTaskInputAuthority.localUserInvocation(scope: scope,
+                windowRequirement: .appScoped, validateAcknowledgedInputGrant: validate)
+            let dependencies: NativeTaskControlDependencies
+            do { dependencies = try makeNativeTaskControl?(scope, input) ?? .unavailable }
+            catch {
+                // Unavailable action composition cannot erase the existing
+                // independently qualified read-only capability.
+                try validate()
+                dependencies = .unavailable
+                record("Native control", "The action adapter is unavailable; the existing read-only path remains available.", "unavailable")
+            }
+            let complete: NativeWindowControlPlanningPhase.Complete = { [weak self] messages, definitions, vision in
                 guard let self else { throw CancellationError() }
-                try self.gate(expected)
+                try validate(); try vision.validate()
                 let reply: ModelReply
                 do {
-                    if let vision = turn.visionInput {
-                        reply = try await self.model.complete(messages: turn.messages, tools: [], configuration: selected, vision: vision)
-                    } else { reply = try await self.model.complete(messages: turn.messages, tools: [], configuration: selected) }
-                } catch {
-                    try self.gate(expected)
-                    guard self.interactiveSessionActive,
-                          self.configuration.inferenceIdentity == selectedIdentity else { throw CancellationError() }
-                    throw error
-                }
-                try self.gate(expected)
-                guard self.interactiveSessionActive,
-                      self.configuration.inferenceIdentity == selectedIdentity else { throw CancellationError() }
+                    reply = try await self.model.complete(messages: messages, tools: definitions,
+                        configuration: selected, vision: vision)
+                } catch { try validate(); try vision.validate(); throw error }
+                try validate(); try vision.validate()
                 return reply
+            }
+            let progress = NativeVisualPlanningAdmission(budget: budget, admitProgress: { [weak self] round in
+                try validate()
+                guard let self else { throw CancellationError() }
+                // Current task/source admission and the same existing budget
+                // govern each read/plan round; no private source is logged.
+                self.record("Native window", "Inspecting the retained original window.", "observing")
             })
-        activeNativeReader = (expected, reader)
-        return reader
+            let service = NativeComputerTaskService(scope: scope, history: conversationHistory,
+                factory: dependencies.factory, inspect: dependencies.inspect,
+                review: { [weak self] call, reason, presentation in
+                    guard let self else { throw CancellationError() }
+                    try validate(); self.phase = .awaitingReview
+                    let approved = await self.requestReview(call, reason: reason, revision: expected,
+                        budget: budget, visualPresentation: presentation)
+                    try validate()
+                    if approved { self.phase = .acting }
+                    return approved
+                }, complete: complete, completeRead: { [weak self] turn in
+                    guard let self else { throw CancellationError() }
+                    try validate()
+                    let reply: ModelReply
+                    do {
+                        if let vision = turn.visionInput {
+                            reply = try await self.model.complete(messages: turn.messages, tools: [], configuration: selected, vision: vision, sourceAuthorization: turn.inputSourceProof?.validator)
+                        } else { reply = try await self.model.complete(messages: turn.messages, tools: [], configuration: selected,
+                            sourceAuthorization: turn.inputSourceProof?.validator) }
+                    } catch { try validate(); throw error }
+                    try validate(); return reply
+                }, fallbackReadBackend: makeNativeWindowBackend, unsavedFact: { [weak self] fact in
+                    self?.record("Native task", "Original-run fact arrived but its checkpoint was not saved: \(fact.summary)\n\(fact.evidence)", "not saved")
+                }, planningAdmission: progress, completeBound: { [weak self] messages, definitions, vision, inputProof in
+                    guard let self else { throw CancellationError() }
+                    try validate(); try vision.validate(); try await inputProof?.validate()
+                    let reply: ModelReply
+                    do {
+                        reply = try await self.model.complete(messages: messages, tools: definitions,
+                            configuration: selected, vision: vision, sourceAuthorization: inputProof?.validator)
+                    } catch { try validate(); try vision.validate(); try await inputProof?.validate(); throw error }
+                    try validate(); try vision.validate(); try await inputProof?.validate()
+                    return reply
+                })
+            activeNativeTask = (expected, service)
+            return service
+        } catch {
+            // A failed qualified composition does not open an alternate device
+            // executor or widen scope. The task's ordinary tools remain gated.
+            record("Native task", "The task-owned native service could not be prepared.", "unavailable")
+            return nil
+        }
     }
 
-    private func run(revision expected: Int, nativeReader: NativeWindowReadService?) async {
+    /// The service owns sequential read/planning/report/effect checkpoints.
+    /// This branch must never be nested in the generic outer checkpoint.
+    private func runNativeControl(_ call: ToolCall, acceptedProposalID: UUID,
+                                  service: NativeComputerTaskService, revision expected: Int,
+                                  inputProof: ModelInputSourceProof? = nil) async throws -> ToolResult {
+        guard let run = journalRuns[expected] else { throw CancellationError() }
+        let context = multiAgentContinuationContext()
+        let prepared = try await multiAgentContinuation.prepare(call, proposalID: acceptedProposalID,
+            run: run, context: context, grants: { [weak self] in self?.grants ?? [] })
+        @MainActor func validatePublication() throws {
+            try gate(expected)
+            guard interactiveSessionActive, historyFailure == nil,
+                  multiAgentContinuationContext() == context else { throw CancellationError() }
+        }
+        try validatePublication()
+        let output: ToolResult
+        do { output = try await service.control(call, acceptedProposalID: acceptedProposalID, inputProof: inputProof) }
+        catch {
+            // Inner checkpoints settle late physical/focus facts in the original
+            // run before these publication fences. A stale error never taints or
+            // enters a replacement task. No fake result or outer checkpoint.
+            try validatePublication()
+            multiAgentContinuation.markUnsupportedSourceContribution(prepared: prepared, currentContext: context)
+            if let failure = error as? JournalError { reportHistoryFailure(failure) }
+            throw error
+        }
+        try validatePublication()
+        multiAgentContinuation.markUnsupportedSourceContribution(prepared: prepared, currentContext: context)
+        await multiAgentContinuation.record(output, prepared: prepared, grants: { [weak self] in self?.grants ?? [] })
+        try validatePublication()
+        // All inner report/effect checkpoints have settled before returning.
+        multiAgentContinuation.acknowledge(prepared)
+        return output
+    }
+
+    private func run(revision expected: Int, nativeTask: NativeComputerTaskService?, budget: TaskRunBudget) async {
         defer {
             tools.hideActionPointer()
             if revision == expected {
@@ -708,7 +820,6 @@ final class AssistantStore {
                 activeSidekickContext = nil
             }
         }
-        let budget = makeRunBudget()
         var recovery = TaskRecoveryBudget()
         var unverifiedResults = 0
         var attemptedActions = 0
@@ -728,7 +839,7 @@ final class AssistantStore {
         let usesCodex = activeRunUsesCodex
         let visualTarget = usesCodex ? nil : activeSidekickContext?.visualTarget
         let localDefinitions = MacTools.definitions + (visualTarget == nil ? [] : [SidekickWindowText.definition])
-            + (nativeReader == nil ? [] : [NativeWindowReadTool.definition])
+            + (nativeTask?.definitions ?? [])
         let definitions = usesCodex ? CodexDevicePlanning.definitions : localDefinitions
         var codexMessages = [ModelMessage(role: "user", content: objective)]
         var visualTextForRun: [Data: String] = [:]
@@ -937,11 +1048,27 @@ final class AssistantStore {
                         }
                         if !discoveryTools.contains(call.name) { discoveryOnly = false }
                         record(call.name, "Dispatching validated request", "requested")
-                        let result = try await checkpointed(call, proposalID: acceptedProposalID, revision: expected, budget: budget, action: { [self] in
-                        if call.name == NativeWindowReadTool.name {
-                            guard !usesCodex, let nativeReader else { throw RelayError.message("Native window reading requires the original local task scope.") }
+                        let result: ToolResult
+                        if call.name == NativeWindowControlTools.outerName {
+                            guard !usesCodex, let nativeTask else { throw NativeVisualTaskFailure.staleTask }
                             tools.invalidateApprovals()
-                            return try await nativeReader.read(call, objective: objective)
+                            result = try await runNativeControl(call, acceptedProposalID: acceptedProposalID,
+                                service: nativeTask, revision: expected)
+                        } else {
+                        result = try await checkpointed(call, proposalID: acceptedProposalID, revision: expected, budget: budget, action: { [self] in
+                        if call.name == NativeWindowReadTool.name {
+                            guard !usesCodex, let nativeTask else { throw RelayError.message("Native window reading requires the original local task scope.") }
+                            tools.invalidateApprovals()
+                            guard let run = journalRuns[expected] else { throw CancellationError() }
+                            let context = multiAgentContinuationContext()
+                            let contribution = try await multiAgentContinuation.prepare(call, proposalID: acceptedProposalID,
+                                run: run, context: context, grants: { [weak self] in self?.grants ?? [] })
+                            let output = try await nativeTask.read(call, acceptedProposalID: acceptedProposalID, objective: objective)
+                            try gate(expected)
+                            guard interactiveSessionActive, historyFailure == nil,
+                                  multiAgentContinuationContext() == context else { throw CancellationError() }
+                            multiAgentContinuation.markUnsupportedSourceContribution(prepared: contribution, currentContext: context)
+                            return output
                         } else if call.name == SidekickWindowText.definition.name {
                             try ToolPolicy.validate(call, against: definitions)
                             guard let visualTarget else { throw RelayError.message("Choose the current app in Sidekick before using its visual text.") }
@@ -961,6 +1088,7 @@ final class AssistantStore {
                             return observed
                         } else { return try await tools.execute(call) }
                         }, result: { $0 })
+                        }
                         record(call.name, "\(result.summary)\nEvidence: \(result.evidence)", result.verified ? "verified" : "effect uncertain")
                         let output = Self.toolFeedback(result)
                         let cloudOutput: String?
@@ -1001,6 +1129,7 @@ final class AssistantStore {
                         try gate(expected)
                     } catch let failure as JournalError { throw failure }
                     catch is CancellationError { throw CancellationError() }
+                    catch let declined as NativeVisualTaskFailure where declined == .reviewDeclined { throw declined }
                     catch let limit as TaskRecoveryBudget.Limit { throw limit }
                     catch {
                         guard expected == revision, !Task.isCancelled else { throw CancellationError() }
@@ -1042,6 +1171,7 @@ final class AssistantStore {
                         } else { try recovery.recordFailure(recoveryKey) }
                     } catch let failure as JournalError { throw failure }
                     catch is CancellationError { throw CancellationError() }
+                    catch let declined as NativeVisualTaskFailure where declined == .reviewDeclined { throw declined }
                     catch let limit as TaskRecoveryBudget.Limit { throw limit }
                     catch {
                         try gate(expected)
@@ -1057,6 +1187,14 @@ final class AssistantStore {
                     try gate(expected)
                 }
             }
+        } catch let declined as NativeVisualTaskFailure where declined == .reviewDeclined {
+            reconcileUnansweredTools()
+            if expected == revision {
+                phase = .needsInput
+                appendVisibleMessage(ChatMessage(role: "assistant", text: "That visual action was declined. Remaining steps are paused; no equivalent input will be attempted in this run."), for: expected)
+            }
+            activeAgentRole = nil
+            persist()
         } catch is CancellationError {
             reconcileUnansweredTools()
             if expected == revision { phase = .stopped }
@@ -1078,53 +1216,149 @@ final class AssistantStore {
                           "verified": .bool(result.verified)]).pretty
     }
 
-    private func runMultiAgent(revision expected: Int, nativeReader: NativeWindowReadService?) async {
+    private func nativeValidationRunID(_ expected: Int) throws -> UUID {
+        try gate(expected)
+        guard let run = journalRuns[expected] else { throw CancellationError() }
+        return run.taskID
+    }
+
+    private func runMultiAgent(revision expected: Int, nativeTask: NativeComputerTaskService?, budget: TaskRunBudget) async {
         defer { tools.hideActionPointer() }
-        let budget = makeRunBudget()
         let objective = activeObjective
+        let selectedConfiguration = configuration
+        let logicalTaskID = nativeTaskID
+        let stepContext = multiAgentContinuationContext()
+        let stepCheckpoint = multiAgentStepCheckpoint
         activeAgentRole = .planner
         currentPlanSteps = []
         agentActivities = []
         phase = .thinking
 
         let orchestrator = MultiAgentOrchestrator(
-            allTools: MacTools.definitions + (nativeReader == nil ? [] : [NativeWindowReadTool.definition]),
+            allTools: MacTools.definitions + (nativeTask?.definitions ?? []),
             configuration: configuration,
-            complete: { [weak self] input, tools, config in
-                guard let self else { throw CancellationError() }
-                if let completeOverride = self.completeOverride {
-                    return BrowserTaskRouting.route(try await completeOverride(input, tools, config), objective: objective)
-                }
-                return BrowserTaskRouting.route(try await self.model.complete(messages: input, tools: tools, configuration: config), objective: objective)
-            },
+            complete: { _,_,_ in throw RelayError.message("A source-bound multi-agent completion is required.") },
             execute: { _ in throw RelayError.message("A durable accepted proposal is required before dispatch.") },
-            executeProposal: { [weak self] call, proposalID in
-                guard let self else { throw CancellationError() }
-                return try await self.checkpointed(call, proposalID: proposalID, revision: expected, budget: budget, action: {
-                self.phase = .acting
-                if call.name == NativeWindowReadTool.name {
-                    guard let nativeReader else { throw RelayError.message("Native window reading requires the original local task scope.") }
+            executeBoundProposal: { [weak self] call, proposalID, inputProof in
+                guard let self, let run = self.journalRuns[expected] else { throw CancellationError() }
+                if call.name == NativeWindowControlTools.outerName {
+                    guard let nativeTask else { throw NativeVisualTaskFailure.staleTask }
+                    self.tools.invalidateApprovals()
                     self.modelMessages.append(ModelMessage(role: "assistant", content: "", toolCalls: [call]))
                     do {
-                        self.tools.invalidateApprovals()
-                        let result = try await nativeReader.read(call, objective: objective)
+                        let result = try await self.runNativeControl(call, acceptedProposalID: proposalID,
+                            service: nativeTask, revision: expected, inputProof: inputProof)
                         try self.gate(expected)
                         self.modelMessages.append(ModelMessage(role: "tool", content: Self.toolFeedback(result), toolCallID: call.id, toolName: call.name))
                         return result
                     } catch {
-                        self.modelMessages.append(ModelMessage(role: "tool", content: "Native window read did not complete. No input was requested by this read.", toolCallID: call.id, toolName: call.name))
+                        // Keep a complete generic pair without publishing a late
+                        // private provider/body error into a replacement run.
+                        if self.revision == expected {
+                            self.modelMessages.append(ModelMessage(role: "tool", content: "No aggregate native result is available. Original checkpoints retain attempted facts; do not repeat input blindly.", toolCallID: call.id, toolName: call.name))
+                        }
                         throw error
                     }
                 }
-                if let executeOverride = self.executeOverride {
-                    return try await executeOverride(call)
+                let context = self.multiAgentContinuationContext()
+                let validateAcceptedTask: @MainActor @Sendable () throws -> Void = {
+                    try self.gate(expected); try budget.check()
+                    guard self.nativeTaskID == logicalTaskID, self.configuration == selectedConfiguration,
+                          self.interactiveSessionActive, !self.isClearingConversation,
+                          self.journalRuns[expected]?.taskID == run.taskID,
+                          self.multiAgentContinuationContext() == context else { throw CancellationError() }
                 }
-                self.tools.grants = self.grants
-                self.tools.knowledge = self.knowledge
-                self.tools.knowledgeSearch = self.knowledgeSearch
-                self.tools.calendarSource = self.calendarSource
-                return try await self.tools.execute(call)
+                try validateAcceptedTask()
+                let prepared = try await self.multiAgentContinuation.prepare(call, proposalID: proposalID, run: run,
+                    context: context, grants: { [weak self] in self?.grants ?? [] })
+                try validateAcceptedTask()
+                let admitAcceptedInput: @MainActor @Sendable () async throws -> Void = {
+                    try validateAcceptedTask(); try await inputProof?.validate(); try validateAcceptedTask()
+                }
+                let output = try await self.checkpointed(call, proposalID: proposalID, revision: expected, budget: budget,
+                    admitAction: admitAcceptedInput, action: {
+                    try validateAcceptedTask()
+                    @MainActor func actualAction() async throws -> ToolResult {
+                        self.phase = .acting
+                        if call.name == NativeWindowReadTool.name {
+                            guard let nativeTask else { throw RelayError.message("Native window reading requires the original local task scope.") }
+                            self.modelMessages.append(ModelMessage(role: "assistant", content: "", toolCalls: [call]))
+                            do {
+                                self.tools.invalidateApprovals()
+                                let result = try await nativeTask.read(call, acceptedProposalID: proposalID, objective: objective, inputProof: inputProof)
+                                try self.gate(expected)
+                                self.modelMessages.append(ModelMessage(role: "tool", content: Self.toolFeedback(result), toolCallID: call.id, toolName: call.name))
+                                return result
+                            } catch {
+                                self.modelMessages.append(ModelMessage(role: "tool", content: "Native window read did not complete. No input was requested by this read.", toolCallID: call.id, toolName: call.name))
+                                throw error
+                            }
+                        }
+                        if let executeOverride = self.executeOverride {
+                            return try await executeOverride(call)
+                        }
+                        self.tools.grants = self.grants
+                        self.tools.knowledge = self.knowledge
+                        self.tools.knowledgeSearch = self.knowledgeSearch
+                        self.tools.calendarSource = self.calendarSource
+                        return try await self.tools.execute(call)
+                    }
+                    let result = try await actualAction()
+                    await self.multiAgentContinuation.record(result, prepared: prepared, grants: { [weak self] in self?.grants ?? [] })
+                    return result
                 }, result: { $0 })
+                self.multiAgentContinuation.acknowledge(prepared)
+                return output
+            },
+            priorReceipts: { [weak self] remainingBytes in
+                guard let self else { throw CancellationError() }
+                try self.gate(expected)
+                let context = self.multiAgentContinuationContext()
+                return try await self.multiAgentContinuation.snapshot(context: context,
+                    validationRunID: try self.nativeValidationRunID(expected), maximumBytes: remainingBytes, isCurrent: { [weak self] in
+                    guard let self else { return false }
+                    return self.revision == expected && self.interactiveSessionActive && !self.isClearingConversation
+                        && self.multiAgentContinuationContext() == context
+                })
+            },
+            sourceBoundComplete: { [weak self] input, tools, config, sourceAuthorization in
+                guard let self else { throw CancellationError() }
+                @MainActor func validateSelection() throws {
+                    try self.gate(expected)
+                    guard self.interactiveSessionActive, self.nativeTaskID == logicalTaskID,
+                          config == selectedConfiguration, self.configuration == selectedConfiguration else { throw CancellationError() }
+                }
+                try validateSelection(); try await sourceAuthorization?()
+                let reply: ModelReply
+                do {
+                    if let completeOverride = self.completeOverride { reply = try await completeOverride(input, tools, config) }
+                    else { reply = try await self.model.complete(messages: input, tools: tools, configuration: config, sourceAuthorization: sourceAuthorization) }
+                } catch { try validateSelection(); try await sourceAuthorization?(); throw error }
+                try validateSelection(); try await sourceAuthorization?()
+                return BrowserTaskRouting.route(reply, objective: objective)
+            },
+            admitReadbackSource: { [weak self] call, acceptedProposalID, result in
+                guard let self else { throw CancellationError() }
+                try self.gate(expected); try budget.check()
+                guard self.multiAgentContinuationContext() == stepContext else { throw CancellationError() }
+                let proof: ModelInputSourceProof
+                if NativeCurrentModelContext.isNative(call.name) {
+                    guard let nativeTask else { throw NativeCurrentReadbackReceipts.Failure.unavailable }
+                    proof = try await nativeTask.admitReadbackSourceProof(call, acceptedProposalID: acceptedProposalID, result: result)
+                } else {
+                    proof = try await self.multiAgentContinuation.freshReadbackSourceProof(
+                        call: call, result: result, context: stepContext, validationRunID: try self.nativeValidationRunID(expected),
+                        grants: { [weak self] in self?.grants ?? [] },
+                        currentContext: { [weak self] in self?.multiAgentContinuationContext() },
+                        isCurrent: { [weak self] in
+                            guard let self else { return false }
+                            return self.revision == expected && self.interactiveSessionActive && !self.isClearingConversation
+                                && self.nativeTaskID == logicalTaskID && self.configuration == selectedConfiguration
+                        })
+                }
+                try self.gate(expected); try budget.check()
+                try await proof.validate(); try self.gate(expected); try budget.check()
+                return proof
             },
             reviewReason: { [weak self] call in
                 guard let self else { return nil }
@@ -1148,7 +1382,10 @@ final class AssistantStore {
                 guard let self else { throw CancellationError() }
                 try self.gate(expected)
                 try budget.check()
-            }
+                guard self.multiAgentContinuationContext() == stepContext else { throw CancellationError() }
+            },
+            stepCheckpoint: stepCheckpoint,
+            stepContext: stepContext
         )
 
         orchestrator.onRoleChange = { [weak self] role in
@@ -1189,6 +1426,14 @@ final class AssistantStore {
             let finalText = result.content + "\n\n" + evidence
             appendVisibleMessage(ChatMessage(role: "assistant", text: finalText, artifacts: result.artifacts), for: expected)
             phase = result.isSuccess ? .idle : .needsInput
+            activeAgentRole = nil
+            persist()
+        } catch let declined as NativeVisualTaskFailure where declined == .reviewDeclined {
+            reconcileUnansweredTools()
+            if expected == revision {
+                phase = .needsInput
+                appendVisibleMessage(ChatMessage(role: "assistant", text: "That visual action was declined. Remaining steps are paused; no equivalent input will be attempted in this run."), for: expected)
+            }
             activeAgentRole = nil
             persist()
         } catch is CancellationError {
@@ -1240,8 +1485,8 @@ final class AssistantStore {
         interactiveSessionActive = value
         if !value {
             if submissions.values.contains(where: { $0.ticket.isPending }) { stop() }
-            let wasReadingNativeWindow = activeNativeReader?.service.isBusy == true
-            activeNativeReader?.service.stop()
+            let wasReadingNativeWindow = activeNativeTask?.service.isBusy == true
+            activeNativeTask?.service.stop()
             if wasReadingNativeWindow { task?.cancel() }
             model.invalidateConversation()
             localVisionStatus = nil
@@ -1256,7 +1501,7 @@ final class AssistantStore {
         for submission in submissions.values { submission.ticket.resolve(.stopped) }
         submissions.removeAll()
         conversationHistory.stop(stoppedJournalRun)
-        activeNativeReader?.service.stop()
+        activeNativeTask?.service.stop()
         onStopInput?()
         activeWindowObservation = nil
         activeSidekickContext = nil
@@ -1343,7 +1588,13 @@ final class AssistantStore {
         }
         for call in awaiting { modelMessages.append(ModelMessage(role: "tool", content: "Interrupted; not confirmed executed. Observe current state before considering a retry.", toolCallID: call.id, toolName: call.name)) }
     }
-    private func requestReview(_ call: ToolCall, reason: String, revision: Int, budget: TaskRunBudget, sharesWithOpenAI: Bool = false) async -> Bool {
+    private func requestReview(_ call: ToolCall, reason: String, revision: Int, budget: TaskRunBudget, sharesWithOpenAI: Bool = false,
+                               visualPresentation: NativeVisualReviewPresentation? = nil) async -> Bool {
+        if let visual = visualPresentation {
+            guard !activeRunUsesCodex, interactiveSessionActive, !isClearingConversation,
+                  self.revision == revision, visual.taskID == nativeTaskID,
+                  visual.taskRevision == revision, visual.imageIsDecodable else { return false }
+        }
         budget.pauseForReview()
         let expiry: Task<Void, Never>?
         if let remaining = budget.remainingLifetime {
@@ -1361,11 +1612,12 @@ final class AssistantStore {
         }
         return await withCheckedContinuation { continuation in
             reviewContinuation = continuation
-            pendingReview = PendingReview(call: call, reason: reason, revision: revision, sharesWithOpenAI: sharesWithOpenAI)
+            pendingReview = PendingReview(call: call, reason: reason, revision: revision, sharesWithOpenAI: sharesWithOpenAI,
+                visualPresentation: visualPresentation)
         }
     }
     func approveReview() {
-        guard let review = pendingReview, review.revision == revision, phase == .awaitingReview else { resolveReview(false); return }
+        guard let review = pendingReview, review.revision == revision, phase == .awaitingReview, review.canApprove else { resolveReview(false); return }
         resolveReview(true)
     }
     func denyReview() { resolveReview(false) }
@@ -1636,6 +1888,7 @@ final class AssistantStore {
         pendingContextReset = modelMessages.count
         activeObjective = ""
         nativeTaskReadAuthority = nil; nativeTaskID = UUID()
+        multiAgentStepCheckpoint = nil
         tools.invalidateApprovals()
         selectionNotice = reason + " Visible conversation and Activity remain in local history; start a new request or clear history separately."
         persist()
@@ -1796,13 +2049,15 @@ final class AssistantStore {
             }
             self.pendingUserDelivery.removeAll(); self.submissions.removeAll(); self.newJournalMessageIDs.removeAll(); self.pendingVisibleMessageIDs.removeAll(); self.visibleMessageOrder.removeAll()
             self.historyRestoreTask = nil; self.historyRestorationFinished = true
-            self.historyFailure = nil; self.historyNotice = nil; self.restoredTaskNeedsNewInvocation = false
+            self.historyFailure = nil; self.historyFailureID = nil; self.ownedHistoryErrorID = nil; self.historyNotice = nil; self.restoredTaskNeedsNewInvocation = false
             self.messages = []
             self.modelMessages = []
             self.activity = []
             self.verifiedResults = []
             self.activeObjective = ""
             self.nativeTaskReadAuthority = nil; self.nativeTaskID = UUID()
+            self.multiAgentContinuation.startTask(nil)
+            self.multiAgentStepCheckpoint = nil
             self.activeContextStart = 0
             self.pendingContextReset = nil
             self.errorMessage = nil
@@ -2092,6 +2347,7 @@ final class AssistantStore {
         } catch { reportHistoryFailure(error); throw error }
     }
     private func checkpointed<Output>(_ call: ToolCall, proposalID: UUID, revision expected: Int, budget: TaskRunBudget,
+                                      admitAction: (@MainActor @Sendable () async throws -> Void)? = nil,
                                       action: @escaping @MainActor () async throws -> Output,
                                       result: @escaping @MainActor (Output) -> ToolResult) async throws -> Output {
         guard let run = journalRuns[expected] else { throw JournalError.invalidTransition }
@@ -2105,7 +2361,7 @@ final class AssistantStore {
                 self.tools.knowledge = self.knowledge
                 self.tools.knowledgeSearch = self.knowledgeSearch
                 self.tools.calendarSource = self.calendarSource
-            }, action: action, result: result, unsavedResult: { [weak self] observed in
+            }, admitAction: admitAction, action: action, result: result, unsavedResult: { [weak self] observed in
                 guard let self else { return }
                 self.record(call.name, "A factual result arrived but its checkpoint could not be saved: \(observed.summary)\n\(observed.evidence)", "not saved")
                 // Keep the factual pair in memory. All inference is still gated on saving
@@ -2128,6 +2384,10 @@ final class AssistantStore {
             throw failure
         }
     }
+    private func multiAgentContinuationContext() -> MultiAgentContinuation.Context {
+        .init(logicalTaskID: nativeTaskID, configuration: configuration,
+              scopeID: continuationScopeID, sourceRevision: nativeSourceRevision)
+    }
     private func resolveSubmissions(for runID: UUID, as status: ConversationSubmission.Status) {
         let ids = submissions.filter { $0.value.runID == runID }.map(\.key)
         for id in ids { submissions.removeValue(forKey: id)?.ticket.resolve(status) }
@@ -2144,15 +2404,34 @@ final class AssistantStore {
     }
     /// Explicit storage-only repair. No planner reply or action is replayed here.
     func retryConversationStorage() async throws {
+        let repair = historyRepairContext()
         try await conversationHistory.retryResultSaves()
         try await flushVisibleHistory()
+        if finishHistoryRepair(repair) { multiAgentContinuation.storageRepaired(for: repair.logicalTaskID) }
+    }
+    private func historyRepairContext() -> HistoryRepairContext {
+        .init(failureID: historyFailureID, restoreEpoch: historyRestoreEpoch, logicalTaskID: nativeTaskID)
+    }
+    private func finishHistoryRepair(_ context: HistoryRepairContext) -> Bool {
+        // A later failure/reset owns its own state. Even an identical-looking
+        // error assigned by another caller is not this repair's UI to clear.
+        guard historyRestoreEpoch == context.restoreEpoch, historyFailureID == context.failureID,
+              nativeTaskID == context.logicalTaskID else { return false }
         historyFailure = nil
+        historyFailureID = nil
+        if let failureID = context.failureID, ownedHistoryErrorID == failureID,
+           errorMessage?.utf8.elementsEqual(Self.historyStorageErrorMessage.utf8) == true { errorMessage = nil }
+        ownedHistoryErrorID = nil
         historyNotice = pendingVisibleMessageIDs.isEmpty ? nil : "Saving conversation…"
+        return true
     }
     private func reportHistoryFailure(_ error: any Error) {
+        let failureID = UUID()
         historyFailure = error
+        historyFailureID = failureID
         historyNotice = "Conversation changes are not saved."
-        errorMessage = "Conversation storage needs attention. Further actions are stopped. Your draft and prior files are preserved; an earlier in-flight effect may have completed."
+        errorMessage = Self.historyStorageErrorMessage
+        ownedHistoryErrorID = failureID
     }
 
     private struct SavedState: Codable {

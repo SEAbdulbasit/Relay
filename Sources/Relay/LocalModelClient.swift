@@ -111,19 +111,33 @@ final class LocalModelClient {
         activeConversation?.cancel()
     }
 
-    func complete(messages: [ModelMessage], tools: [ToolDefinition], configuration: ModelConfiguration) async throws -> ModelReply {
-        try await complete(messages: messages, tools: tools, configuration: configuration, visionInput: nil)
+    func complete(messages: [ModelMessage], tools: [ToolDefinition], configuration: ModelConfiguration,
+                  sourceAuthorization: (@MainActor @Sendable () async throws -> Void)? = nil) async throws -> ModelReply {
+        try await complete(messages: messages, tools: tools, configuration: configuration, visionInput: nil, sourceAuthorization: sourceAuthorization)
     }
 
     /// Images exist only in this local native completion. They are never added to Codable
     /// application history or passed through the hosted text-planning route.
     func complete(messages: [ModelMessage], tools: [ToolDefinition], configuration: ModelConfiguration,
-                  vision: NativeVisionPlanningInput) async throws -> ModelReply {
-        try await complete(messages: messages, tools: tools, configuration: configuration, visionInput: vision)
+                  vision: NativeVisionPlanningInput,
+                  sourceAuthorization: (@MainActor @Sendable () async throws -> Void)? = nil) async throws -> ModelReply {
+        try await complete(messages: messages, tools: tools, configuration: configuration, visionInput: vision, sourceAuthorization: sourceAuthorization)
     }
 
     private func complete(messages: [ModelMessage], tools: [ToolDefinition], configuration: ModelConfiguration,
-                          visionInput: NativeVisionPlanningInput?) async throws -> ModelReply {
+                          visionInput: NativeVisionPlanningInput?,
+                          sourceAuthorization: (@MainActor @Sendable () async throws -> Void)? = nil) async throws -> ModelReply {
+        try await sourceAuthorization?()
+        do {
+            let reply = try await completion(messages: messages, tools: tools, configuration: configuration,
+                                             visionInput: visionInput, sourceAuthorization: sourceAuthorization)
+            try await sourceAuthorization?()
+            return reply
+        } catch { try await sourceAuthorization?(); throw error }
+    }
+    private func completion(messages: [ModelMessage], tools: [ToolDefinition], configuration: ModelConfiguration,
+                            visionInput: NativeVisionPlanningInput?,
+                            sourceAuthorization: (@MainActor @Sendable () async throws -> Void)?) async throws -> ModelReply {
         guard !generating else { throw RelayError.message("Only one model inference can run at a time.") }
         try Task.checkCancellation()
         var visionContext: (systemPrompt: String, messages: [ModelMessage])?
@@ -138,8 +152,12 @@ final class LocalModelClient {
             visionContext = context; visionTools = nativeTools
         }
         try await load(configuration: configuration, mode: visionInput == nil ? .text : .vision)
+        let loadedGeneration = generation
         try Task.checkCancellation()
         try visionInput?.validate()
+        try await sourceAuthorization?()
+        try Task.checkCancellation()
+        guard generation == loadedGeneration else { throw CancellationError() }
         guard !generating else { throw RelayError.message("Only one model inference can run at a time.") }
         guard let runtime else { throw RelayError.message("Load a local model first.") }
         let context: (systemPrompt: String, messages: [ModelMessage])
@@ -170,11 +188,19 @@ final class LocalModelClient {
         // Native tool IDs in the provisioned v0.18.1 model require application repair.
         // Replaying the validated application history keeps those identities coherent;
         // native KV retention is deliberately not enabled for this runtime.
+        try await sourceAuthorization?()
+        try Task.checkCancellation()
+        guard generation == revision else { throw CancellationError() }
         let conversation = try await runtime.createConversation(config: config)
         conversationMetrics.created += 1
-        try Task.checkCancellation()
-        guard generation == revision else { conversation.cancel(); throw CancellationError() }
-        try visionInput?.validate()
+        do {
+            try Task.checkCancellation()
+            guard generation == revision else { throw CancellationError() }
+            try visionInput?.validate()
+            try await sourceAuthorization?()
+            try Task.checkCancellation()
+            guard generation == revision else { throw CancellationError() }
+        } catch { conversation.cancel(); throw error }
         activeConversation = conversation
         let inferenceClock = ContinuousClock()
         let inferenceStarted = inferenceClock.now

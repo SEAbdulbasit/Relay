@@ -12,6 +12,7 @@ import Foundation
     public var pendingResultCount: Int { pending.count }
     public func execute(_ event: JournalEvent, expectedScope: JournalScope,
                         validate: @MainActor () throws -> Void,
+                        admitAction: (@MainActor @Sendable () async throws -> Void)? = nil,
                         action: @MainActor () async throws -> JournalToolOutcome) async throws -> JournalRecord {
         guard case let .intent(intent) = event.payload else { throw JournalError.invalidEvent }
         guard active else { throw JournalError.dispatchRevoked }
@@ -23,6 +24,12 @@ import Foundation
         guard case .inserted = committed else { throw JournalError.duplicateIntent }
         do {
             try Task.checkCancellation(); guard active, revision == expectedRevision else { throw JournalError.dispatchRevoked }; try validate()
+            if let admitAction {
+                // The immutable source proof belongs to this accepted reply.
+                // Its await cannot bypass Stop or the exact current task guard.
+                try await admitAction()
+                try Task.checkCancellation(); guard active, revision == expectedRevision else { throw JournalError.dispatchRevoked }; try validate()
+            }
         } catch {
             let result = try resultEvent(event, outcome: JournalToolOutcome(intent: intent, kind: .notDispatched))
             pending[intent.invocationID] = (result, expectedScope)

@@ -5,10 +5,11 @@ import Foundation
 /// cannot use IDs produced by an earlier observation or UI change.
 nonisolated enum DesktopActionBatch {
     private static let controlChanges: Set<String> = ["set_value", "press_control", "scroll_control"]
+    private static let potentialControlChanges = controlChanges.union(["control_native_window"])
     // These mirror the entry points that discard MacTools' native/helper cache.
     // File writes invalidate too: a document change can replace its open UI.
     private static let referenceInvalidators: Set<String> = controlChanges.union([
-        "observe_app", "inspect_native_window", "stage_attachment", "open_app", "open_file", "search_finder", "move_file",
+        "observe_app", "inspect_native_window", "control_native_window", "stage_attachment", "open_app", "open_file", "search_finder", "move_file",
         "browser_navigate", "search_web", "open_url", "write_file", "create_document", "create_spreadsheet"
     ])
 
@@ -20,11 +21,11 @@ nonisolated enum DesktopActionBatch {
         var changedControl = false
         var earlierInvalidator: String?
         for call in calls {
-            let changesControl = controlChanges.contains(call.name)
+            let changesControl = potentialControlChanges.contains(call.name)
             if changesControl, changedControl {
                 throw ModelProtocolError.invalidAction("Return at most one desktop control change per reply. Choose the next change, optionally followed by an unscoped observe_app. Wait for its result before choosing another control ID")
             }
-            let consumesReferences = changesControl || (call.name == "observe_app"
+            let consumesReferences = controlChanges.contains(call.name) || (call.name == "observe_app"
                 && (hasReference(call.arguments["window_id"]) || hasReference(call.arguments["root_ref"])))
             if consumesReferences, let earlierInvalidator {
                 throw ModelProtocolError.invalidAction("\(earlierInvalidator) expires previously observed control and window IDs. Do not combine it with a later reference-based call. Return an unscoped observe_app, wait for the fresh result, then choose the next control")

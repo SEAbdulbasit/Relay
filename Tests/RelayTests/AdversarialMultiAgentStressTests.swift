@@ -91,7 +91,11 @@ struct AdversarialMultiAgentStressTests {
                     ToolCall(name: "open_app", arguments: ["app": .string("com.apple.Notes")])
                 ])
             } else if system.contains("ROLE: Critic") {
-                return ModelReply(content: "Inspection complete.", toolCalls: [])
+                // The owned mock adapter supports the first postcondition only.
+                // A generic successful inspection is not a goal verdict.
+                return ModelReply(content: stepsAttempted == ["Step 1 Verified"]
+                    ? "VERIFIED: The owned first-step oracle reports the requested process."
+                    : "UNVERIFIED: The current step has no confirmed state change.", toolCalls: [])
             }
             throw RelayError.message("Unexpected")
         }, execute: { _ in
@@ -321,7 +325,7 @@ struct AdversarialMultiAgentStressTests {
                     ToolCall(name: "open_app", arguments: ["app": .string("com.apple.Notes")])
                 ])
             } else if system.contains("ROLE: Critic") {
-                return ModelReply(content: "VERIFIED", toolCalls: [])
+                return ModelReply(content: "VERIFIED: The owned mock executor accepted this parser/role test step.", toolCalls: [])
             }
             throw RelayError.message("Unexpected")
         }, execute: { _ in
@@ -384,7 +388,7 @@ struct AdversarialMultiAgentStressTests {
                     ToolCall(name: "open_app", arguments: ["app": .string("com.apple.Terminal")])
                 ])
             } else if system.contains("ROLE: Critic") {
-                return ModelReply(content: "VERIFIED", toolCalls: [])
+                return ModelReply(content: "VERIFIED: The owned mock executor accepted this parser/role test step.", toolCalls: [])
             }
             throw RelayError.message("Unexpected")
         }, execute: { _ in

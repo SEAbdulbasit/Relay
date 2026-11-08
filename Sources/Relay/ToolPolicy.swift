@@ -3,7 +3,7 @@ import CryptoKit
 
 /// Files are usable only through explicit grants. Resolve symlinks before comparing components.
 enum ToolPolicy {
-    static func scopedURL(_ path: String, grants: [ScopeGrant], writing: Bool = false) throws -> URL {
+    nonisolated static func scopedURL(_ path: String, grants: [ScopeGrant], writing: Bool = false) throws -> URL {
         guard path.count <= 4096, path.hasPrefix("/") || path.hasPrefix("~/") else { throw RelayError.message("Use an absolute path from the selected files or folders.") }
         let url = try canonicalURL(path)
         let manager = FileManager.default
@@ -21,11 +21,12 @@ enum ToolPolicy {
 
     /// Foundation does not consistently resolve a symlink when the final output does not yet
     /// exist. Walk every component (including dangling links) before permitting a new write.
-    static func canonicalURL(_ path: String) throws -> URL {
+    nonisolated static func canonicalURL(_ path: String) throws -> URL {
         var components = (path as NSString).expandingTildeInPath.split(separator: "/").map(String.init)
         var resolved = URL(fileURLWithPath: "/", isDirectory: true)
         var links = 0
         while !components.isEmpty {
+            try Task.checkCancellation()
             let part = components.removeFirst()
             if part == "." { continue }
             if part == ".." { resolved.deleteLastPathComponent(); continue }

@@ -104,28 +104,53 @@ nonisolated struct SidekickPanelLayout: Equatable, Sendable {
     let notchWidth: CGFloat
     var notchCenterX: CGFloat? = nil
 
-    var onNotchedDisplay: Bool { notchInset > 0 }
-    var centerX: CGFloat { onNotchedDisplay ? notchCenterX ?? screen.midX : screen.midX }
-    var topEdge: CGFloat { onNotchedDisplay ? screen.maxY : min(screen.maxY, visibleTop) - 4 }
+    var onNotchedDisplay: Bool { notchInset.isFinite && notchInset > 0 }
+    var centerX: CGFloat {
+        let proposed = onNotchedDisplay ? notchCenterX ?? screen.midX : screen.midX
+        return proposed.isFinite ? proposed : screen.midX
+    }
+    var topEdge: CGFloat {
+        guard validScreen else { return 0 }
+        let visible = visibleTop.isFinite ? visibleTop : screen.maxY
+        return min(screen.maxY, max(screen.minY, onNotchedDisplay ? screen.maxY : min(screen.maxY, visible) - 4))
+    }
+    private var validScreen: Bool {
+        [screen.minX, screen.minY, screen.width, screen.height].allSatisfy(\.isFinite)
+            && screen.width > 16 && screen.height > 8
+    }
+    private var boundedNotchInset: CGFloat { onNotchedDisplay ? min(notchInset, max(0, screen.height)) : 0 }
 
     var hardwareOpening: CGRect? {
         guard onNotchedDisplay else { return nil }
-        return topAligned(width: notchWidth > 0 ? notchWidth : 200, height: notchInset)
+        return topAligned(width: notchWidth > 0 ? notchWidth : 200, height: boundedNotchInset)
     }
 
-    var canvas: CGRect { topAligned(width: 570, height: 282 + notchInset) }
+    var canvas: CGRect { topAligned(width: 570, height: 282 + boundedNotchInset) }
+
+    /// The actual content surface determines additional space. The base canvas
+    /// remains for compact/hover interaction; review content never clips at282.
+    func canvas(containing surface: CGRect) -> CGRect {
+        guard validScreen else { return .zero }
+        guard !surface.isNull, !surface.isInfinite,
+              [surface.minX, surface.minY, surface.width, surface.height].allSatisfy(\.isFinite) else { return canvas }
+        return canvas.union(surface).intersection(screen)
+    }
 
     func frame(for size: CGSize, compact: Bool, expandedCue: Bool = false, showsStatus: Bool = false) -> CGRect {
         if compact, let opening = hardwareOpening {
             let extraWidth: CGFloat = showsStatus ? 180 : expandedCue ? 24 : 0
-            return topAligned(width: opening.width + extraWidth, height: notchInset + (expandedCue ? 5 : 0))
+            return topAligned(width: opening.width + extraWidth, height: boundedNotchInset + (expandedCue ? 5 : 0))
         }
-        return topAligned(width: size.width, height: size.height + notchInset)
+        return topAligned(width: size.width, height: size.height + boundedNotchInset)
     }
 
     private func topAligned(width desiredWidth: CGFloat, height: CGFloat) -> CGRect {
-        let width = min(desiredWidth, max(1, screen.width - 16))
-        return CGRect(x: centerX - width / 2, y: topEdge - height, width: width, height: height)
+        guard validScreen, desiredWidth.isFinite, height.isFinite else { return .zero }
+        let width = min(max(1, desiredWidth), screen.width - 16)
+        let availableHeight = max(0, topEdge - screen.minY - 8)
+        let boundedHeight = min(max(0, height), availableHeight)
+        let x = min(screen.maxX - 8 - width, max(screen.minX + 8, centerX - width / 2))
+        return CGRect(x: x, y: topEdge - boundedHeight, width: width, height: boundedHeight)
     }
 }
 
@@ -230,6 +255,14 @@ final class NotchOverlayController {
         self.presentsPanels = presentsPanels
         self.quickTextActionOverride = quickTextAction
         self.frontmostPID = frontmostPID
+    }
+
+    /// This initializer cannot accept presentsPanels:true. Geometry-only
+    /// previews have no display selection, panel or source-capture behavior.
+    convenience init(preferences: UserDefaults, nonpresentingLayout: SidekickPanelLayout,
+                     frontmostPID: @escaping @MainActor () -> Int32? = { nil }) {
+        self.init(preferences: preferences, presentsPanels: false, frontmostPID: frontmostPID)
+        self.panelLayout = nonpresentingLayout
     }
 
     func connect(store: AssistantStore, available: Bool, openWorkspace: @escaping () -> Void) {
@@ -388,6 +421,15 @@ final class NotchOverlayController {
         } catch { showTextActionError(error.localizedDescription) }
     }
 
+    func presentationContentSize(for owner: AssistantStore) -> CGSize {
+        guard expanded else { return Self.compactSize }
+        if let review = owner.pendingReview { return CGSize(width: 530, height: review.visualPresentation == nil ? 256 : 420) }
+        if ownsDictation { return CGSize(width: 530, height: 260) }
+        if owner.isRunning { return CGSize(width: 420, height: 64) }
+        if latestResult(in: owner.messages) != nil { return CGSize(width: 530, height: 215) }
+        return CGSize(width: 512, height: errorMessage == nil ? 125 : 155)
+    }
+
     func open() {
         open(on: displayDescriptors().first(where: { $0.layout.screen.contains(NSEvent.mouseLocation) })?.id)
     }
@@ -520,11 +562,15 @@ final class NotchOverlayController {
             hoveringNotch = false
         }
         panelLayout = layout
+        let surface = layout.frame(for: presentationContentSize(for: store), compact: !expanded,
+            expandedCue: hoveringNotch || store.isRunning || ownsDictation || latestResult(in: store.messages) != nil,
+            showsStatus: compactStatusEnabled && !expanded && (store.isRunning || ownsDictation || latestResult(in: store.messages) != nil))
+        let canvas = layout.canvas(containing: surface)
         if let panel {
-            if panel.frame != layout.canvas { panel.setFrame(layout.canvas, display: true) }
+            if panel.frame != canvas { panel.setFrame(canvas, display: true) }
             return
         }
-        let window = SidekickFloatingPanel(contentRect: layout.canvas, styleMask: [.borderless, .nonactivatingPanel],
+        let window = SidekickFloatingPanel(contentRect: canvas, styleMask: [.borderless, .nonactivatingPanel],
                                           backing: .buffered, defer: false)
         window.identifier = NSUserInterfaceItemIdentifier("relay.sidekick.notch")
         window.title = "Relay Sidekick"
@@ -558,6 +604,12 @@ final class NotchOverlayController {
 
     func updateInteractionFrame(_ frame: CGRect) {
         interactionFrame = frame
+        if let panel, let layout = panelLayout {
+            let canvas = layout.canvas(containing: frame)
+            // Resizing retains the same panel/key state. It never orders,
+            // activates, launches or chooses another display/window.
+            if panel.frame != canvas { panel.setFrame(canvas, display: true) }
+        }
         updatePointer()
     }
 
@@ -923,17 +975,7 @@ struct NotchOverlayBar: View {
         return .compose
     }
 
-    private var preferredContentSize: CGSize {
-        let desired: CGSize = switch content {
-        case .compact: CGSize(width: 210, height: 34)
-        case .compose: CGSize(width: 512, height: controller.errorMessage == nil ? 125 : 155)
-        case .progress: CGSize(width: 420, height: 64)
-        case .voice: CGSize(width: 530, height: 260)
-        case .review: CGSize(width: 530, height: 256)
-        case .result: CGSize(width: 530, height: 215)
-        }
-        return desired
-    }
+    private var preferredContentSize: CGSize { controller.presentationContentSize(for: store) }
 
     private var attached: Bool { controller.panelLayout?.onNotchedDisplay == true }
     private var expandedCue: Bool {
@@ -962,7 +1004,9 @@ struct NotchOverlayBar: View {
             case .compose: composer
             case .voice: dictation
             case .progress: progress
-            case .review(let review): decision(review)
+            case .review(let review):
+                if canShowInlineReview(review) { decision(review) }
+                else { constrainedReview(review) }
             case .result(let result): response(result)
             }
         }
@@ -976,8 +1020,8 @@ struct NotchOverlayBar: View {
                 outline.strokeBorder(.white.opacity(0.15), lineWidth: 1).allowsHitTesting(false)
             }
         }
-        .frame(width: controller.panelLayout?.canvas.width ?? frame.width,
-               height: controller.panelLayout?.canvas.height ?? frame.height, alignment: .top)
+        .frame(width: controller.panelLayout?.canvas(containing: frame).width ?? frame.width,
+               height: controller.panelLayout?.canvas(containing: frame).height ?? frame.height, alignment: .top)
         .preferredColorScheme(.dark)
         .onChange(of: frame, initial: true) { _, value in controller.updateInteractionFrame(value) }
         .onChange(of: controller.expanded) { _, expanded in
@@ -1200,6 +1244,32 @@ struct NotchOverlayBar: View {
         }
     }
 
+    private func canShowInlineReview(_ review: PendingReview) -> Bool {
+        let contentHeight = surface.height - (controller.panelLayout?.notchInset ?? 0)
+        return contentHeight >= (review.visualPresentation == nil ? 240 : 350)
+    }
+
+    /// Never leave a Perform button beside clipped evidence. On a genuinely
+    /// short display, review continues in the workspace or is declined here.
+    private func constrainedReview(_ review: PendingReview) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if surface.height - (controller.panelLayout?.notchInset ?? 0) >= 150 {
+                Label("Review in Relay", systemImage: "arrow.up.forward.app")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("This display has too little room to show the complete review. Open Relay to inspect it, or decline.")
+                    .font(.relayCaption).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Button("Open Relay", action: controller.showWorkspace).buttonStyle(.link).font(.relayCaption)
+                Spacer(minLength: 8)
+                Button("Decline") {
+                    if store.pendingReview?.id == review.id { store.denyReview() }
+                }.buttonStyle(RelaySecondaryButtonStyle())
+            }
+        }
+        .accessibilityIdentifier("sidekick.review.fallback")
+    }
+
     private func decision(_ review: PendingReview) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -1210,8 +1280,11 @@ struct NotchOverlayBar: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
+                    if let visual = review.visualPresentation {
+                        NativeVisualReviewView(presentation: visual, maximumImageHeight: 140).id(visual.id)
+                    }
                     Text(review.reason).font(.system(size: 13)).textSelection(.enabled)
-                    if !review.sharesWithOpenAI && !review.hasStructuredMailReview {
+                    if !review.sharesWithOpenAI && !review.hasStructuredMailReview && review.visualPresentation == nil {
                         Text(review.call.name).font(.relayMono).foregroundStyle(RelayColors.accentEmerald)
                         Text(JSONValue.object(review.call.arguments).pretty).font(.relayMono).textSelection(.enabled)
                     }
@@ -1219,6 +1292,9 @@ struct NotchOverlayBar: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollIndicators(.visible)
+            .frame(minHeight: min(review.visualPresentation == nil ? 100 : 200,
+                max(40, surface.height - (controller.panelLayout?.notchInset ?? 0) - 156)))
+            .accessibilityIdentifier("sidekick.review.content")
             .id(review.id)
             Text(review.sharesWithOpenAI ? "Sharing sends the entire excerpt above to ChatGPT, including text you scroll to view." : review.hasStructuredMailReview ? "Review the entire message above, including text you scroll to view." : "Approval applies only to this action.")
                 .font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
@@ -1234,6 +1310,7 @@ struct NotchOverlayBar: View {
                     if store.pendingReview?.id == review.id { store.approveReview() }
                 }
                 .buttonStyle(RelayPrimaryButtonStyle())
+                .disabled(!review.canApprove)
                 .accessibilityIdentifier("sidekick.approve")
             }
         }

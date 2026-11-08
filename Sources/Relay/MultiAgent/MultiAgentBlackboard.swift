@@ -124,6 +124,14 @@ final class MultiAgentBlackboard {
         }
     }
 
+    /// Scheduling uses the app-owned plan position. Duplicate model IDs or
+    /// titles must not complete another step or collapse completed entries.
+    func completeStep(at index: Int) {
+        guard structuredPlan.indices.contains(index), structuredPlan[index].status != .verified else { return }
+        structuredPlan[index].status = .verified
+        completedSteps.append(structuredPlan[index].title)
+    }
+
     /// Record an activity item in the blackboard history and return the item.
     @discardableResult
     func recordActivity(

@@ -32,6 +32,9 @@ final class NativeWindowTaskAdapter {
         let snapshot: TargetBoundNativeObservation.Snapshot
         let isCurrent: @MainActor () -> Bool
         let refreshOriginal: (@MainActor () async throws -> Capture)?
+        /// Nil retains the old read behavior, but admits no later private-body
+        /// inference. This is an actual retained source, never an ID lookup.
+        var sourceValidation: NativeCurrentReadbackSource? = nil
     }
 
     struct Backend: Sendable {
@@ -49,15 +52,17 @@ final class NativeWindowTaskAdapter {
         let taskID: UUID
         let observationID: UUID
         let imageID: UUID?
+        let inputSourceProof: ModelInputSourceProof?
         fileprivate let owner: UUID
         fileprivate let generation: UUID
         fileprivate var consumed = false
 
         fileprivate init(messages: [ModelMessage], visionInput: NativeVisionPlanningInput?,
-                         taskID: UUID, observationID: UUID, imageID: UUID?, owner: UUID, generation: UUID) {
+                         taskID: UUID, observationID: UUID, imageID: UUID?, owner: UUID, generation: UUID,
+                         inputSourceProof: ModelInputSourceProof?) {
             self.messages = messages; self.visionInput = visionInput
             self.taskID = taskID; self.observationID = observationID; self.imageID = imageID
-            self.owner = owner; self.generation = generation
+            self.owner = owner; self.generation = generation; self.inputSourceProof = inputSourceProof
         }
     }
 
@@ -144,7 +149,8 @@ final class NativeWindowTaskAdapter {
     /// additional untrusted native-text projection is bounded explicitly.
     /// If required history will not fit, fail rather than remove user bytes or
     /// action receipts. The local model repeats its actual SDK schema check.
-    func prepareTurn(objective: String, completeHistory: [ModelMessage], readQuestion: String? = nil) throws -> PlanningTurn {
+    func prepareTurn(objective: String, completeHistory: [ModelMessage], readQuestion: String? = nil,
+                     inputSourceProof: ModelInputSourceProof? = nil) throws -> PlanningTurn {
         let source = try requireCurrent()
         guard !objective.isEmpty, completeHistory.allSatisfy({ ["user", "assistant", "tool"].contains($0.role) }) else {
             throw Failure.invalidProtocolHistory
@@ -184,7 +190,8 @@ final class NativeWindowTaskAdapter {
             })
         } else { vision = nil }
         return PlanningTurn(messages: messages, visionInput: vision, taskID: ownership.taskID,
-            observationID: source.capture.snapshot.id, imageID: source.frame?.id, owner: owner, generation: generation)
+            observationID: source.capture.snapshot.id, imageID: source.frame?.id, owner: owner, generation: generation,
+            inputSourceProof: inputSourceProof)
     }
 
     /// Called after inference and BEFORE the Store appends/dispatches anything.
@@ -199,6 +206,16 @@ final class NativeWindowTaskAdapter {
               turn.imageID == source.frame?.id else { throw Failure.changedObservation }
         guard reply.toolCalls.isEmpty else { throw Failure.unqualifiedMutation }
         return reply
+    }
+
+    /// Extract before releaseObservation. The capability itself retains only
+    /// original-target validation, not this Current/snapshot/image or answer.
+    func retainCurrentReadbackSource() throws -> NativeCurrentReadbackSource? {
+        let source = try requireCurrent()
+        guard let validation = source.capture.sourceValidation else { return nil }
+        guard validation.application == source.capture.snapshot.application else { throw Failure.wrongOwner }
+        try validation.validate(); try requireActive()
+        return validation
     }
 
     /// Dispose of the frame when returning to ordinary text planning. This is

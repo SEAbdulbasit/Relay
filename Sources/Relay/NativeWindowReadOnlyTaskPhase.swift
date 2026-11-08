@@ -7,10 +7,30 @@ import Foundation
 
     static func run(adapter: NativeWindowTaskAdapter, objective: String,
                     completeHistory: [ModelMessage], readQuestion: String? = nil, complete: Complete) async throws -> ModelReply {
+        try await runWithSource(adapter: adapter, objective: objective, completeHistory: completeHistory,
+            readQuestion: readQuestion, complete: complete).reply
+    }
+
+    struct Interpretation {
+        let reply: ModelReply
+        let source: NativeCurrentReadbackSource?
+    }
+    static func runWithSource(adapter: NativeWindowTaskAdapter, objective: String,
+                             completeHistory: [ModelMessage], readQuestion: String? = nil,
+                             inputProof: ModelInputSourceProof? = nil,
+                             complete: Complete) async throws -> Interpretation {
         defer { adapter.releaseObservation() }
-        let turn = try adapter.prepareTurn(objective: objective, completeHistory: completeHistory, readQuestion: readQuestion)
-        let reply = try await complete(turn)
+        try await inputProof?.validate()
+        let turn = try adapter.prepareTurn(objective: objective, completeHistory: completeHistory, readQuestion: readQuestion,
+            inputSourceProof: inputProof)
+        let reply: ModelReply
+        do { reply = try await complete(turn) }
+        catch { try await inputProof?.validate(); throw error }
+        try await inputProof?.validate()
         try Task.checkCancellation()
-        return try adapter.accept(reply, for: turn)
+        let accepted = try adapter.accept(reply, for: turn)
+        let source = try adapter.retainCurrentReadbackSource()
+        try source?.validate()
+        return Interpretation(reply: accepted, source: source)
     }
 }

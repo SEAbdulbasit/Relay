@@ -9,6 +9,16 @@ public actor ConversationJournal {
     #if DEBUG
     private var nextIntentFault: JournalFault?
     func injectIntentFault(_ fault: JournalFault) { nextIntentFault = fault }
+    // Debug-only deterministic result COMMIT tests. No Release callback exists.
+    private var nextResultFault: (tool: String, invocation: UUID?, fault: JournalFault)?
+    private var nextResultBoundary: (tool: String, invocation: UUID?, boundary: JournalTestBoundary, hook: @Sendable () -> Void)?
+    func injectResultFault(_ fault: JournalFault, forToolName tool: String) {
+        nextResultFault = (tool, nil, fault)
+    }
+    func atNextResultBoundary(_ boundary: JournalTestBoundary, forToolName tool: String,
+                              _ hook: @escaping @Sendable () -> Void) {
+        nextResultBoundary = (tool, nil, boundary, hook)
+    }
     private var nextBoundaryHook: (JournalTestBoundary, @Sendable () -> Void)?
     func atNextBoundary(_ boundary: JournalTestBoundary, _ hook: @escaping @Sendable () -> Void) { nextBoundaryHook = (boundary, hook) }
     #endif
@@ -276,12 +286,28 @@ public actor ConversationJournal {
         #if DEBUG
         if let fault = nextIntentFault { nextFault = fault; nextIntentFault = nil }
         #endif
-        guard case .intent = event.payload else { throw JournalError.invalidEvent }
+        guard case .intent(let intent) = event.payload else { throw JournalError.invalidEvent }
+        #if DEBUG
+        if let target = nextResultFault, target.invocation == nil, target.tool == intent.toolName {
+            nextResultFault = (target.tool, intent.invocationID, target.fault)
+        }
+        if let target = nextResultBoundary, target.invocation == nil, target.tool == intent.toolName {
+            nextResultBoundary = (target.tool, intent.invocationID, target.boundary, target.hook)
+        }
+        #endif
         let value = try append([event], expectedScope: expectedScope)[0]
         return value.inserted ? .inserted(value.record) : .alreadyRecorded(value.record)
     }
     public func commitResult(_ event: JournalEvent, expectedScope: JournalScope) throws -> JournalAppend {
-        guard case .result = event.payload else { throw JournalError.invalidEvent }
+        guard case .result(let outcome) = event.payload else { throw JournalError.invalidEvent }
+        #if DEBUG
+        if let target = nextResultFault, target.invocation == outcome.invocationID {
+            nextFault = target.fault; nextResultFault = nil
+        }
+        if let target = nextResultBoundary, target.invocation == outcome.invocationID {
+            nextBoundaryHook = (target.boundary, target.hook); nextResultBoundary = nil
+        }
+        #endif
         return try append([event], expectedScope: expectedScope, honorCancellation: false)[0]
     }
     public func finishTask(_ event: JournalEvent, expectedScope: JournalScope) throws -> JournalAppend {

@@ -112,7 +112,7 @@ struct LocalModelTests {
     }
 
     @Test func nativeSchemasMatchExecutorNamesFieldsAndRequiredArguments() throws {
-        let definitions = MacTools.definitions + [SidekickWindowText.definition, NativeWindowReadTool.definition]
+        let definitions = MacTools.definitions + [SidekickWindowText.definition, NativeWindowReadTool.definition] + [NativeWindowControlTools.outerDefinition] + NativeWindowControlTools.visualDefinitions
         #expect(Set(definitions.map(\.name) + ["capability_probe"]) == LiteRTLM.RelayNativeTools.supportedNames)
         let manager = LiteRTLM.ToolManager(tools: try LiteRTLM.RelayNativeTools.makeTools(named: definitions.map(\.name)))
         let json = try JSONDecoder().decode(JSONValue.self, from: Data(manager.toolsJsonDescription.utf8))

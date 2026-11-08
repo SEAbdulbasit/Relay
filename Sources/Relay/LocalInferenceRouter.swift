@@ -126,32 +126,51 @@ nonisolated enum LocalInferenceFailure: LocalizedError, Equatable {
             return models
         }
     }
-    func complete(messages: [ModelMessage], tools: [ToolDefinition], configuration: ModelConfiguration) async throws -> ModelReply {
+    func complete(messages: [ModelMessage], tools: [ToolDefinition], configuration: ModelConfiguration,
+                  sourceAuthorization: (@MainActor @Sendable () async throws -> Void)? = nil) async throws -> ModelReply {
         try await withPrepared(configuration) {
+            let validate = asyncAuthorization(configuration, source: sourceAuthorization)
+            try await validate()
             switch configuration.backend {
-            case .liteRTLM: return try await embedded.complete(messages: messages, tools: tools, configuration: configuration)
+            case .liteRTLM: return try await embedded.complete(messages: messages, tools: tools, configuration: configuration, sourceAuthorization: validate)
             case .lmStudio:
                 guard let selection = configuration.lmStudio?.selection else { throw LocalInferenceFailure.unconfigured }
-                return try await server.complete(messages: messages, tools: tools, selection: selection)
+                return try await server.complete(messages: messages, tools: tools, selection: selection, sourceAuthorization: validate)
             }
         }
     }
     func complete(messages: [ModelMessage], tools: [ToolDefinition], configuration: ModelConfiguration,
-                  vision: NativeVisionPlanningInput) async throws -> ModelReply {
+                  vision: NativeVisionPlanningInput,
+                  sourceAuthorization: (@MainActor @Sendable () async throws -> Void)? = nil) async throws -> ModelReply {
         try await withPrepared(configuration) {
-            try vision.validate()
-            switch configuration.backend {
-            case .liteRTLM: return try await embedded.complete(messages: messages, tools: tools, configuration: configuration, vision: vision)
-            case .lmStudio:
-                guard let selection = configuration.lmStudio?.selection else { throw LocalInferenceFailure.unconfigured }
-                let validate = authorization(configuration, source: { try vision.validate() })
-                try await checkServerVision(selection: selection, force: false, validate: validate)
-                try validate()
-                let original = try LMStudioVisionAttachment.prepare(vision)
-                return try await server.complete(messages: messages, tools: tools, selection: selection,
-                    vision: .init(jpeg: original.jpeg, annotation: original.annotation, validate: {
-                        try original.validate(); try validate()
-                    }))
+            let validate = asyncAuthorization(configuration, source: {
+                try vision.validate()
+                try await sourceAuthorization?()
+                try vision.validate()
+            })
+            do {
+                try await validate()
+                let reply: ModelReply
+                switch configuration.backend {
+                case .liteRTLM:
+                    reply = try await embedded.complete(messages: messages, tools: tools, configuration: configuration,
+                        vision: vision, sourceAuthorization: validate)
+                case .lmStudio:
+                    guard let selection = configuration.lmStudio?.selection else { throw LocalInferenceFailure.unconfigured }
+                    let imageIsCurrent = authorization(configuration, source: { try vision.validate() })
+                    try await checkServerVision(selection: selection, force: false, validate: imageIsCurrent)
+                    try await validate()
+                    let original = try LMStudioVisionAttachment.prepare(vision)
+                    reply = try await server.complete(messages: messages, tools: tools, selection: selection,
+                        vision: .init(jpeg: original.jpeg, annotation: original.annotation, validate: {
+                            try original.validate(); try imageIsCurrent()
+                        }), sourceAuthorization: validate)
+                }
+                try await validate()
+                return reply
+            } catch {
+                try await validate()
+                throw error
             }
         }
     }
@@ -195,6 +214,17 @@ nonisolated enum LocalInferenceFailure: LocalizedError, Equatable {
             })
             try await checkServerVision(selection: selection, force: true, validate: validate)
             try validate()
+        }
+    }
+    private func asyncAuthorization(_ configuration: ModelConfiguration,
+                                    source: (@MainActor @Sendable () async throws -> Void)?) -> @MainActor @Sendable () async throws -> Void {
+        let expected = revision, identity = configuration.inferenceIdentity
+        return { [weak self] in
+            try Task.checkCancellation()
+            guard let self, self.revision == expected, self.selected == identity else { throw CancellationError() }
+            try await source?()
+            try Task.checkCancellation()
+            guard self.revision == expected, self.selected == identity else { throw CancellationError() }
         }
     }
     private func authorization(_ configuration: ModelConfiguration,

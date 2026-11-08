@@ -117,6 +117,8 @@ nonisolated struct NativeReadTransportError: LocalizedError, Equatable, Sendable
         case .outputLimit: detail = "The native response exceeded its bounded output limit."; needsFreshConnection = false
         case .invalidWorkspace: detail = "The owned temporary native workspace is invalid."; needsFreshConnection = false
         case .busy: detail = "A native connection request is already in progress."; needsFreshConnection = false
+        case .transportWrite: detail = "The owned native stream could not accept a complete request."; needsFreshConnection = true
+        case .unsupportedKeyboardText: detail = "The native keyboard provider cannot preserve this literal text; no keyboard input was dispatched."; needsFreshConnection = false
         }
     }
     var errorDescription: String? {

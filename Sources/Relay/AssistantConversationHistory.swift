@@ -177,7 +177,8 @@ import RelayJournal
             if flushID == identifier { flushing = nil; flushID = nil }; return saved
         } catch { if flushID == identifier { flushing = nil; flushID = nil }; throw error }
     }
-    func perform<Output>(_ call: ToolCall, proposalID: UUID, run: Run, validate: @escaping @MainActor () throws -> Void,
+    func perform<Output>(_ call: ToolCall, proposalID: UUID, run: Run, journalEffect: JournalEffect = .unknown, validate: @escaping @MainActor () throws -> Void,
+                         admitAction: (@MainActor @Sendable () async throws -> Void)? = nil,
                          action: @escaping @MainActor () async throws -> Output,
                          result: @escaping @MainActor (Output) -> ToolResult,
                          unsavedResult: @escaping @MainActor (ToolResult) -> Void,
@@ -188,13 +189,13 @@ import RelayJournal
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys,.withoutEscapingSlashes]
         let encoded = try encoder.encode(call); guard encoded.count <= 128 * 1024 else { throw JournalError.tooLarge }
         let intent = try JournalIntent(proposalID: proposalID, producerEpoch: opened.journal.producerEpoch, toolCallID: JournalOpaqueID(call.id), toolName: call.name,
-            callDigest: Data(SHA256.hash(data: encoded)), effect: .unknown)
+            callDigest: Data(SHA256.hash(data: encoded)), effect: journalEffect)
         let event = JournalEvent(id: try JournalOpaqueID(UUID().uuidString), taskID: run.taskID, attemptID: run.attemptID, createdAtMilliseconds: Self.nowMilliseconds, payload: .intent(intent))
         let checkpoint = checkpoints[run.taskID] ?? JournalDispatchCheckpoint(journal: opened.journal)
         checkpoints[run.taskID] = checkpoint
         var output: Output?, actionError: (any Error)?, serializationError: (any Error)?
         do {
-        _ = try await checkpoint.execute(event, expectedScope: opened.scope, validate: validate, action: {
+        _ = try await checkpoint.execute(event, expectedScope: opened.scope, validate: validate, admitAction: admitAction, action: {
             let value: Output
             do { value = try await action() }
             catch {

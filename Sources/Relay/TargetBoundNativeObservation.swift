@@ -37,8 +37,23 @@ final class TargetBoundNativeObservation {
     struct Preparation {
         let application: DesktopApplicationIdentity
         let window: WindowInfo
-        /// Rechecks process launch/path, exact AX window attachment/identity and document.
+        let sourceID: UUID
+        /// Capture safety: provider app-only reads must still select this exact AX window.
         let validate: @MainActor () throws -> Void
+        let validateSource: @MainActor () throws -> Void
+        let validateInput: (@MainActor () throws -> Void)?
+        fileprivate let originalAXWindow: AXUIElement?
+        fileprivate let originalFocus: NativeOriginalWindowFocus?
+
+        init(application: DesktopApplicationIdentity, window: WindowInfo,
+             validate: @escaping @MainActor () throws -> Void,
+             sourceID: UUID = UUID(), validateSource: (@MainActor () throws -> Void)? = nil,
+             validateInput: (@MainActor () throws -> Void)? = nil,
+             originalAXWindow: AXUIElement? = nil, originalFocus: NativeOriginalWindowFocus? = nil) {
+            self.application = application; self.window = window; self.validate = validate; self.sourceID = sourceID
+            self.validateSource = validateSource ?? validate; self.validateInput = validateInput
+            self.originalAXWindow = originalAXWindow; self.originalFocus = originalFocus
+        }
     }
 
     struct Backend {
@@ -60,6 +75,17 @@ final class TargetBoundNativeObservation {
         fileprivate let owner: UUID
         fileprivate let revision: UUID
         fileprivate let preparation: Preparation
+    }
+
+    /// A retained exact-target capability. It never selects the currently active window.
+    /// Snapshot generations may change while this target's original metadata remains pinned.
+    struct TargetLease {
+        fileprivate let owner: UUID
+        fileprivate let session: UUID
+        fileprivate let preparation: Preparation
+        var sourceID: UUID { preparation.sourceID }
+        func validate() throws { try preparation.validate() }
+        func validateOriginalSource() throws { try preparation.validateSource() }
     }
 
     nonisolated struct Image: Sendable {
@@ -93,6 +119,7 @@ final class TargetBoundNativeObservation {
     private var session = UUID()
     private var revision = UUID()
     private var generation: UInt64 = 0
+    private var latestPreparation: Preparation?
     private var backend: Backend
     private let sessionIsActive: @MainActor () -> Bool
     private var activeSession = true
@@ -121,6 +148,7 @@ final class TargetBoundNativeObservation {
         }))
     }
 
+
     /// Metadata seam: production binds AX synchronously; tests supply inert metadata only.
     func prepare(_ preparation: Preparation) throws -> Request {
         try requireActive()
@@ -131,6 +159,11 @@ final class TargetBoundNativeObservation {
     }
 
     func observe(_ request: Request) async throws -> Snapshot {
+        try await observe(request, capture: backend.capture)
+    }
+
+    private func observe(_ request: Request,
+                         capture: @escaping @MainActor (String, String) async throws -> OwnedNativeComputerUseClient.NativeResult) async throws -> Snapshot {
         try requireActive()
         guard captureTask == nil else { throw Failure.busy }
         guard request.owner == owner, request.revision == revision else { throw Failure.staleRequest }
@@ -140,8 +173,7 @@ final class TargetBoundNativeObservation {
         generation += 1
         let expectedRevision = revision
         let namespace = "native:\(session.uuidString):\(generation):"
-        let backend = backend
-        let task = Task { try await backend.capture(UUID().uuidString, request.preparation.application.bundleURL.path) }
+        let task = Task { try await capture(UUID().uuidString, request.preparation.application.bundleURL.path) }
         let operation = UUID()
         captureID = operation
         captureTask = task
@@ -164,6 +196,7 @@ final class TargetBoundNativeObservation {
                 text: scoped.text, references: scoped.references, images: decoded.images, imageCoverage: decoded.coverage,
                 owner: owner, revision: expectedRevision)
             latest = snapshot; lastSnapshot = snapshot.id; validateLatest = request.preparation.validate
+            latestPreparation = request.preparation
             return snapshot
         } catch {
             if revision == expectedRevision { invalidateSnapshot() }
@@ -178,6 +211,66 @@ final class TargetBoundNativeObservation {
               snapshot.id == lastSnapshot else { return false }
         do { try validateLatest?(); return true }
         catch { invalidateSnapshot(); return false }
+    }
+
+    func retainTarget(for snapshot: Snapshot) throws -> TargetLease {
+        try requireActive()
+        guard isCurrent(snapshot), let preparation = latestPreparation else { throw Failure.staleRequest }
+        return TargetLease(owner: owner, session: session, preparation: preparation)
+    }
+
+    /// Refresh and readback use the same original process/window/document, even if another
+    /// application's window became current. A changed original target is refused.
+    func observeOriginal(_ lease: TargetLease) async throws -> Snapshot {
+        try validateTarget(lease)
+        return try await observe(prepare(lease.preparation))
+    }
+
+    /// A provider FIFO reservation avoids a second queue acquisition between pixel proof and
+    /// input dispatch. The reservation itself admits only this original app's state read.
+    func observeOriginal(_ lease: TargetLease, reserved: OwnedNativeComputerUseClient.ReservedState) async throws -> Snapshot {
+        try validateTarget(lease)
+        return try await observe(prepare(lease.preparation), capture: { requestID, app in
+            try await reserved.state(requestID: requestID, app: app)
+        })
+    }
+
+    func validateTarget(_ lease: TargetLease) throws {
+        try validateOriginalSource(lease)
+        try lease.preparation.validate()
+    }
+
+    /// Independent of image consumption and global/app-selected foreground focus.
+    func validateOriginalSource(_ lease: TargetLease) throws {
+        try requireActive()
+        guard lease.owner == owner, lease.session == session else { throw Failure.staleRequest }
+        try lease.preparation.validateSource()
+        try requireActive()
+    }
+
+    func validateForInput(_ lease: TargetLease) throws {
+        try validateOriginalSource(lease)
+        guard let validate = lease.preparation.validateInput else { throw Failure.unavailableWindow }
+        try validate(); try requireActive()
+    }
+
+    func originalAXWindow(_ lease: TargetLease) throws -> AXUIElement {
+        try validateOriginalSource(lease)
+        guard let original = lease.preparation.originalAXWindow else { throw Failure.unavailableWindow }
+        return original
+    }
+
+    func restoreReviewedOriginalFocus(_ lease: TargetLease, authorization: NativeReviewedFocusAuthorization,
+                                      gate: NativeInputRevocation,
+                                      notAfter: ContinuousClock.Instant) async -> NativeReviewedFocusOutcome {
+        do {
+            try validateOriginalSource(lease)
+            guard authorization.sourceID == lease.sourceID,
+                  let binding = lease.preparation.originalFocus else { throw Failure.changedTarget }
+            let outcome = await binding.restore(authorization: authorization, gate: gate, notAfter: notAfter)
+            // Attempted focus facts must remain factual after Stop/source revocation.
+            return outcome
+        } catch { return .refused(NativeVisualStepOutcome.bounded(error.localizedDescription)) }
     }
 
     /// Invalidate immediately, before awaiting transport teardown. Resuming never captures.
@@ -223,7 +316,7 @@ final class TargetBoundNativeObservation {
     }
 
     private func invalidateSnapshot() {
-        revision = UUID(); latest = nil; lastSnapshot = nil; validateLatest = nil
+        revision = UUID(); latest = nil; lastSnapshot = nil; validateLatest = nil; latestPreparation = nil
     }
 
     private nonisolated static func valid(_ window: WindowInfo) -> Bool {
@@ -245,31 +338,57 @@ final class TargetBoundNativeObservation {
         let window = try selectedWindow(root)
         let initial = try windowInfo(window)
         guard valid(initial) else { throw Failure.unavailableWindow }
-        let validateOriginal: @MainActor () throws -> Void = {
+        let sourceID = UUID()
+        let validateOriginalFacts: @MainActor () throws -> Void = {
             try requireCurrent()
             guard AXIsProcessTrusted(), DesktopApplicationTarget.matches(identity, application: application) else { throw Failure.changedTarget }
             try requireExclusive(identity)
-            guard CFEqual(try selectedWindow(root), window) else { throw Failure.changedTarget }
-            guard initial.matchesExactly(try windowInfo(window)) else { throw Failure.changedTarget }
+            var pid: pid_t = 0
+            guard AXUIElementGetPid(window, &pid) == .success, pid == identity.processID,
+                  initial.matchesExactly(try windowInfo(window)) else { throw Failure.changedTarget }
             try requireCurrent()
         }
-        // First binding has no qualified browser document yet: fail closed without
-        // enumeration recovery until the retained original target is established.
+        // Initial binding still selects one original window once; it cannot recover
+        // an unqualified first binding or substitute another current window later.
+        let validateInitiallySelected: @MainActor () throws -> Void = {
+            try validateOriginalFacts()
+            guard CFEqual(try selectedWindow(root), window) else { throw Failure.changedTarget }
+            try requireCurrent()
+        }
         try uniqueWindow(window, title: initial.title, root: root, allowSiblingRecovery: false,
-                         validateOriginal: validateOriginal, requireCurrent: requireCurrent)
+                         validateOriginal: validateInitiallySelected, requireCurrent: requireCurrent)
         let browser = isBrowser(identity)
             ? try BrowserPageReader.captureCurrentTarget(application: application, expectedWindow: window) : nil
         if let browser { try BrowserPageReader.validateCurrentTarget(browser, expectedWindow: window) }
-        try requireCurrent()
-        return Preparation(application: identity, window: initial, validate: {
-            let validateOriginalDocument: @MainActor () throws -> Void = {
-                try validateOriginal()
-                if let browser { try BrowserPageReader.validateCurrentTarget(browser, expectedWindow: window) }
-                try requireCurrent()
-            }
+        let validateOriginalDocument: @MainActor () throws -> Void = {
+            try validateOriginalFacts()
+            if let browser { try BrowserPageReader.validateCurrentTarget(browser, expectedWindow: window) }
+            try requireCurrent()
+        }
+        let validateSource: @MainActor () throws -> Void = {
             try uniqueWindow(window, title: initial.title, root: root, allowSiblingRecovery: true,
-                             validateOriginal: validateOriginalDocument, requireCurrent: requireCurrent)
-        })
+                validateOriginal: validateOriginalDocument, requireCurrent: requireCurrent)
+        }
+        let validateCapture: @MainActor () throws -> Void = {
+            try validateSource()
+            // The native schema cannot choose an arbitrary window. Refuse before
+            // calling it when this app's selected window is no longer the original.
+            guard CFEqual(try selectedWindow(root), window) else { throw Failure.changedTarget }
+            try validateSource()
+        }
+        let validateInput: @MainActor () throws -> Void = {
+            try validateCapture()
+            guard application.isActive, let front = NSWorkspace.shared.frontmostApplication,
+                  DesktopApplicationTarget.matches(identity, application: front) else { throw Failure.changedTarget }
+            try validateCapture()
+        }
+        let focus = NativeOriginalWindowFocus(sourceID: sourceID, application: application, identity: identity,
+            originalWindow: window, validateOriginalSource: validateSource,
+            validateForInput: validateInput, sessionIsActive: { (try? requireCurrent()) != nil })
+        try requireCurrent()
+        return Preparation(application: identity, window: initial, validate: validateCapture,
+            sourceID: sourceID, validateSource: validateSource, validateInput: validateInput,
+            originalAXWindow: window, originalFocus: focus)
     }
 
     private static func requireExclusive(_ identity: DesktopApplicationIdentity) throws {

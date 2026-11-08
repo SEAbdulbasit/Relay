@@ -69,15 +69,21 @@ actor LMStudioClient {
     }
 
     func complete(messages: [ModelMessage], tools: [ToolDefinition], selection: LMStudioSelection,
-                  vision: LMStudioVisionAttachment? = nil) async throws -> ModelReply {
+                  vision: LMStudioVisionAttachment? = nil,
+                  sourceAuthorization: (@MainActor @Sendable () async throws -> Void)? = nil) async throws -> ModelReply {
         if vision != nil, verifiedVision != selection { throw LMStudioFailure.visionNotVerified }
         let expected = revision
-        do { return try await completion(messages: messages, tools: tools, selection: selection, vision: vision) }
+        do {
+            let reply = try await completion(messages: messages, tools: tools, selection: selection, vision: vision, sourceAuthorization: sourceAuthorization)
+            try await sourceAuthorization?()
+            return reply
+        }
         catch {
             // A service can replace/reload weights under the same model ID.
             // Retry must probe with synthetic pixels before any private frame.
             // An older failed completion cannot revoke a newer probe receipt.
             if vision != nil, revision == expected, verifiedVision == selection { verifiedVision = nil }
+            try await sourceAuthorization?()
             throw error
         }
     }
@@ -110,8 +116,10 @@ actor LMStudioClient {
     }
 
     private func completion(messages: [ModelMessage], tools: [ToolDefinition], selection: LMStudioSelection,
-                            vision: LMStudioVisionAttachment?) async throws -> ModelReply {
+                            vision: LMStudioVisionAttachment?,
+                            sourceAuthorization: (@MainActor @Sendable () async throws -> Void)? = nil) async throws -> ModelReply {
         let expectedRevision = revision
+        try await sourceAuthorization?()
         try await vision?.validate()
         guard revision == expectedRevision else { throw CancellationError() }
         let data = try LMStudioWireCodec.request(selection: selection, messages: messages, tools: tools,
@@ -124,6 +132,7 @@ actor LMStudioClient {
             // Revalidate after encoding/queue admission, immediately before the
             // transport open. Revocation after this admission cannot unsend bytes.
             try await vision?.validate()
+            try await sourceAuthorization?()
             try await self.validateRevision(expectedRevision)
             try Task.checkCancellation()
             let response = try await transport.open(preparedRequest)
@@ -146,6 +155,7 @@ actor LMStudioClient {
             return try LMStudioWireCodec.reply(value, availableTools: names, priorCallIDs: priorIDs)
         }
         try await vision?.validate()
+        try await sourceAuthorization?()
         try Task.checkCancellation()
         guard revision == expectedRevision else { throw CancellationError() }
         return reply

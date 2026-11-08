@@ -124,6 +124,9 @@ struct NativeWindowReadStoreIntegrationTests {
             case 2, 3:
                 #expect(definitions.contains { $0.name == NativeWindowReadTool.name })
                 return .init(content: "", toolCalls: [fixture.readCall(id: "role-read-\(turns)")])
+            case 4:
+                #expect(definitions.isEmpty)
+                return .init(content: "VERIFIED: Both actual readbacks describe the same chosen synthetic window, with no input requested.", toolCalls: [])
             default: return .init(content: "Synthetic native window reading finished.", toolCalls: [])
             }
         }, modelClient: client, multiAgent: true, nativeWindowBackendFactory: { _ in fixture.backend() })
@@ -131,7 +134,7 @@ struct NativeWindowReadStoreIntegrationTests {
         store.draft = "Read the chosen native window twice without changing it."
         store.send(nativeReadRestrictions: [fixture.admission])
         try await settled(store, fixture: fixture)
-        #expect(store.errorMessage == nil && store.phase == .idle && turns == 4)
+        #expect(store.errorMessage == nil && store.phase == .idle && turns == 5)
         #expect(fixture.factoryCalls == 1 && fixture.captures == 2 && fixture.closes == 1)
         #expect(runtime.imagePayloads.count == 2 && runtime.toolCounts == [0, 0])
         #expect(store.activity.filter { $0.name == NativeWindowReadTool.name && $0.status == "verified" }.count == 2)
@@ -279,7 +282,12 @@ struct NativeWindowReadStoreIntegrationTests {
                     url: "", x: 0, y: 0, width: 560, height: 300, minimized: false, hidden: false, modal: false),
                 validate: admission.validate)
             let snapshot = try await observer.observe(observer.prepare(preparation))
-            return .init(snapshot: snapshot, isCurrent: { observer.isCurrent(snapshot) }, refreshOriginal: nil)
+            let original = try observer.retainTarget(for: snapshot)
+            return .init(snapshot: snapshot, isCurrent: { observer.isCurrent(snapshot) }, refreshOriginal: nil,
+                sourceValidation: NativeCurrentReadbackSource(sourceID: original.sourceID,
+                    application: snapshot.application, validateOriginalSource: {
+                        try admission.validate(); try observer.validateOriginalSource(original); try admission.validate()
+                    }))
         }, stop: { observer.stop() }, drain: { await observer.drain() })
     }
 

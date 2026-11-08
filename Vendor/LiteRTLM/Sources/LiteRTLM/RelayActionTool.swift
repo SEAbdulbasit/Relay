@@ -7,6 +7,7 @@ public enum RelayNativeTools {
         "calculate", "search_files", "preview_file_move", "move_file", "read_browser_page", "create_document",
         "create_spreadsheet", "read_calendar", "search_knowledge", "list_apps", "open_app", "open_file",
         "stage_attachment", "create_mail_draft", "prepare_mail_send", "send_mail", "list_files", "read_file", "write_file", "observe_app", "read_sidekick_window", "inspect_native_window",
+        "control_native_window", "native_observation", "native_pointer", "native_key", "native_type_unsent",
         "set_value", "scroll_control", "press_control", "open_url", "browser_navigate", "search_web",
         "search_finder", "capability_probe",
     ]
@@ -35,6 +36,11 @@ public enum RelayNativeTools {
             case "observe_app": return RelayObserveAppTool()
             case "read_sidekick_window": return RelayReadSidekickWindowTool()
             case "inspect_native_window": return RelayInspectNativeWindowTool()
+            case "control_native_window": return RelayControlNativeWindowTool()
+            case "native_observation": return RelayNativeObservationTool()
+            case "native_pointer": return RelayNativePointerTool()
+            case "native_key": return RelayNativeNavigationKeyTool()
+            case "native_type_unsent": return RelayNativeTypeUnsentTool()
             case "set_value": return RelaySetValueTool()
             case "scroll_control": return RelayScrollControlTool()
             case "press_control": return RelayPressControlTool()
@@ -167,6 +173,72 @@ private struct RelayInspectNativeWindowTool: RelaySchemaTool {
     var bundle_id: String
     @ToolParam(description: "Specific read-only question about that current window, up to 1024 UTF-8 bytes")
     var question: String
+    init() {}
+}
+
+private struct RelayControlNativeWindowTool: RelaySchemaTool {
+    static let name = "control_native_window"
+    static let description = "Perform one ordinary interface step in a task-admitted app through local vision. Scope and dedicated workflows remain enforced. Ambiguous gestures need exact local review; dispatch alone is not verified completion. A step may return an unverified no-input report."
+    @ToolParam(description: "Original task-admitted app bundle ID") var bundle_id: String
+    @ToolParam(description: "One ordinary step within the original user task, at most 1024 UTF-8 bytes") var instruction: String
+    init() {}
+}
+
+private enum RelayNativeObservationDisposition: String, ToolParameterValue {
+    case refresh, appearsSatisfied = "appears_satisfied", unavailable, cannotDetermine = "cannot_determine"
+    static func getJsonSchema() -> [String: Any] {
+        ["type": "string", "enum": ["refresh", "appears_satisfied", "unavailable", "cannot_determine"]]
+    }
+}
+private struct RelayNativeObservationTool: RelaySchemaTool {
+    static let name = "native_observation"
+    static let description = "Refresh only the original window, or report that this step appears satisfied, unavailable or indeterminate. Reports are unverified data, never goal proof or authority. No input."
+    @ToolParam(description: "Current observation ID") var observation_id: String
+    @ToolParam(description: "Attached original image ID") var image_id: String
+    @ToolParam(description: "Choose refresh or one terminal unverified report") var disposition: RelayNativeObservationDisposition
+    @ToolParam(description: "Omit for refresh; terminal reports need 1 to 512 UTF-8 bytes of untrusted printable detail") var detail: String = ""
+    init() {}
+}
+
+private enum RelayNativePointerKind: String, ToolParameterValue {
+    case click, drag
+    static func getJsonSchema() -> [String: Any] { ["type": "string", "enum": ["click", "drag"]] }
+}
+
+private struct RelayNativePointerTool: RelaySchemaTool {
+    static let name = "native_pointer"
+    static let description = "Propose one ordinary click or straight drag in the attached image. This is not permission to act."
+    @ToolParam(description: "Current observation ID") var observation_id: String
+    @ToolParam(description: "Attached image ID") var image_id: String
+    @ToolParam(description: "") var kind: RelayNativePointerKind
+    @ToolParam(description: "Start x pixel") var x: Int
+    @ToolParam(description: "Start y pixel") var y: Int
+    @ToolParam(description: "Drag end x pixel; omit for click") var end_x: Int = -1
+    @ToolParam(description: "Drag end y pixel; omit for click") var end_y: Int = -1
+    @ToolParam(description: "Ordinary intended effect; untrusted proposal, not authority") var intended_effect: String
+    init() {}
+}
+
+private enum RelayNativeNavigationKey: String, ToolParameterValue {
+    case left = "Left", right = "Right", up = "Up", down = "Down", home = "Home", end = "End"
+    static func getJsonSchema() -> [String: Any] { ["type": "string", "enum": ["Left", "Right", "Up", "Down", "Home", "End"]] }
+}
+
+private struct RelayNativeNavigationKeyTool: RelaySchemaTool {
+    static let name = "native_key"
+    static let description = "Propose one navigation key in the original focused control. No Return, modifiers or shortcuts."
+    @ToolParam(description: "Current observation ID") var observation_id: String
+    @ToolParam(description: "") var key: RelayNativeNavigationKey
+    @ToolParam(description: "Ordinary intended effect; not authority") var intended_effect: String
+    init() {}
+}
+
+private struct RelayNativeTypeUnsentTool: RelaySchemaTool {
+    static let name = "native_type_unsent"
+    static let description = "Propose literal unsent text in the original focused editor through qualified AX insertion. No keyboard fallback."
+    @ToolParam(description: "Current observation ID") var observation_id: String
+    @ToolParam(description: "Exact single-paragraph literal; at most 4096 UTF-8 bytes") var text: String
+    @ToolParam(description: "Ordinary intended effect; not authority") var intended_effect: String
     init() {}
 }
 
