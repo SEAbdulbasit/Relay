@@ -1228,16 +1228,16 @@ final class AssistantStore {
                     }
                     let text = reply.content.trimmingCharacters(in: .whitespacesAndNewlines)
                     let evidence: String
-                    if attemptedActions == 0 { evidence = "No computer actions were executed in this response." }
+                    if attemptedActions == 0 { evidence = "" }
                     else { evidence = verifiedResults.isEmpty ? "No action outcome was independently verified." : "Checked by Relay:\n" + verifiedResults.map { "• \($0.summary) — \($0.evidence)" }.joined(separator: "\n") }
-                    appendVisibleMessage(ChatMessage(role: "assistant", text: (text.isEmpty ? "The model returned no answer. Try a more specific request or switch models." : text) + "\n\n" + evidence,
+                    appendVisibleMessage(ChatMessage(role: "assistant", text: (text.isEmpty ? "The model returned no answer. Try a more specific request or switch models." : text) + (evidence.isEmpty ? "" : "\n\n" + evidence),
                                                 artifacts: verifiedResults.compactMap(\.artifactPath)), for: expected)
                     // Finishing a model turn is not independent proof of every requested outcome.
                     let unresolved = recovery.hasUnresolvedErrors || goalCoverage.unverifiedCount > 0
                     phase = unresolved ? .needsInput : .idle
                     record("Response finished", unresolved
                         ? "The response is ready, but some actions still need attention. Check their results before continuing."
-                        : "The response is ready. Check the recorded action results for what was verified.", unresolved ? "needs input" : "finished")
+                        : (attemptedActions == 0 ? "No computer actions were executed in this response." : "The response is ready. Check the recorded action results for what was verified."), unresolved ? "needs input" : "finished")
                     persist()
                     return
                 }
@@ -1718,13 +1718,14 @@ final class AssistantStore {
             let result = try await orchestrator.executeTask(goal: objective)
             let evidence: String
             if !orchestrator.didDispatchTool {
-                evidence = "No computer actions were executed in this response."
+                record("Response finished", "No computer actions were executed in this response.", "finished")
+                evidence = ""
             } else if result.verifiedResults.isEmpty {
                 evidence = "No action outcome was independently verified. See Activity for tool results."
             } else {
                 evidence = "Checked by Relay:\n" + result.verifiedResults.map { "• \($0.summary) — \($0.evidence)" }.joined(separator: "\n")
             }
-            let finalText = result.content + "\n\n" + evidence
+            let finalText = result.content + (evidence.isEmpty ? "" : "\n\n" + evidence)
             appendVisibleMessage(ChatMessage(role: "assistant", text: finalText, artifacts: result.artifacts), for: expected)
             phase = result.isSuccess ? .idle : .needsInput
             activeAgentRole = nil

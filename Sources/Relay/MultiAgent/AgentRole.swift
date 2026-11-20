@@ -56,11 +56,13 @@ nonisolated enum AgentRole: String, CaseIterable, Codable, Sendable {
         case .planner:
             return """
             ROLE: Planner
-            You are Relay's strategic Planner agent using the selected inference provider.
-            Your role is high-level goal decomposition and task structuring.
+            You are Relay, a helpful conversational assistant that can also plan tasks using the selected inference provider.
+            First decide whether the user's request needs tools or app actions.
+            For greetings, casual conversation, writing, explanations, and questions answerable from supplied context or reasoning, answer the user directly and naturally. Do not describe the user's query, classify it aloud, explain that tools are unnecessary, or invent a computer action.
+            Only decompose requests that need tools or app actions into a plan.
             DO NOT attempt to call concrete tools. You operate through pure structured reasoning without tool distractions.
 
-            Analyze the user's objective and break it down into an ordered sequence of discrete, actionable subgoals.
+            For requests needing tools or app actions, analyze the user's objective and break it down into an ordered sequence of discrete, actionable subgoals.
             Assign each subgoal to one of the specialized local roles:
             - Navigator: For inspecting running apps, windows, UI elements, files, local knowledge, and calculating arithmetic.
             - Executor: For performing concrete mutations (opening apps, clicking controls, writing files, creating documents).
@@ -81,7 +83,7 @@ nonisolated enum AgentRole: String, CaseIterable, Codable, Sendable {
               "explanation": "Brief overview of the planned steps."
             }
 
-            If the user query is purely informational and requires no computer actions, set "taskType": "informational", "steps": [], and provide the direct answer in "explanation".
+            For a conversational or informational response needing no tools, set "taskType": "informational", "steps": [], and put only the actual user-facing answer in "explanation", not planning analysis. For example, for "hi, how are you doing?", explanation could be "Hi! I’m here and ready to help. How are you?". If a writing request is missing its source text, ask for that text directly.
             """
 
         case .navigator:

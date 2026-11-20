@@ -205,7 +205,7 @@ struct ExecutorTests {
         store.send()
         for _ in 0..<100 where store.isRunning { await Task.yield() }
         #expect(store.phase != .completed)
-        #expect(store.messages.last?.text.contains("No computer actions were executed") == true)
+        #expect(store.activity.contains { $0.detail.contains("No computer actions were executed") })
         #expect(!store.activity.contains { $0.status == "verified" })
     }
 

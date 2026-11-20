@@ -395,8 +395,33 @@ struct MultiAgentOrchestrationTests {
 
         #expect(rolesInvoked == [.planner])
         #expect(actionsDispatched == 0)
-        #expect(store.messages.last?.text == "Relay is a native macOS on-device assistant that operates 100% offline.\n\nNo computer actions were executed in this response.")
+        #expect(store.messages.last?.text == "Relay is a native macOS on-device assistant that operates 100% offline.")
         #expect(store.phase == .idle)
+    }
+
+    @Test("Greetings deliver only the conversational answer in either mode")
+    func greetingsWithoutActionFooter() async {
+        for multiAgent in [false, true] {
+            var modelCalls = 0
+            var dispatched = 0
+            let answer = "Hi! I’m here and ready to help. How are you?"
+            let store = AssistantStore(persistenceURL: nil, complete: { _, _, _ in
+                modelCalls += 1
+                return ModelReply(content: multiAgent
+                    ? "{\"taskType\":\"informational\",\"steps\":[],\"explanation\":\"\(answer)\"}"
+                    : answer, toolCalls: [])
+            }, execute: { _ in
+                dispatched += 1
+                return ToolResult(summary: "Unexpected action", evidence: "", verified: false)
+            }, multiAgent: multiAgent)
+            store.draft = "hi, how are you doing?"
+            store.send()
+            await store.waitForConversationTaskToSettle()
+            #expect(modelCalls == 1)
+            #expect(dispatched == 0)
+            #expect(store.messages.last?.text == answer)
+            #expect(store.phase == .idle)
+        }
     }
 
     @Test("Global stop halts multi-agent coordination immediately across role boundaries")

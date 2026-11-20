@@ -269,7 +269,7 @@ final class MultiAgentOrchestrator {
             role: "user",
             content: """
             User objective: \(goal)
-            Decompose this request into discrete subgoals with assigned roles (Navigator, Executor, Critic) or answer directly if purely informational.
+            Answer this request directly if no tools or app actions are needed. Respond naturally to the user, without describing or classifying the request. Otherwise decompose it into discrete subgoals with assigned roles (Navigator, Executor, Critic).
             Split dependent actions into separate Executor steps whenever an action needs an identifier returned by an earlier tool. For Apple Mail, creating the draft, preparing its send review, and sending the reviewed draft require three separate Executor steps. Never invent draft, review or preview identifiers in the plan.
             """
         )
