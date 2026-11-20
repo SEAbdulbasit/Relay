@@ -3,7 +3,36 @@ import Foundation
 import Testing
 @testable import Relay
 
-@MainActor struct SiYuanWorkspaceTests {
+/// Owned bulk fixture IO runs off MainActor so 1,200-file workspace setup and
+/// cleanup do not stall unrelated cancellation/deadline tests on the UI actor.
+nonisolated private enum SiYuanFixtureIO {
+    @concurrent static func populateNotes(root: URL, book: String, count: Int, titlePrefix: String, bodyPrefix: String?) async throws {
+        let dir = root.appendingPathComponent("data/" + book, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        for index in 0..<count {
+            try Task.checkCancellation()
+            let id = "20260101000000-" + String(format: "%07d", index)
+            let title = titlePrefix.isEmpty ? "New" : (titlePrefix + String(index))
+            let text = bodyPrefix.map { $0 + String(index) } ?? "Uncommitted"
+            let body: [[String: Any]] = [["Type": "NodeParagraph", "Children": [["Type": "NodeText", "Data": text]]]]
+            let doc: [String: Any] = ["Type": "NodeDocument", "Spec": "2", "Properties": ["title": title, "updated": "20260101000000"], "Children": body]
+            try JSONSerialization.data(withJSONObject: doc, options: [.sortedKeys]).write(to: dir.appendingPathComponent(id + ".sy"))
+        }
+    }
+    @concurrent static func populateGeneric(folder: URL, count: Int) async throws {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let bytes = Data("Generic fixture".utf8)
+        for index in 0..<count {
+            try Task.checkCancellation()
+            try bytes.write(to: folder.appendingPathComponent(String(index) + ".txt"))
+        }
+    }
+    @concurrent static func remove(_ container: URL) async {
+        try? FileManager.default.removeItem(at: container)
+    }
+}
+
+@Suite(.serialized) @MainActor struct SiYuanWorkspaceTests {
     private static let notebook = "20260101000000-book001"
     private static let parent = "20260101000001-parent1"
     private static let child = "20260101000002-child01"
@@ -222,22 +251,24 @@ import Testing
     }
 
     @Test func workspaceHasSeparateThousandNoteLimitAndGenericIndexStaysBounded() async throws {
-        let f = try Fixture(); defer { f.remove() }
-        for index in 0..<1_002 {
-            let id = "20260101000000-" + String(format: "%07d", index)
-            try f.note(id, title: "Note " + String(index), body: [Self.paragraph("Workspace searchable fixture " + String(index))])
+        let f = try Fixture()
+        do {
+            try await SiYuanFixtureIO.populateNotes(root: f.root, book: Self.notebook, count: 1_002, titlePrefix: "Note ", bodyPrefix: "Workspace searchable fixture ")
+            let generic = f.container.appendingPathComponent("plain")
+            try await SiYuanFixtureIO.populateGeneric(folder: generic, count: 202)
+            let grants = f.grants + [ScopeGrant(path: generic.path)]
+            let knowledge = LocalKnowledge(persistenceURL: f.state)
+            await knowledge.index(grants: grants)
+            #expect(knowledge.records.count(where: { $0.workspaceRoot != nil }) == 1_000)
+            #expect(knowledge.records.count(where: { $0.workspaceRoot == nil }) == 200)
+            #expect(knowledge.status.contains("Coverage is partial") && knowledge.status.contains("Scan limits reached"))
+            let restored = LocalKnowledge(persistenceURL: f.state)
+            #expect(restored.records.count == 1_200)
+            await SiYuanFixtureIO.remove(f.container)
+        } catch {
+            await SiYuanFixtureIO.remove(f.container)
+            throw error
         }
-        let generic = f.container.appendingPathComponent("plain")
-        try FileManager.default.createDirectory(at: generic, withIntermediateDirectories: true)
-        for index in 0..<202 { try Data("Generic fixture".utf8).write(to: generic.appendingPathComponent(String(index) + ".txt")) }
-        let grants = f.grants + [ScopeGrant(path: generic.path)]
-        let knowledge = LocalKnowledge(persistenceURL: f.state)
-        await knowledge.index(grants: grants)
-        #expect(knowledge.records.count(where: { $0.workspaceRoot != nil }) == 1_000)
-        #expect(knowledge.records.count(where: { $0.workspaceRoot == nil }) == 200)
-        #expect(knowledge.status.contains("Coverage is partial") && knowledge.status.contains("Scan limits reached"))
-        let restored = LocalKnowledge(persistenceURL: f.state)
-        #expect(restored.records.count == 1_200)
     }
 
     @Test func sharedWorkspaceWindowKeepsNewestNotesAcrossRootOrder() async throws {
@@ -259,7 +290,7 @@ import Testing
         try f.note(Self.parent, title: "Original", body: [Self.paragraph("Previously committed content")])
         let knowledge = LocalKnowledge(persistenceURL: f.state); await knowledge.index(grants: f.grants)
         let committed = knowledge.records
-        for index in 0..<50 { try f.note("20260101000000-" + String(format: "%07d", index), title: "New", body: [Self.paragraph("Uncommitted")]) }
+        try await SiYuanFixtureIO.populateNotes(root: f.root, book: Self.notebook, count: 50, titlePrefix: "", bodyPrefix: nil)
         let task = Task { await knowledge.index(grants: f.grants) }
         await Task.yield(); knowledge.cancel(); await task.value
         #expect(knowledge.records == committed)

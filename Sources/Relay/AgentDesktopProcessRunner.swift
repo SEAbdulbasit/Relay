@@ -24,19 +24,21 @@ nonisolated final class AgentDesktopProcessRunner: @unchecked Sendable {
     private var deadline = DispatchTime.now()
     private let outputLimit: Int
 
-    private init(executable: URL, arguments: [String], environment: [String: String]?, outputLimit: Int) {
+    private init(executable: URL, arguments: [String], environment: [String: String]?, currentDirectory: URL?, outputLimit: Int) {
         self.outputLimit = max(1, outputLimit)
         process.executableURL = executable
         process.arguments = arguments
         process.environment = environment
+        process.currentDirectoryURL = currentDirectory
         process.standardOutput = stdout
         process.standardError = stderr
     }
 
     static func run(executable: URL, arguments: [String], environment: [String: String]? = nil,
+                    currentDirectory: URL? = nil,
                     timeoutSeconds: TimeInterval = 8, outputLimit: Int = 1_048_576) async throws -> Output {
         let runner = AgentDesktopProcessRunner(executable: executable, arguments: arguments,
-                                              environment: environment, outputLimit: outputLimit)
+                                              environment: environment, currentDirectory: currentDirectory, outputLimit: outputLimit)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 runner.queue.async { runner.start(continuation, timeoutSeconds: timeoutSeconds) }
@@ -65,11 +67,13 @@ nonisolated final class AgentDesktopProcessRunner: @unchecked Sendable {
         timer.resume()
     }
 
-    private func drain(_ pipe: Pipe, into data: inout Data) {
+    private func drain(_ pipe: Pipe, into data: inout Data, untilEOF: Bool = false) {
         var buffer = [UInt8](repeating: 0, count: 8192)
-        // Bound each polling turn so cancellation cannot be starved by output.
-        for _ in 0..<32 {
-            let count = read(pipe.fileHandleForReading.fileDescriptor, &buffer, buffer.count)
+        // Bound each polling turn so cancellation cannot be starved by output;
+        // on final post-exit drain, loop until EOF or outputLimit is reached.
+        let maxIterations = untilEOF ? Int.max : 32
+        for _ in 0..<maxIterations {
+            let count = Darwin.read(pipe.fileHandleForReading.fileDescriptor, &buffer, buffer.count)
             if count <= 0 { break }
             let remaining = outputLimit - data.count
             data.append(contentsOf: buffer.prefix(min(count, remaining)))
@@ -98,12 +102,8 @@ nonisolated final class AgentDesktopProcessRunner: @unchecked Sendable {
             }
             return
         }
-        // Drain the bounded remainder after exit without waiting for EOF from
-        // any helper that might have inherited a write descriptor.
-        for _ in 0..<5 {
-            drain(stdout, into: &capturedOut)
-            drain(stderr, into: &capturedErr)
-        }
+        drain(stdout, into: &capturedOut, untilEOF: true)
+        drain(stderr, into: &capturedErr, untilEOF: true)
         finish(error: failure)
     }
 

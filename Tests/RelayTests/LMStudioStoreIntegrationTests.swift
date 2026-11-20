@@ -36,6 +36,7 @@ import Testing
         #expect(store.actionsReady && nativeLoads == 0)
         store.draft = "Use the synthetic workflow to compute six times seven and return the result."
         store.send()
+        await store.waitForConversationTaskToSettle()
         try await awaitLMStudioCondition { !store.isRunning }
         #expect(store.phase == .idle && store.errorMessage == nil)
         #expect(store.messages.last?.text == "42\n\nChecked by Relay:\n• 42 — Synthetic arithmetic only")

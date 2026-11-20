@@ -51,13 +51,18 @@ final class RelayActionPointer {
             self.panel = panel
         }
         guard let panel else { return }
-        let width: CGFloat = 150
+        let badgeText = "Relay · " + label
+        let badgeFont = NSFont.systemFont(ofSize: 10.5, weight: .semibold)
+        let measuredTextWidth = ceil((badgeText as NSString).size(withAttributes: [.font: badgeFont]).width)
+        let badgeWidth = min(max(108, measuredTextWidth + 18), 320)
+        let width: CGFloat = badgeWidth + 24
         let height: CGFloat = 48
         // Cursor tip sits at the real AX target. Keep its action badge inside the display.
         let origin = CGPoint(x: point.x, y: point.y - height)
         panel.setFrame(CGRect(origin: origin, size: CGSize(width: width, height: height)), display: false)
         let view = PointerView(frame: CGRect(x: 0, y: 0, width: width, height: height))
         view.label = label
+        view.badgeWidth = badgeWidth
         view.badgeOnLeft = point.x + width > screen.frame.maxX
         if view.badgeOnLeft {
             panel.setFrameOrigin(CGPoint(x: point.x - width + 22, y: origin.y))
@@ -83,8 +88,10 @@ final class RelayActionPointer {
 
     private final class PointerView: NSView {
         var label = ""
+        var badgeWidth: CGFloat = 126
         var badgeOnLeft = false
         override func draw(_ dirtyRect: NSRect) {
+            let accent = RelayColors.accentNSColor
             let tipX: CGFloat = badgeOnLeft ? bounds.width - 22 : 0
             let pointer = NSBezierPath()
             pointer.move(to: CGPoint(x: tipX + 1, y: 47))
@@ -92,16 +99,24 @@ final class RelayActionPointer {
             pointer.line(to: CGPoint(x: tipX + 11, y: 30))
             pointer.line(to: CGPoint(x: tipX + 20, y: 30))
             pointer.close()
-            NSColor.systemPurple.setFill()
+            accent.setFill()
             pointer.fill()
             NSColor.white.setStroke()
             pointer.lineWidth = 1.5
             pointer.stroke()
-            let badge = CGRect(x: badgeOnLeft ? 0 : 22, y: 3, width: 126, height: 23)
-            NSColor.systemPurple.setFill()
-            NSBezierPath(roundedRect: badge, xRadius: 7, yRadius: 7).fill()
-            ("Relay · " + label as NSString).draw(in: badge.insetBy(dx: 7, dy: 4), withAttributes: [
-                .font: NSFont.systemFont(ofSize: 10, weight: .semibold), .foregroundColor: NSColor.white
+            let badge = CGRect(x: badgeOnLeft ? 0 : 22, y: 3, width: badgeWidth, height: 23)
+            accent.setFill()
+            let pillPath = NSBezierPath(roundedRect: badge, xRadius: 7, yRadius: 7)
+            pillPath.fill()
+            NSColor.white.withAlphaComponent(0.22).setStroke()
+            pillPath.lineWidth = 1
+            pillPath.stroke()
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.lineBreakMode = .byTruncatingTail
+            ("Relay · " + label as NSString).draw(in: badge.insetBy(dx: 8, dy: 4), withAttributes: [
+                .font: NSFont.systemFont(ofSize: 10.5, weight: .semibold),
+                .foregroundColor: NSColor.white,
+                .paragraphStyle: paragraphStyle
             ])
         }
     }

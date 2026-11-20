@@ -35,6 +35,7 @@ enum ScreenCaptureCheck {
         guard NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty else {
             throw RelayError.message("Close the existing Relay test window, then run this check again.")
         }
+        try SidekickWindowText.checkRecognitionAvailability(for: .ownedEnglishMarker, on: .shared)
 
         let nonce = String(Int.random(in: 10_000...99_999))
         let title = "Relay Capture Fixture " + nonce
@@ -50,7 +51,7 @@ enum ScreenCaptureCheck {
 
         let window = try await locateWindow(title: title, application: application, bundleID: bundleID)
         try Task.checkCancellation()
-        let text = try await SidekickWindowText.recognize(window)
+        let text = try await SidekickWindowText.recognize(window, profile: .ownedEnglishMarker)
         try Task.checkCancellation()
         guard markerIsVisible(in: text, nonce: nonce) else {
             throw RelayError.message("The screenshot did not contain the test window’s unique marker.")
@@ -60,8 +61,9 @@ enum ScreenCaptureCheck {
         ])
     }
 
-    static func markerIsVisible(in image: CGImage, nonce: String) async throws -> Bool {
-        let text = try await LocalOCR.recognize(image: image, orientation: .up, preferCPU: true)
+    static func markerIsVisible(in image: CGImage, nonce: String,
+                                execution: LocalOCRExecution = .shared) async throws -> Bool {
+        let text = try await SidekickWindowText.recognizeImage(image, profile: .ownedEnglishMarker, execution: execution)
         return markerIsVisible(in: text, nonce: nonce)
     }
 

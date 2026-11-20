@@ -4,14 +4,17 @@ import RelayJournal
 /// Process-local task/source authority. History and model arguments cannot
 /// reconstruct this object or acknowledge a pending UI submission.
 @MainActor final class NativeVisualTaskScope {
+    enum ExecutionKind: Equatable, Sendable { case inference, directExactUnsent }
     let logicalTaskID: UUID
     let runRevision: Int
     let run: AssistantConversationHistory.Run
     let originalObjective: String
-    let inferenceIdentity: LocalInferenceIdentity
+    let executionKind: ExecutionKind
+    let inferenceIdentity: LocalInferenceIdentity?
     let readAuthority: NativeLocalTaskReadAuthority
     private let validateAcknowledgedStoreRun: @MainActor () throws -> Void
     private var revoked = false
+    private(set) var metadataContext: AssistantStore.ExactUnsentSavedInvocation.MetadataContext?
 
     init(logicalTaskID: UUID, runRevision: Int, run: AssistantConversationHistory.Run,
          originalObjective: String, inferenceIdentity: LocalInferenceIdentity,
@@ -23,7 +26,24 @@ import RelayJournal
         }
         self.logicalTaskID = logicalTaskID; self.runRevision = runRevision; self.run = run
         self.originalObjective = originalObjective; self.inferenceIdentity = inferenceIdentity
+        executionKind = .inference
         self.readAuthority = readAuthority; self.validateAcknowledgedStoreRun = validateAcknowledgedStoreRun
+        try validate()
+    }
+
+    /// A genuine native direct task has no model identity or inference grant.
+    /// The saved invocation supplies the same exact live Store/run fences.
+    init(directExactUnsent logicalTaskID: UUID, runRevision: Int, run: AssistantConversationHistory.Run,
+         originalObjective: String, readAuthority: NativeLocalTaskReadAuthority,
+         validateAcknowledgedStoreRun: @escaping @MainActor () throws -> Void) throws {
+        guard run.relation.logicalTaskID == logicalTaskID, readAuthority.taskID == logicalTaskID,
+              !originalObjective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw NativeVisualTaskFailure.staleTask
+        }
+        self.logicalTaskID = logicalTaskID; self.runRevision = runRevision; self.run = run
+        self.originalObjective = originalObjective; self.readAuthority = readAuthority
+        executionKind = .directExactUnsent; inferenceIdentity = nil
+        self.validateAcknowledgedStoreRun = validateAcknowledgedStoreRun
         try validate()
     }
 
@@ -33,6 +53,23 @@ import RelayJournal
         // Store checks acknowledgment, exact logical task/revision/provider,
         // interactive session and clear/reset state here, including after await.
         try validateAcknowledgedStoreRun()
+    }
+
+    /// The Store's typed direct initializer ties its original live callback to
+    /// an actual saved invocation. Arbitrary callback scopes remain opaque.
+    convenience init(directExactUnsent logicalTaskID: UUID, runRevision: Int, run: AssistantConversationHistory.Run,
+         originalObjective: String, readAuthority: NativeLocalTaskReadAuthority,
+         metadataContext: AssistantStore.ExactUnsentSavedInvocation.MetadataContext) throws {
+        try self.init(directExactUnsent: logicalTaskID, runRevision: runRevision, run: run,
+            originalObjective: originalObjective, readAuthority: readAuthority,
+            validateAcknowledgedStoreRun: { try metadataContext.validateStoreRun() })
+        self.metadataContext = metadataContext
+    }
+
+    func validateMetadataRevocation(context: AssistantStore.ExactUnsentSavedInvocation.MetadataContext) throws {
+        try Task.checkCancellation()
+        guard !revoked else { throw NativeVisualTaskFailure.stopped }
+        guard executionKind == .directExactUnsent, metadataContext === context else { throw NativeVisualTaskFailure.staleTask }
     }
     func admitRead(_ bundle: String) throws -> NativeWindowTaskAdapter.ApplicationAdmission {
         try validate(); return try readAuthority.admit(bundle)

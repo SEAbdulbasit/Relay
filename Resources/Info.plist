@@ -13,10 +13,12 @@
 <key>NSHighResolutionCapable</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>NSHumanReadableCopyright</key><string>Relay contributors</string>
+<key>NSContactsUsageDescription</key>
+<string>If you opt in while asking about a Messages backup, Relay looks up only the included senders. Contact names are shown on this Mac and stay out of model requests.</string>
 <key>NSCalendarsFullAccessUsageDescription</key>
 <string>Relay can read events from calendars you explicitly select to help with your requests. macOS grants full calendar access; Relay does not create or change events.</string>
 <key>NSAppleEventsUsageDescription</key>
-<string>Relay reads only the notes or messages you select in Apple Notes or Apple Mail when you press Capture. Captured text stays on this Mac for the current session.</string>
+<string>Relay uses Automation to inspect open browser tabs, bookmark requested pages, and prepare drafts or calendar events in apps you ask it to control.</string>
 <key>NSAppTransportSecurity</key>
 <dict>
     <key>NSExceptionDomains</key>
@@ -31,4 +33,52 @@
     <string>Relay uses the microphone only when you start voice input. Audio is processed by on-device speech recognition; unsupported local recognition is refused.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Relay requests speech permission for optional on-device dictation into a reviewable transcript. It requires on-device recognition and never falls back to hosted speech recognition.</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>CFBundleURLName</key>
+            <string>dev.relay.assistant.url</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>relay</string>
+            </array>
+        </dict>
+    </array>
+    <key>NSServices</key>
+    <array>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>Summarize with Relay</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>summarizeWithRelay</string>
+            <key>NSPortName</key>
+            <string>Relay</string>
+            <key>NSSendTypes</key>
+            <array>
+                <string>NSStringPboardType</string>
+                <string>public.utf8-plain-text</string>
+            </array>
+        </dict>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>Proofread with Relay</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>proofreadWithRelay</string>
+            <key>NSPortName</key>
+            <string>Relay</string>
+            <key>NSSendTypes</key>
+            <array>
+                <string>NSStringPboardType</string>
+                <string>public.utf8-plain-text</string>
+            </array>
+        </dict>
+    </array>
 </dict></plist>

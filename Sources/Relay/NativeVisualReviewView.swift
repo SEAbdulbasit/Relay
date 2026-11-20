@@ -17,7 +17,7 @@ struct NativeVisualReviewView: View {
                 markedImage(image)
                     .frame(maxHeight: maximumImageHeight)
                     .frame(maxWidth: .infinity)
-                    .background(Color.black.opacity(0.25))
+                    .background(RelayColors.surface)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(RelayColors.borderDefault) }
                     .accessibilityHidden(false)
@@ -42,7 +42,8 @@ struct NativeVisualReviewView: View {
                             }
                         }
                         .padding(20).frame(minWidth: 560, idealWidth: 880, minHeight: 420, idealHeight: 620)
-                        .background(RelayTheme.canvas)
+                        .background(RelayColors.canvas)
+                        .relayPreferredAppearance()
                     }
             } else {
                 Label("The review image is unavailable. Decline and inspect the window again.", systemImage: "photo.badge.exclamationmark")
@@ -75,7 +76,9 @@ struct NativeVisualReviewView: View {
                 Text(literal).font(.relayBody).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10).background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                    .padding(10)
+                    .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(RelayColors.borderSubtle, lineWidth: 1))
                     .accessibilityIdentifier("review.literalText")
             }
             if case .drag = presentation.gesture {

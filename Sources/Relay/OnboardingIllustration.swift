@@ -7,7 +7,7 @@ struct OnboardingIllustration: View {
     private let blue = RelayColors.accentBlue
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: RelaySpace.md) {
             switch scene {
             case .conversation: conversation
             case .privacy: privacy
@@ -16,86 +16,141 @@ struct OnboardingIllustration: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity)
-        .background(RelayColors.cardBG, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(RelayTheme.line))
+        .background(RelayColors.cardBG, in: RoundedRectangle(cornerRadius: RelayRadius.sm, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: RelayRadius.sm, style: .continuous)
+                .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
+        )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityDescription)
     }
 
     private var conversation: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 18) {
             HStack {
                 Text("A conversation, with actions")
-                    .font(.system(size: 14, weight: .medium)).foregroundStyle(RelayColors.textSecondary)
+                    .font(.relayBodyStrong)
+                    .foregroundStyle(RelayColors.textPrimary)
                 Spacer()
-                Text("Example").font(.system(size: 12, weight: .medium))
+                Text("Example")
+                    .font(.relayMicro)
                     .foregroundStyle(RelayColors.textSecondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(RelayColors.surface, in: Capsule(style: .continuous))
+                    .overlay(Capsule(style: .continuous).strokeBorder(RelayColors.borderSubtle, lineWidth: 1))
             }
             HStack {
                 Spacer(minLength: 24)
                 Text("Open Calculator")
-                    .font(.system(size: 15))
-                    .padding(.horizontal, 18).padding(.vertical, 12)
-                    .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+                    .font(.relayBodyStrong)
+                    .foregroundStyle(RelayColors.textPrimary)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 12)
+                    .background(RelayColors.surfaceElevated, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
+                    )
             }
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 7) {
-                    ForEach(0..<3) { _ in Circle().fill(.white.opacity(0.18)).frame(width: 7, height: 7) }
+                    ForEach(0..<3, id: \.self) { _ in
+                        Circle()
+                            .fill(RelayColors.borderStrong)
+                            .frame(width: 7, height: 7)
+                    }
                     Spacer()
                     Label("Calculator", systemImage: "macwindow")
-                        .font(.system(size: 12, weight: .medium)).foregroundStyle(RelayColors.textSecondary)
+                        .font(.relayMicro)
+                        .foregroundStyle(RelayColors.textSecondary)
                     Spacer()
-                    Image(systemName: "checkmark.circle").foregroundStyle(blue)
-                    Text("Active").font(.system(size: 13))
-                }.padding(.horizontal, 16).padding(.vertical, 12)
-                Divider().overlay(.white.opacity(0.08))
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(blue)
+                    Text("Active")
+                        .font(.relayMicro)
+                        .foregroundStyle(RelayColors.textPrimary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+
+                Divider().overlay(RelayColors.borderSubtle)
+
                 HStack(spacing: 14) {
                     Image(systemName: "doc.text.magnifyingglass")
-                        .font(.system(size: 26, weight: .light)).foregroundStyle(blue)
+                        .font(.system(size: 26, weight: .light))
+                        .foregroundStyle(blue)
                     VStack(alignment: .leading, spacing: 5) {
                         Text("Search in the app you already use")
-                            .font(.system(size: 15, weight: .medium))
+                            .font(.relayBodyStrong)
+                            .foregroundStyle(RelayColors.textPrimary)
                         Text("Relay enters the search. Finder shows the matches.")
-                            .font(.system(size: 13)).foregroundStyle(RelayColors.textSecondary)
+                            .font(.relayCaption)
+                            .foregroundStyle(RelayColors.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                }.padding(18)
+                }
+                .padding(18)
             }
-            .background(.black.opacity(0.16), in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.white.opacity(0.10)))
+            .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
+            )
             Label("Follow each action in Activity", systemImage: "list.bullet.rectangle")
-                .font(.system(size: 13)).foregroundStyle(RelayColors.textSecondary)
+                .font(.relayCaption)
+                .foregroundStyle(RelayColors.textSecondary)
         }
     }
 
     private var privacy: some View {
-        HStack(spacing: 24) {
+        HStack(spacing: RelaySpace.lg) {
             Image(systemName: "laptopcomputer")
-                .font(.system(size: 36, weight: .light)).foregroundStyle(blue)
+                .font(.system(size: 34, weight: .light))
+                .foregroundStyle(blue)
                 .frame(width: 64, height: 64)
-                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
-            VStack(alignment: .leading, spacing: 12) {
+                .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
+                )
+            VStack(alignment: .leading, spacing: 10) {
                 Label("Your conversation", systemImage: "bubble.left")
+                    .font(.relayBodyStrong)
+                    .foregroundStyle(RelayColors.textPrimary)
                 Label("Your local model", systemImage: "cpu")
+                    .font(.relayCaption)
+                    .foregroundStyle(RelayColors.textSecondary)
                 Label("Together on this Mac", systemImage: "lock.shield")
-            }.font(.system(size: 14, weight: .regular))
+                    .font(.relayMicro)
+                    .foregroundStyle(RelayColors.textSecondary)
+            }
             Spacer(minLength: 0)
         }
     }
 
     private var access: some View {
-        HStack(spacing: 24) {
+        HStack(spacing: RelaySpace.lg) {
             Image(systemName: "cursorarrow.click.2")
-                .font(.system(size: 48, weight: .light)).foregroundStyle(blue)
+                .font(.system(size: 40, weight: .light))
+                .foregroundStyle(blue)
                 .frame(width: 64, height: 64)
-                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
-            VStack(alignment: .leading, spacing: 10) {
+                .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
+                )
+            VStack(alignment: .leading, spacing: 8) {
                 Text("A little help across your apps.")
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.relayBodyStrong)
+                    .foregroundStyle(RelayColors.textPrimary)
                 Text("Read a control. Enter text. Check the result.")
-                    .font(.system(size: 16)).foregroundStyle(RelayColors.textSecondary)
+                    .font(.relayCaption)
+                    .foregroundStyle(RelayColors.textSecondary)
                 Text("You choose when to enable app control.")
-                    .font(.system(size: 15)).foregroundStyle(RelayColors.textSecondary)
+                    .font(.relayMicro)
+                    .foregroundStyle(RelayColors.textSecondary)
             }
             Spacer(minLength: 0)
         }

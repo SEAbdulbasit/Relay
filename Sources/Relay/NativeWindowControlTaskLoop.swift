@@ -52,13 +52,16 @@ import Foundation
                     let readSource: NativeVisualTaskSource
                     if let previous {
                         try previous.validateOriginalSource()
-                        readSource = try await connection.refreshOriginal(previous)
+                        readSource = try await connection.refreshOriginalForControl(previous)
                     } else {
                         try admission.validate()
-                        readSource = try await connection.observeRead(admission)
+                        readSource = try await connection.observeForControl(admission)
                     }
                     try scope.validate(); try planningAdmission.validate(); try readSource.validateOriginalSource()
-                    let source = try await connection.refreshForInputPlanning(readSource)
+                    // A pointer-only step never reads the focused editor's
+                    // contents, selection or formatting to build its preview.
+                    let source = request.needsEditorPreview
+                        ? try await connection.refreshForInputPlanning(readSource, request.includesTextInsertion) : readSource
                     guard source.sourceID == readSource.sourceID,
                           source.observation.snapshot.application == readSource.observation.snapshot.application,
                           source.observation.snapshot.window.matchesExactly(readSource.observation.snapshot.window) else {

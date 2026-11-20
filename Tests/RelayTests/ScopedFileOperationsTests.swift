@@ -29,7 +29,7 @@ struct ScopedFileOperationsTests {
         try Data("outside".utf8).write(to: secret)
         try FileManager.default.createSymbolicLink(at: allowed.appendingPathComponent("escape-dir"), withDestinationURL: outside)
         try FileManager.default.createSymbolicLink(at: allowed.appendingPathComponent("escape-sf.webm"), withDestinationURL: secret)
-        let result = try await ScopedFileOperations.search(query: "sf.webm", grants: [ScopeGrant(path: allowed.path)])
+        let result = try await ScopedFileOperations.search(query: "sf.webm", grants: [ScopeGrant(path: allowed.path)], worker: FilenameSearchWorker())
         #expect(result.matches.count == 1, "visited=\(result.visitedEntries) symlinks=\(result.skippedSymlinks) truncated=\(result.truncated) warnings=\(result.warnings)")
         #expect(result.matches.first?.path == (try ToolPolicy.canonicalURL(found.path).path))
         #expect(result.matches.first?.bytes == 8)
@@ -44,7 +44,7 @@ struct ScopedFileOperationsTests {
         for index in 0..<100 {
             try Data().write(to: root.appendingPathComponent("needle-\(index)-" + String(repeating: "a", count: 120) + ".txt"))
         }
-        let result = try await ScopedFileOperations.search(query: "needle", grants: [ScopeGrant(path: root.path)])
+        let result = try await ScopedFileOperations.search(query: "needle", grants: [ScopeGrant(path: root.path)], worker: FilenameSearchWorker())
         #expect(result.truncated)
         #expect(result.matches.count < 100)
         #expect(result.matches.reduce(0) { $0 + $1.path.utf8.count + $1.name.utf8.count + 96 } <= 9000)
@@ -52,7 +52,7 @@ struct ScopedFileOperationsTests {
         var deep = root
         for index in 0..<10 { deep = try directory(deep, "level-\(index)") }
         try Data().write(to: deep.appendingPathComponent("deep-marker.txt"))
-        let bounded = try await ScopedFileOperations.search(query: "deep-marker", grants: [ScopeGrant(path: root.path)])
+        let bounded = try await ScopedFileOperations.search(query: "deep-marker", grants: [ScopeGrant(path: root.path)], worker: FilenameSearchWorker())
         #expect(bounded.matches.isEmpty)
         #expect(bounded.truncated)
         for query in ["", "  ", "path/name", "name\nother", String(repeating: "é", count: 129)] {
@@ -66,7 +66,7 @@ struct ScopedFileOperationsTests {
         let selected = root.appendingPathComponent("selected.txt")
         try Data("selected".utf8).write(to: selected)
         try Data("other".utf8).write(to: root.appendingPathComponent("selected-other.txt"))
-        let result = try await ScopedFileOperations.search(query: "selected", grants: [ScopeGrant(path: selected.path)])
+        let result = try await ScopedFileOperations.search(query: "selected", grants: [ScopeGrant(path: selected.path)], worker: FilenameSearchWorker())
         #expect(result.matches.count == 1)
         #expect(result.matches[0].name == "selected.txt")
     }

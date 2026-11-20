@@ -56,6 +56,31 @@ struct ScopedMutationReadbackTests {
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["RELAY_RUN_SCOPED_READBACK_TEST"] == "1"))
+    func ordinarySiblingOfSecureFieldCannotReceiveGenericTextEntry() async throws {
+        try await DesktopFixtureProcess.withLaunch(path: DesktopFixtureProcess.bundledPath,
+            environment: ["RELAY_FIXTURE_INCLUDE_SECURE": "1"]) { fixture in
+            let tools = MacTools()
+            let observed = try await observe(tools)
+            let input = try AccessibilityCheckRunner.controlID("relay.fixture.input", in: observed.summary)
+            #expect(!observed.summary.contains("fixture-dummy-secret"))
+            let before = try oracle(fixture)
+            let write = ToolCall(name: "set_value", arguments: ["bundle_id": .string(bundle),
+                "element_id": .string(input), "value": .string("Unrequested sibling write")])
+            do {
+                _ = try await tools.execute(write)
+                Issue.record("Generic text entry must refuse an ordinary sibling of a secure field.")
+            } catch {
+                #expect(error.localizedDescription.contains("This window contains a secure input"))
+                #expect(!error.localizedDescription.contains("fixture-dummy-secret"))
+            }
+            let state = try oracle(fixture)
+            #expect(state["input"] as? String == before["input"] as? String)
+            #expect(state["editingInput"] as? String == before["editingInput"] as? String)
+            #expect(state["clickCount"] as? Int == before["clickCount"] as? Int)
+        }
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["RELAY_RUN_SCOPED_READBACK_TEST"] == "1"))
     func cachedRecoveryIdentitySurvivesFreshIDsAndDistinguishesDifferentControls() async throws {
         try await DesktopFixtureProcess.withLaunch(path: DesktopFixtureProcess.bundledPath) { fixture in
             let tools = MacTools()

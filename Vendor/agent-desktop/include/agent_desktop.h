@@ -45,14 +45,15 @@
  *
  * Version-bump rule: increment this constant (and update the header via
  * `scripts/update-ffi-header.sh`) whenever a breaking change is made to the
- * C ABI — a removed or incompatibly-changed `ad_*` symbol, or a layout
- * change to any `repr(C)` struct. Additive changes (new `ad_*` symbols, new
- * error codes) do **not** require a bump. It is recommended to call `ad_init`
- * with the major compiled against the header to verify ABI compatibility; a
- * mismatch means the header and dylib are incompatible and the consumer should
- * refuse to proceed rather than risk undefined behaviour.
+ * C ABI — a removed or incompatibly-changed `ad_*` symbol, a layout change to
+ * any `repr(C)` struct, or a call that now fails where it used to succeed.
+ * Additive changes (new `ad_*` symbols, new error codes) do **not** require a
+ * bump. It is recommended to call `ad_init` with the major compiled against
+ * the header to verify ABI compatibility; a mismatch means the header and
+ * dylib are incompatible and the consumer should refuse to proceed rather than
+ * risk undefined behaviour.
  */
-#define AD_ABI_VERSION_MAJOR 6
+#define AD_ABI_VERSION_MAJOR 7
 
 /**
  * Maximum byte length (excluding the NUL terminator) accepted for any
@@ -203,6 +204,7 @@ enum AdResult
   AD_RESULT_ERR_POLICY_DENIED = -14,
   AD_RESULT_ERR_AMBIGUOUS_TARGET = -15,
   AD_RESULT_ERR_APP_UNRESPONSIVE = -16,
+  AD_RESULT_ERR_SANDBOX_NOT_FOUND = -17,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -1103,8 +1105,11 @@ AdResult ad_execute_action_with_policy(const struct AdAdapter *adapter,
                                        struct AdActionResult *out);
 
 /**
- * Executes a struct-based ref action with exact process-generation and typed
- * native-id evidence.
+ * Validates a struct-based ref action and refuses it without acting. An exact
+ * entry carries no retained element token and no capture proof, so a
+ * well-formed call fails with `ACTION_NOT_SUPPORTED`
+ * (`exact_entry_unsupported`) and a malformed one with `INVALID_ARGS`;
+ * callers act through a snapshot ref with `ad_execute_by_ref` instead.
  *
  * # Safety
  *
@@ -1142,7 +1147,11 @@ AdResult ad_execute_ref_action_exact_with_policy(const struct AdAdapter *adapter
 AdResult ad_free_handle(const struct AdAdapter *adapter, struct AdNativeHandle *handle);
 
 /**
- * Resolves an element using process-generation and typed native-id evidence.
+ * Validates an exact entry and refuses it. An exact entry carries no retained
+ * element token and no capture proof, so a well-formed one fails with
+ * `ACTION_NOT_SUPPORTED` (`exact_entry_unsupported`) and a malformed one with
+ * `INVALID_ARGS`; callers act through a snapshot ref with `ad_execute_by_ref`
+ * or locate the element with `ad_find_exact` instead.
  *
  * # Safety
  *
@@ -1360,12 +1369,14 @@ AdResult ad_execute_by_ref_timeout(const struct AdAdapter *adapter,
                                    char **out);
 
 /**
- * Takes a full CLI-format snapshot of the target application window,
+ * Takes a full CLI-format snapshot of the target application surface,
  * allocates snapshot-qualified refs (`@<snapshot_id>:eN`) for all
  * interactive elements, persists the refmap to disk, and writes the JSON envelope into `*out`.
  *
  * The JSON shape matches `agent-desktop snapshot`:
- * `{"version":"2.5","ok":true,"command":"snapshot","data":{"app":"...","window":{...},"ref_count":N,"snapshot_id":"...","complete":true,"tree":{...}}}`.
+ * `{"version":"2.6","ok":true,"command":"snapshot","data":{"app":"...","window":{...},"ref_count":N,"snapshot_id":"...","complete":true,"tree":{...}}}`.
+ * On macOS, `window` is omitted for application-owned menu and menubar surfaces
+ * and when a background app with no window is read through its process.
  *
  * `data.complete` is always present. A snapshot that exhausts its observation
  * budget still succeeds with `"complete":false` and the tree it did observe,
@@ -1386,18 +1397,17 @@ AdResult ad_execute_by_ref_timeout(const struct AdAdapter *adapter,
  *   allocation is made. Only the last-error slot is set.
  *
  * `app` is tri-state:
- * - null — snapshot the currently focused window (same as running the command with no `--app`).
- * - valid UTF-8 string — snapshot the named application's focused window.
+ * - null — use the focused owner selected by `surface`.
+ * - valid UTF-8 string — use the named app's owner selected by `surface`.
  * - non-null but invalid UTF-8 or exceeding `AD_MAX_STRING_BYTES` — returns `ErrInvalidArgs`.
  *
- * `surface` is an `AdSnapshotSurface` discriminant (0 = Window, 1 = Focused, …).
+ * `surface` is an `AdSnapshotSurface` discriminant (0 = Window, 1 = Focused, …). On macOS,
+ * `Menu` and `Menubar` are application-owned surfaces and do not require an open window.
  * An out-of-range value returns `ErrInvalidArgs`.
  *
- * This entrypoint always targets the active focused window of the requested
- * application; explicit window targeting (`window_id`) is not yet exposed
- * over the ABI. Progressive traversal (skeleton mode and `--root` drill-down)
- * is likewise not exposed here. Both are planned fast-follows to this
- * entrypoint — agents needing them should use the CLI in the meantime.
+ * Window-owned snapshots include `data.window`; application-owned menu and menubar snapshots omit it.
+ * Explicit window targeting (`window_id`), skeleton mode and `--root` drill-down are not exposed
+ * over the ABI. Use the CLI when you need those options.
  *
  * **Dispatch-before-serialize ordering**: the snapshot and refmap persistence
  * occur before the result JSON is serialised. In the near-impossible event
@@ -1865,9 +1875,11 @@ void ad_notification_list_free(struct AdNotificationList *list);
 /**
  * Finds and strictly resolves one element within a generation-pinned window.
  * `AdFindQuery.control.selection` must explicitly request first, last, or nth
- * behavior when duplicate matches are acceptable. The returned native handle
- * is adapter-bound and thread-affine; release it with `ad_free_handle` on the
- * resolving thread.
+ * behavior when duplicate matches are acceptable. The handle is published only
+ * after the landed element is re-identified by the selected entry's full
+ * predicate, so a control that moved into the anchored path is refused rather
+ * than returned. The returned native handle is adapter-bound and thread-affine;
+ * release it with `ad_free_handle` on the resolving thread.
  *
  * # Safety
  * All pointers must be valid and `out_handle` must be writable.

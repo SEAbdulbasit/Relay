@@ -7,8 +7,16 @@ import Testing
 struct AdversarialMultiAgentStressTests {
 
     private func settle(_ store: AssistantStore) async {
-        for _ in 0..<500 where store.isRunning { await Task.yield() }
+        await store.waitForConversationTaskToSettle()
         #expect(!store.isRunning)
+    }
+
+    private func awaitFixtureState(_ predicate: @MainActor () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while !predicate() {
+            try #require(ContinuousClock.now < deadline, "The inert fixture did not reach its required state")
+            try await Task.sleep(for: .milliseconds(2))
+        }
     }
 
     // MARK: - 1. Outcome Verification
@@ -142,10 +150,19 @@ struct AdversarialMultiAgentStressTests {
 
         store.draft = "Open Notes and visit example.com"
         store.send()
-        for _ in 0..<500 where store.pendingReview == nil { await Task.yield() }
-        #expect(store.pendingReview?.call.name == "browser_navigate")
-        store.denyReview()
-        await settle(store)
+        do {
+            try await awaitFixtureState { store.pendingReview != nil || !store.isRunning }
+            let review = try #require(store.pendingReview)
+            try #require(review.call.name == "browser_navigate")
+            store.denyReview()
+            await settle(store)
+        } catch {
+            // A prerequisite failure must resolve a late review before awaiting
+            // the run; otherwise the fixture itself leaves execution suspended.
+            store.stop()
+            await settle(store)
+            throw error
+        }
 
         #expect(store.phase == .needsInput)
         #expect(executorTurns == 2)
@@ -184,12 +201,19 @@ struct AdversarialMultiAgentStressTests {
 
         store.draft = "Task to be cancelled"
         store.send()
-        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
-        while releasePlanner == nil, ContinuousClock.now < deadline { await Task.yield() }
-        try #require(releasePlanner != nil)
-        store.stop()
-        releasePlanner?.resume(); releasePlanner = nil
-        await settle(store)
+        do {
+            try await awaitFixtureState { releasePlanner != nil || !store.isRunning }
+            let release = try #require(releasePlanner)
+            store.stop()
+            releasePlanner = nil
+            release.resume()
+            await settle(store)
+        } catch {
+            store.stop()
+            releasePlanner?.resume(); releasePlanner = nil
+            await settle(store)
+            throw error
+        }
 
         #expect(plannerCalled)
         #expect(!executorCalled, "Executor must NEVER be called after planner was stopped")
@@ -228,12 +252,19 @@ struct AdversarialMultiAgentStressTests {
         store.draft = "Run long execution"
         store.send()
 
-        for _ in 0..<500 where finishTool == nil { await Task.yield() }
-        let finish = try #require(finishTool)
-        store.stop()
-        finish.resume()
-        await settle(store)
-        for _ in 0..<500 where store.messages.last?.text.contains("PID 123") != true { await Task.yield() }
+        do {
+            try await awaitFixtureState { finishTool != nil || !store.isRunning }
+            let finish = try #require(finishTool)
+            store.stop()
+            finishTool = nil
+            finish.resume()
+            await settle(store)
+        } catch {
+            store.stop()
+            finishTool?.resume(); finishTool = nil
+            await settle(store)
+            throw error
+        }
 
         #expect(!criticCalled, "Critic must NOT be called when stopped during executor turn")
         #expect(store.phase == .stopped)

@@ -1,15 +1,200 @@
 import SwiftUI
 import AppKit
+import Combine
+
+// MARK: - Appearance Mode (Night / Light / System)
+
+public enum RelayAppearanceMode: String, CaseIterable, Identifiable, Sendable {
+    case dark
+    case light
+    case system
+
+    public static let storageKey = "relay.appearance.mode"
+    public static let didChangeNotification = Notification.Name("RelayAppearanceModeDidChange")
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .dark: return "Night"
+        case .light: return "Light"
+        case .system: return "System"
+        }
+    }
+
+    public var label: String { displayName }
+
+    public var subtitle: String {
+        switch self {
+        case .dark: return "Dark appearance"
+        case .light: return "Light appearance"
+        case .system: return "Follow macOS"
+        }
+    }
+
+    public var iconName: String {
+        switch self {
+        case .dark: return "moon.stars.fill"
+        case .light: return "sun.max.fill"
+        case .system: return "circle.lefthalf.filled"
+        }
+    }
+
+    public var colorScheme: ColorScheme? {
+        switch self {
+        case .dark: return .dark
+        case .light: return .light
+        case .system: return nil
+        }
+    }
+
+    public var nsAppearance: NSAppearance? {
+        switch self {
+        case .dark: return NSAppearance(named: .darkAqua)
+        case .light: return NSAppearance(named: .aqua)
+        case .system: return nil
+        }
+    }
+
+    public var next: RelayAppearanceMode {
+        switch self {
+        case .dark: return .light
+        case .light: return .system
+        case .system: return .dark
+        }
+    }
+
+    public var toggledLightDark: RelayAppearanceMode {
+        switch self {
+        case .dark: return .light
+        case .light: return .dark
+        case .system:
+            let isSystemLight = NSApplication.shared.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .aqua
+            return isSystemLight ? .dark : .light
+        }
+    }
+
+    public static func fromStored(_ rawValue: String?) -> RelayAppearanceMode {
+        guard let raw = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !raw.isEmpty else {
+            return .dark
+        }
+        switch raw {
+        case "dark", "night", "obsidian":
+            return .dark
+        case "light", "day", "daylight":
+            return .light
+        case "system", "auto":
+            return .system
+        default:
+            return RelayAppearanceMode(rawValue: raw) ?? .dark
+        }
+    }
+
+    public static var current: RelayAppearanceMode {
+        get {
+            fromStored(UserDefaults.standard.string(forKey: storageKey))
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: storageKey)
+            NotificationCenter.default.post(name: didChangeNotification, object: newValue)
+        }
+    }
+
+    @MainActor
+    public static func applyAppearance(_ mode: RelayAppearanceMode? = nil) {
+        let resolved = mode ?? current
+        if let mode {
+            if UserDefaults.standard.string(forKey: storageKey) != mode.rawValue {
+                UserDefaults.standard.set(mode.rawValue, forKey: storageKey)
+            }
+        }
+        if NSApp != nil {
+            NSApplication.shared.appearance = resolved.nsAppearance
+        }
+    }
+}
+
+@MainActor
+public final class RelayThemeManager: ObservableObject {
+    public static let shared = RelayThemeManager()
+
+    @Published public var appearanceMode: RelayAppearanceMode {
+        didSet {
+            guard oldValue != appearanceMode else { return }
+            UserDefaults.standard.set(appearanceMode.rawValue, forKey: RelayAppearanceMode.storageKey)
+            RelayAppearanceMode.applyAppearance(appearanceMode)
+            NotificationCenter.default.post(name: RelayAppearanceMode.didChangeNotification, object: appearanceMode)
+        }
+    }
+
+    private var cancellables = Set<AnyCancellable>()
+
+    public init() {
+        let initial = RelayAppearanceMode.current
+        self.appearanceMode = initial
+        RelayAppearanceMode.applyAppearance(initial)
+
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                let latest = RelayAppearanceMode.current
+                if self.appearanceMode != latest {
+                    self.appearanceMode = latest
+                }
+                RelayAppearanceMode.applyAppearance(latest)
+            }
+            .store(in: &cancellables)
+    }
+
+    public var colorScheme: ColorScheme? {
+        appearanceMode.colorScheme
+    }
+
+    public func setMode(_ mode: RelayAppearanceMode) {
+        appearanceMode = mode
+    }
+
+    public func toggleLightDark() {
+        appearanceMode = appearanceMode.toggledLightDark
+    }
+
+    public func cycleMode() {
+        appearanceMode = appearanceMode.next
+    }
+}
+
+struct RelayPreferredAppearanceModifier: ViewModifier {
+    @AppStorage(RelayAppearanceMode.storageKey) private var rawMode: String = RelayAppearanceMode.dark.rawValue
+
+    private var mode: RelayAppearanceMode {
+        RelayAppearanceMode.fromStored(rawMode)
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .preferredColorScheme(mode.colorScheme)
+            .onChange(of: rawMode, initial: true) { _, newValue in
+                let resolved = RelayAppearanceMode.fromStored(newValue)
+                RelayAppearanceMode.applyAppearance(resolved)
+            }
+    }
+}
 
 extension View {
+    /// Applies the user's selected RelayAppearanceMode (.dark, .light, or .system) and keeps AppKit/SwiftUI synced.
+    func relayPreferredAppearance() -> some View {
+        modifier(RelayPreferredAppearanceModifier())
+    }
+
     /// Plain macOS text fields dim native placeholders even when a prompt supplies
     /// a color. Draw the empty-state prompt once at the shared readable contrast.
     func relayTextFieldPrompt(_ prompt: String, when isEmpty: Bool, font: Font = .relayBody) -> some View {
-        overlay(alignment: .topLeading) {
+        overlay(alignment: .leading) {
             if isEmpty {
                 Text(prompt)
                     .font(font)
-                    .foregroundStyle(RelayColors.textSecondary)
+                    .foregroundStyle(RelayColors.textMuted)
                     .lineLimit(1)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
@@ -18,42 +203,269 @@ extension View {
     }
 }
 
-// MARK: - Color Palette Tokens (ChatGPT macOS & Antigravity Matte Graphite Palette)
+// MARK: - Canonical Spacing, Corner Radii & Control Scale
+enum RelaySpace {
+    static let xxs: CGFloat = 4
+    static let xs: CGFloat = 8
+    static let sm: CGFloat = 12
+    static let md: CGFloat = 16
+    static let lg: CGFloat = 24
+    static let xl: CGFloat = 32
+}
+
+enum RelayRadius {
+    static let xs: CGFloat = 8
+    static let sm: CGFloat = 12
+    static let md: CGFloat = 16
+    static let lg: CGFloat = 20
+    static let pill: CGFloat = 999
+}
+
+enum RelayControlHeight {
+    static let compact: CGFloat = 28
+    static let pill: CGFloat = 30
+    static let bar: CGFloat = 34
+    static let composer: CGFloat = 38
+    static let header: CGFloat = 56
+}
+
+// MARK: - Adaptive palette
 enum RelayColors {
-    static let pitch = Color(red: 18/255, green: 19/255, blue: 23/255)              // #121317 Window canvas
-    static let canvas = Color(red: 15/255, green: 16/255, blue: 20/255)             // #0F1014 Sidebar
-    static let background = pitch         // Window background
-    static let cardBG = Color(red: 29/255, green: 29/255, blue: 32/255)             // #1D1D20 Elevated Matte Card Surface
-    static let surface = Color(red: 34/255, green: 34/255, blue: 38/255)            // #222226 Composer & Control Surface
-    static let surfaceElevated = Color(red: 43/255, green: 43/255, blue: 48/255)    // #2B2B30 User Message Pill & Hover Surface
-    static let glassBackdrop = Color(red: 29/255, green: 29/255, blue: 32/255).opacity(0.88)
+    private static let appearanceOverrideThreadKey = "relay.appearance.drawingOverride"
 
-    static let borderSubtle = Color.white.opacity(0.07)
-    static let borderDefault = Color.white.opacity(0.16)
-    static let borderFocus = Color(red: 133/255, green: 181/255, blue: 238/255)
+    private static func isLightAppearance(_ appearance: NSAppearance) -> Bool {
+        if let overrideRaw = Thread.current.threadDictionary[appearanceOverrideThreadKey] as? String,
+           let overrideMode = RelayAppearanceMode(rawValue: overrideRaw) {
+            switch overrideMode {
+            case .light:
+                return true
+            case .dark:
+                return false
+            case .system:
+                return appearance.bestMatch(from: [.darkAqua, .aqua]) == .aqua
+            }
+        }
+        switch RelayAppearanceMode.current {
+        case .light:
+            return true
+        case .dark:
+            return false
+        case .system:
+            return appearance.bestMatch(from: [.darkAqua, .aqua]) == .aqua
+        }
+    }
 
-    static let textPrimary = Color(red: 244/255, green: 244/255, blue: 246/255)     // #F4F4F6 Crisp Warm White Ink
-    static let textBright = Color(red: 228/255, green: 228/255, blue: 231/255)      // #E4E4E7 Zinc 200
-    static let textStatus = Color(red: 212/255, green: 212/255, blue: 216/255)      // #D4D4D8 Zinc 300
-    static let textSecondary = Color(red: 161/255, green: 161/255, blue: 170/255)   // #A1A1AA Zinc 400
-    static let textMuted = Color(red: 145/255, green: 147/255, blue: 158/255)       // Secondary control labels
-    static let textDim = Color(red: 82/255, green: 82/255, blue: 91/255)            // #52525B Zinc 600
-    static let textFaint = Color.white.opacity(0.28)
+    static func adaptive(
+        dark: (CGFloat, CGFloat, CGFloat, CGFloat),
+        light: (CGFloat, CGFloat, CGFloat, CGFloat)
+    ) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let rgba = isLightAppearance(appearance) ? light : dark
+            return NSColor(srgbRed: rgba.0, green: rgba.1, blue: rgba.2, alpha: rgba.3)
+        })
+    }
 
-    // Restrained Semantic Accents (Subtle status & role indicators only)
-    static let accentEmerald = Color(red: 52/255, green: 211/255, blue: 153/255)    // #34D399 Subtle Mint/Emerald Status
-    static let accentAmethyst = Color(red: 212/255, green: 212/255, blue: 216/255)  // #D4D4D8 Monochrome Silver Accent
-    static let accentPeriwinkle = Color(red: 161/255, green: 161/255, blue: 170/255)// #A1A1AA Muted Slate Accent
-    static let accentBlue = Color(red: 147/255, green: 197/255, blue: 253/255)      // #93C5FD Soft Sky Status
-    static let accentCoral = Color(red: 248/255, green: 113/255, blue: 113/255)     // #F87171 Soft Red Alert
-    static let accentAmber = Color(red: 251/255, green: 191/255, blue: 36/255)      // #FBBF24 Warm Amber Warning
-    static let accentGold = Color(red: 228/255, green: 228/255, blue: 231/255)      // #E4E4E7 Warm Silver Highlight
-    static let accentCyan = Color(red: 165/255, green: 243/255, blue: 252/255)      // #A5F3FC Soft Ice Cyan
-    static let knowledgeLink = Color(red: 228/255, green: 228/255, blue: 231/255)   // #E4E4E7 Clean Understated Link
+    static func resolvedNSColor(_ color: Color, for mode: RelayAppearanceMode) -> NSColor {
+        let targetAppearance = mode.nsAppearance ?? NSApp?.effectiveAppearance ?? NSAppearance(named: .darkAqua)
+        let threadDict = Thread.current.threadDictionary
+        let previousOverride = threadDict[appearanceOverrideThreadKey]
+        threadDict[appearanceOverrideThreadKey] = mode.rawValue
+        defer {
+            if let previousOverride {
+                threadDict[appearanceOverrideThreadKey] = previousOverride
+            } else {
+                threadDict.removeObject(forKey: appearanceOverrideThreadKey)
+            }
+        }
+        var resolved: NSColor = NSColor(color)
+        targetAppearance?.performAsCurrentDrawingAppearance {
+            resolved = NSColor(color).usingColorSpace(.sRGB) ?? NSColor(color)
+        }
+        return resolved.usingColorSpace(.sRGB) ?? resolved
+    }
+
+    static var accentNSColor: NSColor {
+        resolvedNSColor(accentBlue, for: RelayAppearanceMode.current)
+    }
+
+    // Warm paper and graphite keep long reading sessions quiet; the composer sits above the canvas.
+    static let pitch = adaptive(
+        dark: (20/255, 22/255, 21/255, 1),
+        light: (244/255, 242/255, 237/255, 1)
+    )
+    static let canvas = adaptive(
+        dark: (25/255, 27/255, 26/255, 1),
+        light: (250/255, 249/255, 245/255, 1)
+    )
+    static let background = canvas
+    static let cardBG = adaptive(
+        dark: (32/255, 35/255, 33/255, 1),
+        light: (255/255, 254/255, 251/255, 1)
+    )
+    static let surface = adaptive(
+        dark: (39/255, 42/255, 40/255, 1),
+        light: (246/255, 245/255, 241/255, 1)
+    )
+    static let surfaceElevated = adaptive(
+        dark: (47/255, 51/255, 48/255, 1),
+        light: (255/255, 254/255, 251/255, 1)
+    )
+    static let glassBackdrop = adaptive(
+        dark: (32/255, 35/255, 33/255, 0.96),
+        light: (255/255, 254/255, 251/255, 0.96)
+    )
+
+    // Interactive Fills
+    static let subtleFill = adaptive(
+        dark: (1.0, 1.0, 1.0, 0.04),
+        light: (15/255, 23/255, 42/255, 0.03)
+    )
+    static let hoverFill = adaptive(
+        dark: (1.0, 1.0, 1.0, 0.065),
+        light: (15/255, 23/255, 42/255, 0.045)
+    )
+    static let activeFill = adaptive(
+        dark: (1.0, 1.0, 1.0, 0.11),
+        light: (15/255, 23/255, 42/255, 0.075)
+    )
+    static let badgeFill = adaptive(
+        dark: (1.0, 1.0, 1.0, 0.07),
+        light: (15/255, 23/255, 42/255, 0.05)
+    )
+
+    // Crisp 1px Hairline Borders & Card Elevation Highlights
+    static let borderSubtle = adaptive(
+        dark: (1.0, 1.0, 1.0, 0.075),
+        light: (15/255, 23/255, 42/255, 0.07)
+    )
+    static let borderDefault = adaptive(
+        dark: (1.0, 1.0, 1.0, 0.12),
+        light: (15/255, 23/255, 42/255, 0.11)
+    )
+    static let borderStrong = adaptive(
+        dark: (1.0, 1.0, 1.0, 0.25),
+        light: (17/255, 19/255, 24/255, 0.20)
+    )
+    static let borderFocus = adaptive(
+        dark: (1.0, 1.0, 1.0, 0.24),
+        light: (17/255, 19/255, 24/255, 0.22)
+    )
+    static let cardTopHighlight = adaptive(
+        dark: (1.0, 1.0, 1.0, 0.038),
+        light: (1.0, 1.0, 1.0, 0.70)
+    )
+    static let cardRimHighlight = adaptive(
+        dark: (1.0, 1.0, 1.0, 0.16),
+        light: (17/255, 19/255, 24/255, 0.04)
+    )
+    static let cardShadow = adaptive(
+        dark: (0.0, 0.0, 0.0, 0.28),
+        light: (15/255, 23/255, 42/255, 0.05)
+    )
+
+    static let paper = adaptive(
+        dark: (245/255, 247/255, 250/255, 1.0),
+        light: (17/255, 19/255, 24/255, 1.0)
+    )
+    static let moss = adaptive(
+        dark: (0.45, 0.65, 1.0, 1.0),
+        light: (37/255, 99/255, 235/255, 1.0)
+    )
+
+    // Typography Ink Hierarchy
+    static let textPrimary = adaptive(
+        dark: (245/255, 247/255, 250/255, 1.0),
+        light: (17/255, 19/255, 24/255, 1.0)
+    )
+    static let textBright = adaptive(
+        dark: (234/255, 238/255, 245/255, 1.0),
+        light: (24/255, 27/255, 34/255, 1.0)
+    )
+    static let textStatus = adaptive(
+        dark: (220/255, 226/255, 236/255, 1.0),
+        light: (37/255, 42/255, 52/255, 1.0)
+    )
+    static let textSecondary = adaptive(
+        dark: (196/255, 198/255, 205/255, 1.0),
+        light: (69/255, 73/255, 82/255, 1.0)
+    )
+    static let textMuted = adaptive(
+        dark: (166/255, 170/255, 182/255, 1.0),
+        light: (89/255, 95/255, 107/255, 1.0)
+    )
+    static let textDim = adaptive(
+        dark: (151/255, 158/255, 173/255, 1.0),
+        light: (103/255, 111/255, 125/255, 1.0)
+    )
+    static let textFaint = adaptive(
+        dark: (151/255, 158/255, 173/255, 1.0),
+        light: (103/255, 111/255, 125/255, 1.0)
+    )
+
+    // Identity accent denotes a place or affordance, never a verified result.
+    static let workbenchAccent = adaptive(
+        dark: (130/255, 205/255, 184/255, 1),
+        light: (27/255, 91/255, 78/255, 1)
+    )
+    static let workbenchTint = adaptive(
+        dark: (130/255, 205/255, 184/255, 0.08),
+        light: (27/255, 91/255, 78/255, 0.055)
+    )
+
+    // Restrained Semantic & Spectrum Accents (Balanced for Night & Day)
+    static let accentEmerald = adaptive(
+        dark: (52/255, 211/255, 153/255, 1.0),
+        light: (4/255, 119/255, 83/255, 1.0)
+    )
+    static let accentAmethyst = adaptive(
+        dark: (192/255, 168/255, 250/255, 1.0),
+        light: (124/255, 58/255, 237/255, 1.0)
+    )
+    static let accentPeriwinkle = adaptive(
+        dark: (156/255, 163/255, 219/255, 1.0),
+        light: (79/255, 70/255, 229/255, 1.0)
+    )
+    static let accentBlue = adaptive(
+        dark: (132/255, 184/255, 255/255, 1.0),
+        light: (37/255, 99/255, 235/255, 1.0)
+    )
+    static let accentCoral = adaptive(
+        dark: (248/255, 113/255, 113/255, 1.0),
+        light: (205/255, 33/255, 33/255, 1.0)
+    )
+    static let accentAmber = adaptive(
+        dark: (251/255, 191/255, 36/255, 1.0),
+        light: (166/255, 84/255, 4/255, 1.0)
+    )
+    static let accentGold = adaptive(
+        dark: (244/255, 214/255, 154/255, 1.0),
+        light: (180/255, 83/255, 9/255, 1.0)
+    )
+    static let accentCyan = adaptive(
+        dark: (165/255, 243/255, 252/255, 1.0),
+        light: (7/255, 112/255, 138/255, 1.0)
+    )
+    static let knowledgeLink = adaptive(
+        dark: (228/255, 232/255, 240/255, 1.0),
+        light: (30/255, 41/255, 59/255, 1.0)
+    )
+
+    // Semantic roles for messages and state indicators. Pair with a label or icon.
+    static let success = accentEmerald
+    static let warning = accentAmber
+    static let error = accentCoral
+    static let information = accentBlue
+    static let focusRing = accentBlue
 
     // Button Tokens
-    static let buttonFace = Color.white                                             // #FFFFFF High-Contrast White Pill
-    static let buttonInk = Color(red: 17/255, green: 17/255, blue: 19/255)          // #111113 Deep Graphite Ink
+    static let buttonFace = adaptive(
+        dark: (245/255, 247/255, 250/255, 1.0),
+        light: (17/255, 19/255, 24/255, 1.0)
+    )
+    static let buttonInk = adaptive(
+        dark: (16/255, 19/255, 25/255, 1.0),
+        light: (1.0, 1.0, 1.0, 1.0)
+    )
 }
 
 // MARK: - Subtle Matte Gradients
@@ -62,7 +474,8 @@ enum RelayGradients {
 
     static let ambientTopGlow = RadialGradient(
         colors: [
-            Color.white.opacity(0.025),
+            RelayColors.accentBlue.opacity(0.06),
+            RelayColors.accentAmethyst.opacity(0.03),
             Color.clear
         ],
         center: .top,
@@ -81,19 +494,23 @@ enum RelayGradients {
 
 // MARK: - Relay Theme Foundations
 enum RelayTheme {
-    static let canvas = RelayColors.pitch
-    static let background = RelayColors.pitch
+    static let canvas = RelayColors.canvas
+    static let background = RelayColors.canvas
     static let surface = RelayColors.surface
     static let surfaceElevated = RelayColors.surfaceElevated
     static let cardBG = RelayColors.cardBG
-    static let accent = RelayColors.textPrimary
+    static let accent = RelayColors.accentBlue
     static let ink = RelayColors.textPrimary
     static let muted = RelayColors.textMuted
     static let line = RelayColors.borderSubtle
-    static let sidebar = RelayColors.canvas
-    static let contentWidth: CGFloat = 760
-    static let inset: CGFloat = 24
-    static let radius: CGFloat = 14
+    static let sidebar = RelayColors.pitch
+    static let contentWidth: CGFloat = 1080
+    static let readingMaxWidth: CGFloat = 780
+    static let composerMaxWidth: CGFloat = 900
+    static let wideContentWidth: CGFloat = 1240
+    static let inset: CGFloat = RelaySpace.lg
+    static let radius: CGFloat = RelayRadius.md
+    static let messageLineSpacing: CGFloat = 4
 
 
     // These color swatches are also used by the Relay website.
@@ -149,25 +566,48 @@ enum RelayTheme {
     }
 }
 
-// MARK: - Display Typography
+// MARK: - Antigravity Optical Typography
+
+enum RelayTypography {
+    static func font(_ size: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default) -> Font {
+        Font.system(size: size, weight: weight, design: design)
+    }
+}
 
 extension View {
-    func display(_ size: CGFloat, weight: Font.Weight = .medium) -> some View {
-        font(.system(size: size, weight: weight))
+    func display(_ size: CGFloat, weight: Font.Weight = .semibold) -> some View {
+        font(.system(size: size, weight: weight, design: .default))
     }
 }
 
 extension Font {
-    static let relayDisplayHero = Font.system(size: 30, weight: .medium, design: .default)
-    static let relayDisplayTitle = Font.system(size: 22, weight: .medium, design: .default)
-    static let relayHeadline = Font.system(size: 16, weight: .medium, design: .default)
-    static let relayBody = Font.system(size: 14, weight: .regular, design: .default)
-    static let relayCaption = Font.system(size: 12, weight: .regular, design: .default)
-    static let relayMono = Font.system(size: 12, weight: .medium, design: .default).monospacedDigit()
+    // Larger editorial type is reserved for introductions; working content stays compact.
+    static let relayWorkbenchHero = Font.system(size: 40, weight: .semibold)
+    static let relayWorkbenchTitle = Font.system(size: 28, weight: .semibold)
+    static let relayEyebrow = Font.system(size: 10.5, weight: .medium, design: .monospaced)
 
-    static let relayEditorialHero = Font.system(size: 28, weight: .medium, design: .default)
-    static let relayEditorialTitle = Font.system(size: 20, weight: .medium, design: .default)
-    static let relayEditorialSubtitle = Font.system(size: 14.5, weight: .regular, design: .default)
+    // Working typography
+    static let relayDisplay = Font.system(size: 22, weight: .semibold, design: .default)
+    static let relayLargeTitle = Font.system(size: 19, weight: .semibold, design: .default)
+    static let relayTitle = Font.system(size: 16, weight: .semibold, design: .default)
+    static let relayHeadline = Font.system(size: 14.5, weight: .semibold, design: .default)
+    static let relaySubheadline = Font.system(size: 13, weight: .medium, design: .default)
+    static let relayConversation = Font.system(size: 14, weight: .regular, design: .default)
+    static let relayBody = Font.system(size: 13.5, weight: .regular, design: .default)
+    static let relayBodyStrong = Font.system(size: 13.5, weight: .medium, design: .default)
+    static let relayCallout = Font.system(size: 12.5, weight: .regular, design: .default)
+    static let relayCaption = Font.system(size: 11.5, weight: .regular, design: .default)
+    static let relayCaptionStrong = Font.system(size: 11.5, weight: .medium, design: .default)
+    static let relayMicro = Font.system(size: 10.5, weight: .medium, design: .default)
+    static let relayMono = Font.system(size: 12, weight: .regular, design: .monospaced).monospacedDigit()
+    static let relayMonoSmall = Font.system(size: 11, weight: .medium, design: .monospaced).monospacedDigit()
+
+    // Display & Hero Aliases (Crisp Geometric Sans — No jarring serif mixing)
+    static let relayDisplayHero = Font.system(size: 24, weight: .semibold, design: .default)
+    static let relayDisplayTitle = Font.system(size: 19, weight: .semibold, design: .default)
+    static let relayEditorialHero = Font.system(size: 26, weight: .semibold, design: .default)
+    static let relayEditorialTitle = Font.system(size: 20, weight: .semibold, design: .default)
+    static let relayEditorialSubtitle = Font.system(size: 13.5, weight: .regular, design: .default)
 }
 
 
@@ -178,30 +618,34 @@ struct OnboardingWhisper: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .font(.relayMonoSmall)
             .textCase(.uppercase)
-            .tracking(1.4)
+            .tracking(1.2)
             .foregroundStyle(RelayColors.textSecondary)
             .padding(.vertical, 4)
             .padding(.horizontal, 8)
-            .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 5))
+            .background(RelayColors.badgeFill, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
+            )
     }
 }
 
 struct RelayMonoCaps: View {
     let text: String
     var size: CGFloat = 10.5
-    var tracking: CGFloat = 1.4
-    var color: Color = RelayColors.textDim
+    var tracking: CGFloat = 1.2
+    var color: Color = RelayColors.textMuted
 
-    init(_ text: String, size: CGFloat = 10.5, tracking: CGFloat = 1.4, color: Color = RelayColors.textDim) {
+    init(_ text: String, size: CGFloat = 10.5, tracking: CGFloat = 1.2, color: Color = RelayColors.textMuted) {
         self.text = text
         self.size = size
         self.tracking = tracking
         self.color = color
     }
 
-    init(text: String, color: Color = RelayColors.textDim, size: CGFloat = 10.5, tracking: CGFloat = 1.4) {
+    init(text: String, color: Color = RelayColors.textMuted, size: CGFloat = 10.5, tracking: CGFloat = 1.2) {
         self.text = text
         self.size = size
         self.tracking = tracking
@@ -210,26 +654,243 @@ struct RelayMonoCaps: View {
 
     var body: some View {
         Text(text.uppercased())
-            .font(.system(size: max(9.5, size), weight: .medium, design: .monospaced))
+            .font(.system(size: max(9.5, size), weight: .semibold, design: .monospaced))
             .tracking(tracking)
             .foregroundStyle(color)
     }
 }
 
 
-// MARK: - Status Indicator
+// MARK: - Status Indicator & Antigravity Components
 
 struct RelayHealthDot: View {
-    static let warnAmber = Color(red: 0.98, green: 0.69, blue: 0.36)
+    static let warnAmber = RelayColors.accentAmber
     let color: Color
 
     var body: some View {
         ZStack {
             Circle().fill(color.opacity(0.16)).frame(width: 14, height: 14)
-            Circle().strokeBorder(color.opacity(0.30), lineWidth: 0.75).frame(width: 11, height: 11)
+            Circle().strokeBorder(color.opacity(0.32), lineWidth: 0.75).frame(width: 11, height: 11)
             Circle().fill(color).frame(width: 5, height: 5)
         }
         .accessibilityHidden(true)
+    }
+}
+
+/// Crisp Antigravity pill badge for statuses, tags, and metadata.
+struct RelayBadge: View {
+    let text: String
+    var icon: String? = nil
+    var tint: Color = RelayColors.textSecondary
+    var prominent: Bool = false
+
+    init(_ text: String, icon: String? = nil, tint: Color = RelayColors.textSecondary, prominent: Bool = false) {
+        self.text = text
+        self.icon = icon
+        self.tint = tint
+        self.prominent = prominent
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if let icon {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            Text(text)
+                .font(.relayMicro)
+                .lineLimit(1)
+        }
+        .foregroundStyle(prominent ? tint : RelayColors.textSecondary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3.5)
+        .background(
+            prominent ? tint.opacity(0.12) : RelayColors.badgeFill,
+            in: Capsule(style: .continuous)
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(prominent ? tint.opacity(0.28) : RelayColors.borderSubtle, lineWidth: 1)
+        )
+    }
+}
+
+/// Antigravity surface card with crisp 1px border, subtle top-edge highlight, and adaptive Night/Day elevation.
+struct RelaySurfaceCard<Content: View>: View {
+    var padding: CGFloat = RelaySpace.md
+    var cornerRadius: CGFloat = RelayRadius.md
+    var elevated: Bool = false
+    var strokeColor: Color? = nil
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        content()
+            .padding(padding)
+            .background(
+                ZStack {
+                    shape.fill(elevated ? RelayColors.surface : RelayColors.cardBG)
+                    shape.fill(
+                        LinearGradient(
+                            colors: [RelayColors.cardTopHighlight, .clear],
+                            startPoint: .top,
+                            endPoint: .center
+                        )
+                    )
+                }
+                .shadow(color: elevated ? RelayColors.cardShadow : .clear, radius: 10, x: 0, y: 4)
+            )
+            .overlay(
+                ZStack {
+                    shape.strokeBorder(strokeColor ?? RelayColors.borderSubtle, lineWidth: 1)
+                    shape.strokeBorder(
+                        LinearGradient(
+                            colors: [RelayColors.cardRimHighlight, .clear],
+                            startPoint: .top,
+                            endPoint: .center
+                        ),
+                        lineWidth: 1
+                    )
+                }
+            )
+    }
+}
+
+/// Crisp Antigravity text field container modifier with focus border and adaptive surface fill.
+struct RelayTextFieldModifier: ViewModifier {
+    var focused: Bool = false
+    var cornerRadius: CGFloat = 10
+    var horizontalPadding: CGFloat = 12
+    var verticalPadding: CGFloat = 8
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        content
+            .font(.relayBody)
+            .foregroundStyle(RelayColors.textPrimary)
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, verticalPadding)
+            .background(RelayColors.surface, in: shape)
+            .overlay(
+                shape.strokeBorder(
+                    focused ? RelayColors.borderFocus : RelayColors.borderDefault,
+                    lineWidth: 1
+                )
+            )
+    }
+}
+
+extension View {
+    func relayTextField(
+        focused: Bool = false,
+        cornerRadius: CGFloat = 10,
+        horizontalPadding: CGFloat = 12,
+        verticalPadding: CGFloat = 8
+    ) -> some View {
+        modifier(
+            RelayTextFieldModifier(
+                focused: focused,
+                cornerRadius: cornerRadius,
+                horizontalPadding: horizontalPadding,
+                verticalPadding: verticalPadding
+            )
+        )
+    }
+}
+
+/// Compact one-click Night / Light / System mode switcher button for headers & toolbars.
+struct RelayAppearanceToggleButton: View {
+    @AppStorage(RelayAppearanceMode.storageKey) private var rawMode: String = RelayAppearanceMode.dark.rawValue
+    var showsLabel: Bool = false
+    @State private var hovered = false
+
+    private var mode: RelayAppearanceMode {
+        RelayAppearanceMode.fromStored(rawMode)
+    }
+
+    var body: some View {
+        Button {
+            let next = mode.toggledLightDark
+            rawMode = next.rawValue
+            RelayThemeManager.shared.setMode(next)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: mode.iconName)
+                    .font(.system(size: 12.5, weight: .medium))
+                if showsLabel {
+                    Text(mode.displayName)
+                        .font(.relayCaptionStrong)
+                }
+            }
+            .foregroundStyle(hovered ? RelayColors.textPrimary : RelayColors.textSecondary)
+            .padding(.horizontal, showsLabel ? 10 : 0)
+            .frame(minWidth: 32, minHeight: 32)
+            .background(
+                hovered ? RelayColors.hoverFill : RelayColors.subtleFill,
+                in: Capsule(style: .continuous)
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(hovered ? RelayColors.borderDefault : RelayColors.borderSubtle, lineWidth: 1)
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(RelayPressStyle())
+        .onHover { hovered = $0 }
+        .help("Appearance: \(mode.displayName) (Click to switch Night / Light mode)")
+        .accessibilityLabel("Switch appearance mode, current mode \(mode.displayName)")
+    }
+}
+
+/// Segmented Night / Light / System appearance picker for Settings & preferences.
+struct RelayAppearancePicker: View {
+    @AppStorage(RelayAppearanceMode.storageKey) private var rawMode: String = RelayAppearanceMode.dark.rawValue
+
+    private var selectedMode: RelayAppearanceMode {
+        RelayAppearanceMode.fromStored(rawMode)
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(RelayAppearanceMode.allCases) { option in
+                let isSelected = selectedMode == option
+                Button {
+                    rawMode = option.rawValue
+                    RelayThemeManager.shared.setMode(option)
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: option.iconName)
+                            .font(.system(size: 11.5, weight: .semibold))
+                        Text(option.displayName)
+                            .font(.relayCaptionStrong)
+                            .lineLimit(1)
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                    .foregroundStyle(isSelected ? RelayColors.textPrimary : RelayColors.textSecondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .frame(minHeight: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(isSelected ? RelayColors.surfaceElevated : Color.clear)
+                            .shadow(
+                                color: isSelected ? RelayColors.cardShadow.opacity(0.45) : .clear,
+                                radius: 2,
+                                x: 0,
+                                y: 1
+                            )
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                .buttonStyle(RelayPressStyle())
+            }
+        }
+        .padding(3)
+        .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
+        )
     }
 }
 
@@ -242,9 +903,30 @@ struct RelayGlassCardModifier: ViewModifier {
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         content
-            .background(RelayColors.cardBG, in: shape)
+            .background(
+                ZStack {
+                    shape.fill(RelayColors.cardBG)
+                    shape.fill(
+                        LinearGradient(
+                            colors: [RelayColors.cardTopHighlight, .clear],
+                            startPoint: .top,
+                            endPoint: .center
+                        )
+                    )
+                }
+            )
             .overlay(
-                shape.strokeBorder(strokeColor, lineWidth: 1)
+                ZStack {
+                    shape.strokeBorder(strokeColor, lineWidth: 1)
+                    shape.strokeBorder(
+                        LinearGradient(
+                            colors: [RelayColors.cardRimHighlight, .clear],
+                            startPoint: .top,
+                            endPoint: .center
+                        ),
+                        lineWidth: 1
+                    )
+                }
             )
     }
 }
@@ -253,44 +935,102 @@ extension View {
     func relayGlassCard(cornerRadius: CGFloat = 14, strokeColor: Color = RelayColors.borderSubtle) -> some View {
         modifier(RelayGlassCardModifier(cornerRadius: cornerRadius, strokeColor: strokeColor))
     }
+
+    func relaySurfaceCard(
+        cornerRadius: CGFloat = RelayRadius.md,
+        strokeColor: Color = RelayColors.borderSubtle
+    ) -> some View {
+        modifier(RelayGlassCardModifier(cornerRadius: cornerRadius, strokeColor: strokeColor))
+    }
 }
 
 
 // MARK: - Relay Brand
 
-struct RelaySignalGlyph: Shape {
-    // The same two paths form the app icon in Resources/Relay-icon.svg.
+struct RelayShortcutGlyph: Shape {
     nonisolated func path(in rect: CGRect) -> Path {
-        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x: rect.minX + rect.width * x / 100, y: rect.minY + rect.height * y / 100)
+        Path { path in
+            path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.minX + rect.width * 11 / 28, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.minX + rect.width * 17 / 28, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
         }
+    }
+}
 
-        var path = Path()
-        path.move(to: point(17, 78))
-        path.addLine(to: point(35, 36))
-        path.addCurve(to: point(49, 24), control1: point(39, 27), control2: point(42, 24))
-        path.addLine(to: point(64, 24))
-        path.move(to: point(83, 22))
-        path.addLine(to: point(65, 64))
-        path.addCurve(to: point(51, 76), control1: point(61, 73), control2: point(58, 76))
-        path.addLine(to: point(36, 76))
-        return path
+@MainActor
+enum RelayBrandMenuBarIcon {
+    static func image(active: Bool) -> NSImage {
+        let size = NSSize(width: 18, height: 18)
+        let image = NSImage(size: size, flipped: true) { _ in
+            let outline = NSBezierPath(
+                roundedRect: NSRect(x: 1.75, y: 2.5, width: 14.5, height: 13),
+                xRadius: 3.5, yRadius: 3.5
+            )
+            NSColor.black.setStroke()
+            outline.lineWidth = 1.35
+            outline.stroke()
+
+            let glyph = NSBezierPath()
+            glyph.move(to: NSPoint(x: 4.75, y: 10))
+            glyph.line(to: NSPoint(x: 8.1, y: 10))
+            glyph.line(to: NSPoint(x: 9.9, y: 8.2))
+            glyph.line(to: NSPoint(x: 13.25, y: 8.2))
+            glyph.lineWidth = active ? 1.9 : 1.5
+            glyph.lineCapStyle = .round
+            glyph.lineJoinStyle = .round
+            glyph.stroke()
+
+            if active {
+                NSColor.black.setFill()
+                NSBezierPath(ovalIn: NSRect(x: 12.5, y: 11, width: 2.1, height: 2.1)).fill()
+            }
+            return true
+        }
+        image.isTemplate = true
+        return image
     }
 }
 
 struct RelayMark: View {
     var size: CGFloat = 20
-    var illuminated: Bool = true
+    var press: CGFloat = 0
 
     var body: some View {
-        RelaySignalGlyph()
-            .stroke(LinearGradient(
-                colors: illuminated ? [RelayColors.textPrimary, RelayColors.accentCyan] : [RelayColors.textSecondary, RelayColors.textSecondary],
-                startPoint: .topTrailing, endPoint: .bottomLeading
-            ), style: StrokeStyle(lineWidth: size * 0.12, lineCap: .round, lineJoin: .round))
-            .frame(width: size, height: size)
-            .shadow(color: illuminated ? RelayColors.accentBlue.opacity(0.27) : .clear, radius: 4)
-            .accessibilityHidden(true)
+        let cornerRadius = size * 0.24
+        let faceOffset = press * (size / 80.46)
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+
+        ZStack {
+            shape
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 28/255, green: 30/255, blue: 36/255),
+                            Color(red: 16/255, green: 18/255, blue: 22/255)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+            RelayShortcutGlyph()
+                .stroke(
+                    Color.white.opacity(0.94),
+                    style: StrokeStyle(
+                        lineWidth: max(1.6, size * 0.085),
+                        lineCap: .round,
+                        lineJoin: .round
+                    )
+                )
+                .frame(width: size * 0.48, height: size * 0.14)
+                .offset(y: faceOffset)
+        }
+        .frame(width: size, height: size)
+        .overlay(
+            shape
+                .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.5)
+        )
+        .accessibilityHidden(true)
     }
 }
 
@@ -301,9 +1041,10 @@ struct RelayPrismOrb: View {
     var size: CGFloat = 96
     var paused: Bool = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        let still = paused || reduceMotion
+        let still = paused || reduceMotion || scenePhase != .active || mode == .idle
         TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: still)) { timeline in
             let elapsed = timeline.date.timeIntervalSinceReferenceDate
             let period = mode == .processing ? 5.0 : 13.0
@@ -436,12 +1177,20 @@ struct RelayPressStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reducedMotion
     @Environment(\.isEnabled) private var enabled
 
+    @Environment(\.isFocused) private var focused
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(focused ? RelayColors.focusRing : .clear, lineWidth: 2)
+                    .padding(-2)
+                    .allowsHitTesting(false)
+            }
             .contentShape(Rectangle())
             .opacity(enabled ? (configuration.isPressed ? 0.82 : 1) : 0.4)
             .scaleEffect(enabled && !reducedMotion && configuration.isPressed ? 0.97 : 1)
-            .animation(.easeOut(duration: 0.16), value: configuration.isPressed)
+            .animation(reducedMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
@@ -450,14 +1199,28 @@ struct RelayPressStyle: ButtonStyle {
 struct RelayBackButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
 
+    @Environment(\.isFocused) private var focused
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13, weight: .medium))
+            .font(.relayCallout.weight(.medium))
             .padding(.horizontal, 12)
             .frame(minHeight: 30)
-            .background(configuration.isPressed ? .white.opacity(0.13) : .white.opacity(0.035),
-                        in: RoundedRectangle(cornerRadius: 7))
+            .background(
+                configuration.isPressed ? RelayColors.activeFill : RelayColors.subtleFill,
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
+            )
             .foregroundStyle(isEnabled ? RelayColors.textPrimary : RelayColors.textMuted)
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(focused ? RelayColors.focusRing : .clear, lineWidth: 2)
+                    .padding(-2)
+                    .allowsHitTesting(false)
+            }
             .contentShape(Rectangle())
     }
 }
@@ -466,14 +1229,32 @@ struct RelayPrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
     @State private var hovered = false
 
+    @Environment(\.isFocused) private var focused
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13.5, weight: .medium))
+            .font(.relayCallout.weight(.medium))
             .foregroundStyle(enabled ? RelayColors.buttonInk : RelayColors.textDim)
-            .padding(.horizontal, 14).padding(.vertical, 8).frame(minHeight: 34)
-            .background(enabled ? Color.white.opacity(configuration.isPressed ? 0.82 : hovered ? 0.92 : 1) : Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(enabled ? 0.22 : 0.05), lineWidth: 0.75))
-            .contentShape(Rectangle())
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .frame(minHeight: RelayControlHeight.bar)
+            .background(
+                enabled
+                    ? RelayColors.buttonFace.opacity(configuration.isPressed ? 0.84 : (hovered ? 0.92 : 1.0))
+                    : RelayColors.hoverFill,
+                in: Capsule(style: .continuous)
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(enabled ? RelayColors.borderDefault : RelayColors.borderSubtle, lineWidth: 0.75)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(focused ? RelayColors.focusRing : .clear, lineWidth: 2)
+                    .padding(-2)
+                    .allowsHitTesting(false)
+            }
+            .contentShape(Capsule())
             .onHover { hovered = $0 }
     }
 }
@@ -482,22 +1263,35 @@ struct RelaySecondaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
     @State private var hovered = false
 
+    @Environment(\.isFocused) private var focused
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13.5, weight: .medium))
-            .foregroundStyle(enabled ? RelayColors.textBright : RelayColors.textDim.opacity(0.6))
-            .padding(.horizontal, 13).padding(.vertical, 7).frame(minHeight: 34)
+            .font(.relayCallout.weight(.medium))
+            .foregroundStyle(enabled ? RelayColors.textPrimary : RelayColors.textDim.opacity(0.6))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .frame(minHeight: RelayControlHeight.bar)
             .background(
                 enabled
-                    ? (configuration.isPressed ? Color(white: 0.14) : hovered ? Color(white: 0.12) : Color(white: 0.075))
-                    : Color.white.opacity(0.02),
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    ? (configuration.isPressed ? RelayColors.surfaceElevated : (hovered ? RelayColors.surfaceElevated : RelayColors.surface))
+                    : RelayColors.subtleFill,
+                in: Capsule(style: .continuous)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(Color.white.opacity(enabled ? 0.16 : 0.04), lineWidth: 1)
+                Capsule(style: .continuous)
+                    .strokeBorder(
+                        enabled ? (hovered ? RelayColors.borderDefault : RelayColors.borderSubtle) : RelayColors.borderSubtle.opacity(0.5),
+                        lineWidth: 1
+                    )
             )
-            .contentShape(Rectangle())
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(focused ? RelayColors.focusRing : .clear, lineWidth: 2)
+                    .padding(-2)
+                    .allowsHitTesting(false)
+            }
+            .contentShape(Capsule())
             .onHover { hovered = $0 }
     }
 }
@@ -507,19 +1301,55 @@ struct RelayGhostButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
     @State private var hovered = false
 
+    @Environment(\.isFocused) private var focused
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13.5, weight: .medium))
-            .foregroundStyle(enabled ? (configuration.isPressed || hovered ? RelayTheme.ink : RelayColors.textBright) : RelayColors.textDim)
-            .padding(.horizontal, 12)
+            .font(.relayCallout.weight(.medium))
+            .foregroundStyle(enabled ? (configuration.isPressed || hovered ? RelayColors.textPrimary : RelayColors.textSecondary) : RelayColors.textDim)
+            .padding(.horizontal, RelaySpace.sm)
             .padding(.vertical, 6)
-            .frame(minHeight: 34)
+            .frame(minHeight: RelayControlHeight.pill)
             .background(
-                configuration.isPressed ? Color.white.opacity(0.08) : (hovered ? Color.white.opacity(0.05) : Color.clear),
+                configuration.isPressed ? RelayColors.activeFill : (hovered ? RelayColors.hoverFill : Color.clear),
                 in: Capsule(style: .continuous)
             )
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(focused ? RelayColors.focusRing : .clear, lineWidth: 2)
+                    .padding(-2)
+                    .allowsHitTesting(false)
+            }
             .contentShape(Capsule())
             .onHover { hovered = $0 }
+    }
+}
+
+/// Shared toolbar pill label styling for compact window and composer action pills (Add context, Proofread, Summarize).
+struct RelayToolbarPillLabel: View {
+    let title: String
+    let icon: String
+    var iconOnly = false
+    var hovered: Bool = false
+    var disabled: Bool = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .medium))
+            if !iconOnly {
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+            }
+        }
+        .foregroundStyle(disabled ? RelayColors.textDim : hovered ? RelayColors.textPrimary : RelayColors.textSecondary)
+        .padding(.horizontal, iconOnly ? 6 : 9)
+        .frame(minWidth: RelayControlHeight.pill)
+        .frame(height: RelayControlHeight.pill)
+        .background(hovered && !disabled ? RelayColors.hoverFill : .clear,
+                    in: Capsule(style: .continuous))
+        .contentShape(Capsule())
     }
 }
 
@@ -576,7 +1406,7 @@ struct RelayDisclosureGroupStyle: DisclosureGroupStyle {
                             .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
                             .frame(width: 20, height: 20)
                             .background(
-                                Color.white.opacity(configuration.isExpanded ? 0.10 : (hovered ? 0.07 : 0.03)),
+                                configuration.isExpanded ? RelayColors.activeFill : (hovered ? RelayColors.hoverFill : RelayColors.subtleFill),
                                 in: Circle()
                             )
                     }
@@ -586,12 +1416,12 @@ struct RelayDisclosureGroupStyle: DisclosureGroupStyle {
                 .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(Color.white.opacity(hovered ? 0.045 : (configuration.isExpanded ? 0.03 : 0.015)))
+                        .fill(hovered ? RelayColors.hoverFill : (configuration.isExpanded ? RelayColors.subtleFill : Color.clear))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                         .strokeBorder(
-                            Color.white.opacity(hovered || configuration.isExpanded ? 0.12 : 0.06),
+                            hovered || configuration.isExpanded ? RelayColors.borderDefault : RelayColors.borderSubtle,
                             lineWidth: 1
                         )
                 )
@@ -614,11 +1444,11 @@ struct RelayIconBadge: View {
         let corner = size * 0.28
         let shape = RoundedRectangle(cornerRadius: corner, style: .continuous)
         ZStack {
-            shape.fill(Color.white.opacity(0.055))
-            shape.strokeBorder(Color.white.opacity(0.09), lineWidth: 1)
+            shape.fill(RelayColors.badgeFill)
+            shape.strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
             Image(systemName: icon)
                 .font(.system(size: iconSize ?? (size * 0.44), weight: .medium))
-                .foregroundStyle(RelayColors.textBright)
+                .foregroundStyle(color)
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
@@ -630,26 +1460,36 @@ struct RelayIconButton: View {
     let label: String
     var size: CGFloat = 32
     var iconSize: CGFloat = 13
-    var tint: Color = RelayColors.textSecondary
+    var tint: Color = RelayColors.textBright
+    var circular: Bool = true
     let action: () -> Void
 
     @State private var hovered = false
 
     var body: some View {
+        let buttonSize = max(24, size)
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: iconSize, weight: .medium))
-                .foregroundStyle(hovered ? Color.white : tint)
-                .frame(width: max(32, size), height: max(32, size))
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.white.opacity(hovered ? 0.08 : 0.035))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(Color.white.opacity(hovered ? 0.14 : 0.06), lineWidth: 1)
-                )
-                .contentShape(Rectangle())
+                .foregroundStyle(hovered ? RelayColors.textPrimary : tint)
+                .frame(width: buttonSize, height: buttonSize)
+                .background {
+                    if circular {
+                        Circle().fill(hovered ? RelayColors.hoverFill : Color.clear)
+                    } else {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(hovered ? RelayColors.hoverFill : Color.clear)
+                    }
+                }
+                .overlay {
+                    if circular {
+                        Circle().strokeBorder(Color.clear, lineWidth: 0.75)
+                    } else {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .strokeBorder(Color.clear, lineWidth: 0.75)
+                    }
+                }
+                .contentShape(Circle())
         }
         .buttonStyle(RelayPressStyle())
         .onHover { hovered = $0 }
@@ -668,14 +1508,40 @@ struct RelayLitCardModifier: ViewModifier {
             .background(
                 ZStack {
                     shape.fill(RelayColors.cardBG)
-                    shape.fill(Color.white.opacity(isHovered ? 0.035 : 0.0))
+                    shape.fill(
+                        LinearGradient(
+                            colors: [
+                                isHovered ? accent.opacity(0.08) : RelayColors.cardTopHighlight,
+                                .clear
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    if isHovered {
+                        shape.fill(RelayColors.subtleFill)
+                    }
                 }
+                .shadow(color: RelayColors.cardShadow, radius: isHovered ? 14 : 10, x: 0, y: isHovered ? 6 : 4)
             )
             .overlay(
-                shape.strokeBorder(
-                    Color.white.opacity(isHovered ? 0.14 : 0.08),
-                    lineWidth: 1
-                )
+                ZStack {
+                    shape.strokeBorder(
+                        isHovered ? RelayColors.borderDefault : RelayColors.borderSubtle,
+                        lineWidth: 1
+                    )
+                    shape.strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                isHovered ? accent.opacity(0.28) : RelayColors.cardRimHighlight,
+                                .clear
+                            ],
+                            startPoint: .top,
+                            endPoint: .center
+                        ),
+                        lineWidth: 1
+                    )
+                }
             )
     }
 }
@@ -706,6 +1572,7 @@ nonisolated struct RelayResponseText {
 /// Transcript details use one quiet disclosure without a second label or card.
 /// Settings retain their own larger controls.
 struct RelayTranscriptDisclosureGroupStyle: DisclosureGroupStyle {
+    var obsidianStyle: Bool = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
@@ -723,7 +1590,7 @@ struct RelayTranscriptDisclosureGroupStyle: DisclosureGroupStyle {
                     configuration.label
                 }
                 .font(.relayCaption)
-                .foregroundStyle(RelayColors.textSecondary)
+                .foregroundStyle(obsidianStyle ? Color.white.opacity(0.68) : RelayColors.textSecondary)
                 .frame(minHeight: 24, alignment: .leading)
                 .contentShape(Rectangle())
             }
@@ -736,44 +1603,63 @@ struct RelayTranscriptDisclosureGroupStyle: DisclosureGroupStyle {
 
 struct RelayActionEvidence: View {
     let text: String
+    var obsidianStyle: Bool = false
 
     var body: some View {
         DisclosureGroup {
             Text(text)
                 .font(.relayCaption)
-                .foregroundStyle(RelayColors.textSecondary)
+                .foregroundStyle(obsidianStyle ? Color.white.opacity(0.68) : RelayColors.textSecondary)
                 .lineSpacing(3)
                 .textSelection(.enabled)
                 .padding(.top, 4)
         } label: {
             Label("Action evidence", systemImage: "checkmark.shield")
                 .font(.relayCaption.weight(.medium))
-                .foregroundStyle(RelayColors.textBright)
+                .foregroundStyle(obsidianStyle ? Color.white.opacity(0.88) : RelayColors.textBright)
         }
-        .disclosureGroupStyle(RelayTranscriptDisclosureGroupStyle())
+        .disclosureGroupStyle(RelayTranscriptDisclosureGroupStyle(obsidianStyle: obsidianStyle))
     }
 }
 
-// MARK: - Calm Matte Graphite Atmospheric Canvas (ChatGPT macOS & Antigravity Style)
+// MARK: - Antigravity Slate & Daylight Atmospheric Canvas
 struct RelayAtmosphere: View {
     var focused: Bool = false
+    var showsContours: Bool = false
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         ZStack {
-            RelayColors.pitch.ignoresSafeArea()
+            RelayColors.canvas
 
-            RadialGradient(
-                colors: [
-                    Color.white.opacity(focused ? 0.025 : 0.015),
-                    Color.clear
-                ],
-                center: .top,
-                startRadius: 10,
-                endRadius: 520
-            )
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
+            if !reduceTransparency {
+                RadialGradient(
+                    colors: [
+                        RelayColors.accentBlue.opacity(focused ? 0.12 : 0.075),
+                        RelayColors.accentAmethyst.opacity(focused ? 0.065 : 0.035),
+                        .clear
+                    ],
+                    center: UnitPoint(x: 0.50, y: 0.04),
+                    startRadius: 16,
+                    endRadius: 580
+                )
+
+                if showsContours {
+                    RadialGradient(
+                        colors: [
+                            RelayColors.accentAmethyst.opacity(focused ? 0.06 : 0.04),
+                            .clear
+                        ],
+                        center: UnitPoint(x: 0.76, y: 0.22),
+                        startRadius: 24,
+                        endRadius: 460
+                    )
+                }
+            }
         }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -794,7 +1680,11 @@ struct RelayGlowHalo: View {
             let elapsed = tick.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: span)
             let phase = reduceMotion ? 0.0 : elapsed / span * 2 * .pi
             let drift = 0.18 * sin(reversed ? -phase : phase)
-            let light = colors ?? [RelayColors.accentBlue, RelayColors.accentAmethyst, RelayColors.accentCoral]
+            let light = colors ?? [
+                Color(red: 0x38 / 255.0, green: 0xBD / 255.0, blue: 0xF8 / 255.0),
+                RelayColors.accentBlue,
+                Color(red: 0x2D / 255.0, green: 0xD4 / 255.0, blue: 0xBF / 255.0)
+            ]
             Capsule()
                 .strokeBorder(LinearGradient(
                     colors: light,
@@ -827,23 +1717,111 @@ struct RelayGlowButton: View {
                     Image(systemName: icon).font(.system(size: 11, weight: .semibold))
                 }
             }
-            .font(.system(size: 13, weight: .semibold))
+            .font(.relayCallout.weight(.semibold))
             .frame(minWidth: minimumLabelWidth)
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 18)
             .frame(minHeight: 38)
             .foregroundStyle(enabled ? RelayColors.buttonInk : RelayColors.textMuted)
-            .background {
-                ZStack {
-                    RelayGlowHalo(active: enabled, intensity: glowOpacity * (hovering ? 1.28 : 1))
-                    Capsule()
-                        .fill(enabled ? .white.opacity(hovering ? 0.94 : 0.99) : RelayColors.surfaceElevated)
-                }
-            }
+            .background(
+                Capsule()
+                    .fill(enabled ? RelayColors.buttonFace.opacity(hovering ? 0.90 : 1.0) : RelayColors.surfaceElevated)
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(enabled ? RelayColors.borderDefault : RelayColors.borderSubtle, lineWidth: 0.75)
+            )
+            .shadow(color: Color.black.opacity(enabled ? 0.14 : 0.0), radius: 5, y: 2)
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(RelayPressStyle())
         .disabled(!enabled)
         .onHover { hovering = $0 }
+    }
+}
+
+struct RelaySendButton: View {
+    let canSend: Bool
+    var isRunning: Bool = false
+    var size: CGFloat = 30
+    var help: String = "Send message"
+    var showsHalo: Bool = false
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    init(
+        canSend: Bool,
+        isRunning: Bool = false,
+        size: CGFloat = 30,
+        help: String = "Send message",
+        showsHalo: Bool = false,
+        action: @escaping () -> Void
+    ) {
+        self.canSend = canSend
+        self.isRunning = isRunning
+        self.size = size
+        self.help = help
+        self.showsHalo = showsHalo
+        self.action = action
+    }
+
+    init(
+        enabled: Bool,
+        isRunning: Bool = false,
+        help: String = "Send message",
+        diameter: CGFloat = 30,
+        showsHalo: Bool = false,
+        action: @escaping () -> Void
+    ) {
+        self.canSend = enabled
+        self.isRunning = isRunning
+        self.size = diameter
+        self.help = help
+        self.showsHalo = showsHalo
+        self.action = action
+    }
+
+    private var isActive: Bool {
+        canSend || isRunning
+    }
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                if isActive && showsHalo {
+                    RelayGlowHalo(active: true, intensity: hovering ? 0.56 : 0.38, period: 4.5)
+                        .frame(width: size, height: size)
+                }
+                Image(systemName: isRunning && !canSend ? "stop.fill" : "arrow.up")
+                    .font(.system(size: size >= 30 ? 13 : (size > 18 ? 11 : 9.5), weight: .bold))
+                    .foregroundStyle(isActive ? RelayColors.buttonInk : RelayColors.textDim)
+                    .frame(width: size, height: size)
+                    .background(
+                        Circle()
+                            .fill(
+                                isActive
+                                    ? RelayColors.buttonFace.opacity(hovering ? 0.92 : 1.0)
+                                    : RelayColors.subtleFill
+                            )
+                    )
+                    .overlay(
+                        Circle()
+                            .strokeBorder(
+                                isActive ? RelayColors.borderDefault : Color.clear,
+                                lineWidth: 0.75
+                            )
+                    )
+            }
+            .contentShape(Circle().inset(by: -4))
+        }
+        .buttonStyle(.plain)
+        .disabled(!isActive)
+        .onHover { hovering = $0 }
+        .onChange(of: isActive) { _, on in if !on { hovering = false } }
+        .animation(.easeOut(duration: 0.14), value: hovering)
+        .animation(.easeOut(duration: 0.14), value: isActive)
+        .help(help)
+        .accessibilityLabel(help)
     }
 }
 
@@ -858,7 +1836,7 @@ struct RelayGlowProgressBar: View {
                 Capsule().fill(RelayColors.surfaceElevated)
                 if fillWidth > 0 {
                     Capsule()
-                        .fill(LinearGradient(colors: [RelayColors.accentAmethyst, RelayColors.accentBlue, .white],
+                        .fill(LinearGradient(colors: [RelayColors.accentAmethyst, RelayColors.accentBlue, RelayColors.accentCyan],
                                              startPoint: .leading, endPoint: .trailing))
                         .frame(width: fillWidth)
                         .shadow(color: RelayColors.accentBlue.opacity(0.36), radius: 4, y: 1)
@@ -1022,7 +2000,7 @@ struct RelayEngineTab: View {
                         in: RoundedRectangle(cornerRadius: 9))
             .overlay {
                 RoundedRectangle(cornerRadius: 9)
-                    .strokeBorder(selected ? RelayColors.accentBlue.opacity(0.55) : .white.opacity(0.08), lineWidth: 1)
+                    .strokeBorder(selected ? RelayColors.borderStrong : RelayColors.borderSubtle, lineWidth: 1)
             }
             .contentShape(Rectangle())
         }
@@ -1030,4 +2008,17 @@ struct RelayEngineTab: View {
         .onHover { hovering = $0 }
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
+}
+
+// MARK: - Unified Semantic Palette Tokens (`RelayPalette`)
+
+enum RelayPalette {
+    static let canvas = RelayColors.canvas
+    static let card = RelayColors.cardBG
+    static let elevated = RelayColors.surfaceElevated
+    static let stroke = RelayColors.borderSubtle
+    static let ink = RelayColors.textPrimary
+    static let inkSecondary = RelayColors.textBright
+    static let muted = RelayColors.textSecondary
+    static let subtle = RelayColors.textMuted
 }

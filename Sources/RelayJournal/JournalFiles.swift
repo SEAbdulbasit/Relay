@@ -85,8 +85,9 @@ final class JournalFiles {
         guard identity.isPrivateFile, identity.size <= 160 * 1024 * 1024 else { throw JournalError.unsafeLocation }
         return identity
     }
-    private func openPrivate(_ name: String, create: Bool, exclusive: Bool) throws -> Int32 {
-        let flags = O_RDWR | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC | (create ? O_CREAT : 0) | (exclusive ? O_EXCL : 0)
+    private func openPrivate(_ name: String, create: Bool, exclusive: Bool, writable: Bool = true) throws -> Int32 {
+        let access = writable ? O_RDWR : O_RDONLY
+        let flags = access | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC | (create ? O_CREAT : 0) | (exclusive ? O_EXCL : 0)
         let descriptor = name.withCString { openat(rootFD, $0, flags, 0o600) }
         guard descriptor >= 0 else { throw JournalError.unsafeLocation }
         var metadata = stat()
@@ -132,7 +133,7 @@ final class JournalFiles {
         return false
     }
     private func copy(_ name: String, expected: JournalFileIdentity, to destination: URL) throws {
-        let input = try openPrivate(name, create: false, exclusive: false); defer { Darwin.close(input) }
+        let input = try openPrivate(name, create: false, exclusive: false, writable: false); defer { Darwin.close(input) }
         var before = stat(); guard fstat(input, &before) == 0, JournalFileIdentity(before) == expected else { throw JournalError.unsafeLocation }
         let output = destination.path.withCString { Darwin.open($0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600) }
         guard output >= 0 else { throw JournalError.unsafeLocation }; defer { Darwin.close(output) }
@@ -154,7 +155,7 @@ final class JournalFiles {
         guard let main = try identity(basename), let mainNode, main.device == mainNode.0, main.inode == mainNode.1 else { throw JournalError.unsafeLocation }
         for name in [basename, basename + "-wal", basename + "-shm"] {
             if try identity(name) != nil {
-                let descriptor = try openPrivate(name, create: false, exclusive: false); Darwin.close(descriptor)
+                let descriptor = try openPrivate(name, create: false, exclusive: false, writable: false); Darwin.close(descriptor)
             }
         }
     }

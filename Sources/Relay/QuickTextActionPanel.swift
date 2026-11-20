@@ -9,8 +9,8 @@ final class QuickTextActionPanelController: NSObject, NSWindowDelegate {
     private weak var session: QuickTextActionSession?
 
     func present(store: AssistantStore, kind: QuickTextActionSession.Kind, selection: BoundTextSelection) throws {
-        guard !store.isRunning, !store.voice.isBusy, store.actionsReady else {
-            throw RelayError.message("Load a local model and finish the current task before using text actions.")
+        guard !store.isRunning, !store.voice.isBusy, store.workspaceActionsReady else {
+            throw RelayError.message("Choose and check a model and finish the current task before using text actions.")
         }
         close()
         let session = store.quickText
@@ -24,8 +24,9 @@ final class QuickTextActionPanelController: NSObject, NSWindowDelegate {
         panel.becomesKeyOnlyIfNeeded = true
         panel.level = .floating
         panel.minSize = NSSize(width: 580, height: 400)
+        panel.appearance = RelayAppearanceMode.current.nsAppearance
         panel.delegate = self
-        panel.contentView = NSHostingView(rootView: QuickTextActionView(session: session, kind: kind,
+        panel.contentView = NSHostingView(rootView: QuickTextActionView(store: store, session: session, kind: kind,
             stop: { [weak store] in store?.stop() }, close: { [weak self] in self?.close() }))
         panel.center()
         self.panel = panel
@@ -53,11 +54,15 @@ private final class PassiveTextResultPanel: NSPanel {
 }
 
 private struct QuickTextActionView: View {
+    let store: AssistantStore
     let session: QuickTextActionSession
     let kind: QuickTextActionSession.Kind
     let stop: () -> Void
     let close: () -> Void
+    @ObservedObject private var themeManager = RelayThemeManager.shared
     @State private var actionStatus: String?
+    @State private var isReplacing = false
+    @State private var savedToVault = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -65,7 +70,7 @@ private struct QuickTextActionView: View {
                 RelayMark(size: 25)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(kind == .summarize ? "Selection summary" : "Proofread selection")
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(.relayTitle)
                     Text(session.sourceAppName.isEmpty ? "On this Mac" : "\(session.sourceAppName) · On this Mac")
                         .font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
                 }
@@ -88,9 +93,8 @@ private struct QuickTextActionView: View {
             }
             if !session.resultText.isEmpty {
                 if kind == .proofread {
-                    HStack(alignment: .top, spacing: 20) {
+                    HStack(alignment: .top, spacing: 16) {
                         textColumn("Original", text: session.sourceText)
-                        Rectangle().fill(RelayTheme.line).frame(width: 1)
                         textColumn("Corrected", text: session.resultText)
                     }
                 } else {
@@ -118,6 +122,17 @@ private struct QuickTextActionView: View {
                 Spacer(minLength: 8)
                 Button("Close", action: close).buttonStyle(RelaySecondaryButtonStyle())
                 if !session.resultText.isEmpty {
+                    Button("Ask Follow-Up") {
+                        askFollowUpInRelay()
+                    }
+                    .buttonStyle(RelaySecondaryButtonStyle())
+                    .accessibilityIdentifier("quickText.askFollowUp")
+                    Button(savedToVault ? "Saved to Vault" : "Save to Vault") {
+                        saveResultToVault()
+                    }
+                    .buttonStyle(RelaySecondaryButtonStyle())
+                    .disabled(savedToVault)
+                    .accessibilityIdentifier("quickText.saveToVault")
                     Button("Copy") {
                         let pasteboard = NSPasteboard.general
                         pasteboard.clearContents()
@@ -129,7 +144,7 @@ private struct QuickTextActionView: View {
                     if kind == .proofread {
                         Button("Replace selection") { replaceSelection() }
                             .buttonStyle(RelayPrimaryButtonStyle())
-                            .disabled(!session.canReplace || session.isBusy)
+                            .disabled(!session.canReplace || session.isBusy || isReplacing)
                             .accessibilityIdentifier("quickText.replace")
                     }
                 }
@@ -137,30 +152,67 @@ private struct QuickTextActionView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(RelayTheme.background)
+        .background(RelayColors.canvas)
         .foregroundStyle(RelayTheme.ink)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(themeManager.appearanceMode.colorScheme)
+        .relayPreferredAppearance()
+    }
+
+    private func askFollowUpInRelay() {
+        let appName = session.sourceAppName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefix = kind == .summarize ? "Selection Summary" : "Proofread Selection"
+        let title = appName.isEmpty ? prefix : "\(prefix) — \(appName)"
+        store.handoffToWorkspaceComposer(title: title, contextText: session.resultText)
+        actionStatus = "Opened in Relay Workspace."
+    }
+
+    private func saveResultToVault() {
+        let appName = session.sourceAppName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefix = kind == .summarize ? "Selection Summary" : "Proofread Note"
+        let title = appName.isEmpty ? prefix : "\(prefix) — \(appName)"
+        do {
+            _ = try store.knowledgeVault.saveCapturedNote(title: title, body: session.resultText)
+            savedToVault = true
+            actionStatus = "Saved to Knowledge Vault."
+        } catch {
+            actionStatus = error.localizedDescription
+        }
     }
 
     private func textColumn(_ title: String, text: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(RelayColors.textSecondary)
+            Text(title).font(.relaySubheadline).foregroundStyle(RelayColors.textSecondary)
             ScrollView {
-                Text(text).font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
+                Text(text)
+                    .font(.relayBody)
+                    .lineSpacing(RelayTheme.messageLineSpacing)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
                     .accessibilityIdentifier(title == "Original" ? "quickText.original" : "quickText.result")
             }
             .scrollIndicators(.visible)
         }
+        .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(RelayColors.cardBG, in: RoundedRectangle(cornerRadius: RelayRadius.sm, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: RelayRadius.sm, style: .continuous)
+                .strokeBorder(title == "Corrected" ? RelayColors.accentEmerald.opacity(0.35) : RelayColors.borderSubtle, lineWidth: 1)
+        )
     }
 
     private func replaceSelection() {
-        do {
-            switch try session.replaceReviewedSelection() {
-            case .replaced: actionStatus = "Selection replaced and read back."
-            case .unchanged: actionStatus = "The selected text already matches."
-            case .copyOnly(let reason), .uncertain(let reason): actionStatus = reason
-            }
-        } catch { actionStatus = error.localizedDescription }
+        guard !isReplacing else { return }
+        isReplacing = true
+        Task { @MainActor in
+            defer { isReplacing = false }
+            do {
+                switch try await session.replaceReviewedSelectionAsync() {
+                case .replaced: actionStatus = "Selection replaced and read back."
+                case .unchanged: actionStatus = "The selected text already matches."
+                case .copyOnly(let reason), .uncertain(let reason): actionStatus = reason
+                }
+            } catch { actionStatus = error.localizedDescription }
+        }
     }
 }

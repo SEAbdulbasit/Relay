@@ -331,10 +331,14 @@ final class FocusedDraftController {
     @ObservationIgnored var retrieveKnowledge: @MainActor (String) async throws -> FocusedDraftKnowledge.Snapshot = { _ in .empty }
     @ObservationIgnored var style: () -> String = { "" }
     @ObservationIgnored var showSidekick: () -> Void = {}
+    @ObservationIgnored var onMagicReply: (() -> Void)?
     @ObservationIgnored var beginVoiceHold: () -> Bool = { false }
     @ObservationIgnored var endVoiceHold: () -> Void = {}
+    @ObservationIgnored var cancelVoiceHold: () -> Void = {}
     @ObservationIgnored private var monitor: Any?
     @ObservationIgnored private var localMonitor: Any?
+    @ObservationIgnored private var keyDownMonitor: Any?
+    @ObservationIgnored private var localKeyDownMonitor: Any?
     @ObservationIgnored private var focusObserver: (any NSObjectProtocol)?
     @ObservationIgnored private var focusChanged = false
     @ObservationIgnored private var gesture = RightCommandDoubleTap()
@@ -342,9 +346,10 @@ final class FocusedDraftController {
     @ObservationIgnored private var pendingSingleTap: Task<Void, Never>?
     @ObservationIgnored private var holdTimer: Task<Void, Never>?
     @ObservationIgnored private var holdingForVoice = false
+    @ObservationIgnored private var trackedDeviceBits: UInt = 0
     @ObservationIgnored private let captureEditor: () throws -> FocusedDraftCapture
     @ObservationIgnored private let monitorAccess: (() -> Bool)?
-    private static let voiceHoldDelay: TimeInterval = 0.55
+    static let voiceHoldDelay: TimeInterval = 0.25
 
     init(captureEditor: (() throws -> FocusedDraftCapture)? = nil, monitorAccess: (() -> Bool)? = nil) {
         self.captureEditor = captureEditor ?? {
@@ -372,15 +377,15 @@ final class FocusedDraftController {
     func setHoldForVoiceEnabled(_ value: Bool) {
         guard value != holdForVoiceEnabled else { return }
         if value {
-            guard installMonitors() else {
-                voiceHoldStatus = "Enable Relay’s macOS Accessibility permission to use hold to dictate."
+            guard installMonitors(requireAccessibility: false) else {
+                voiceHoldStatus = "Could not install keyboard shortcut monitor for Push-to-Talk."
                 return
             }
             holdForVoiceEnabled = true
-            voiceHoldStatus = "Hold \(shortcutKey.title) to dictate and release to review the transcript."
+            voiceHoldStatus = "Hold \(shortcutKey.title) for 250 ms anywhere to dictate; release to finish."
         } else {
             holdForVoiceEnabled = false
-            stopVoiceHold()
+            stopVoiceHold(cancelled: true)
             if !enabled && !sidekickEnabled { removeMonitors() }
             voiceHoldStatus = "Hold to dictate is off."
         }
@@ -389,12 +394,12 @@ final class FocusedDraftController {
     func setEnabled(_ value: Bool) {
         guard value != enabled else { return }
         if value {
-            guard installMonitors() else {
-                status = "Enable Relay's macOS Accessibility permission, then turn on Double Tap."
+            guard installMonitors(requireAccessibility: onMagicReply == nil) else {
+                status = "Enable Relay's macOS Accessibility permission, then turn on Magic Reply."
                 return
             }
             enabled = true
-            status = "Double Tap on · tap \(shortcutKey.title) twice in a reply editor."
+            status = "Magic Reply on · tap \(shortcutKey.title) twice in a reply editor."
         } else {
             enabled = false
             stop()
@@ -406,8 +411,8 @@ final class FocusedDraftController {
     func setSidekickEnabled(_ value: Bool) {
         guard value != sidekickEnabled else { return }
         if value {
-            guard installMonitors() else {
-                sidekickStatus = "Enable Relay’s macOS Accessibility permission to use the Sidekick shortcut."
+            guard installMonitors(requireAccessibility: false) else {
+                sidekickStatus = "Could not install the Sidekick shortcut monitor."
                 return
             }
             sidekickEnabled = true
@@ -420,9 +425,9 @@ final class FocusedDraftController {
         }
     }
 
-    private func installMonitors() -> Bool {
+    private func installMonitors(requireAccessibility: Bool = true) -> Bool {
         if let monitorAccess { return monitorAccess() }
-        guard AXIsProcessTrusted() else { return false }
+        if requireAccessibility && !AXIsProcessTrusted() { return false }
         if monitor != nil { return true }
         guard let global = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged, handler: { [weak self] event in
             MainActor.assumeIsolated { self?.consume(event) }
@@ -432,41 +437,111 @@ final class FocusedDraftController {
             MainActor.assumeIsolated { self?.consume(event) }
             return event
         }
+        keyDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.pendingSingleTap?.cancel()
+                if self?.holdTimer != nil {
+                    self?.stopVoiceHold(cancelled: true)
+                }
+            }
+        }
+        localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
+            MainActor.assumeIsolated {
+                self?.pendingSingleTap?.cancel()
+                if self?.holdTimer != nil {
+                    self?.stopVoiceHold(cancelled: true)
+                }
+            }
+            return event
+        }
         return true
     }
 
     private func removeMonitors() {
         if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
         if let localMonitor { NSEvent.removeMonitor(localMonitor); self.localMonitor = nil }
+        if let keyDownMonitor { NSEvent.removeMonitor(keyDownMonitor); self.keyDownMonitor = nil }
+        if let localKeyDownMonitor { NSEvent.removeMonitor(localKeyDownMonitor); self.localKeyDownMonitor = nil }
         pendingSingleTap?.cancel()
-        stopVoiceHold()
+        stopVoiceHold(cancelled: true)
+        trackedDeviceBits = 0
         gesture = RightCommandDoubleTap()
+    }
+
+    /// Reconstructs exact left/right `deviceBit` state across `flagsChanged` events (`NOT-02`),
+    /// ensuring macOS modifier polling never confuses Left Command/Option with Right Command/Option.
+    private func updateTrackedDeviceBits(for event: NSEvent) -> UInt {
+        let flags = event.modifierFlags
+        let raw = flags.rawValue
+        let hardwareBits = raw & (SidekickModifierKey.rightCommand.rightMask
+            | SidekickModifierKey.rightCommand.leftMask
+            | SidekickModifierKey.rightOption.rightMask
+            | SidekickModifierKey.rightOption.leftMask)
+
+        if hardwareBits != 0 {
+            trackedDeviceBits = hardwareBits
+        }
+        if !flags.contains(.command) {
+            trackedDeviceBits &= ~(SidekickModifierKey.rightCommand.rightMask | SidekickModifierKey.rightCommand.leftMask)
+        } else if hardwareBits == 0 {
+            if event.keyCode == SidekickModifierKey.rightCommand.keyCode {
+                trackedDeviceBits |= SidekickModifierKey.rightCommand.rightMask
+            } else if event.keyCode == 55 {
+                trackedDeviceBits |= SidekickModifierKey.rightCommand.leftMask
+            }
+        }
+        if !flags.contains(.option) {
+            trackedDeviceBits &= ~(SidekickModifierKey.rightOption.rightMask | SidekickModifierKey.rightOption.leftMask)
+        } else if hardwareBits == 0 {
+            if event.keyCode == SidekickModifierKey.rightOption.keyCode {
+                trackedDeviceBits |= SidekickModifierKey.rightOption.rightMask
+            } else if event.keyCode == 58 {
+                trackedDeviceBits |= SidekickModifierKey.rightOption.leftMask
+            }
+        }
+        return trackedDeviceBits
     }
 
     private func consume(_ event: NSEvent) {
         guard (enabled || sidekickEnabled || holdForVoiceEnabled), !isBusy else { return }
         let flags = event.modifierFlags.intersection([.command, .option, .control, .shift, .function])
+        let deviceBits = updateTrackedDeviceBits(for: event)
         let right = event.keyCode == shortcutKey.keyCode
-        let raw = event.modifierFlags.rawValue
-        let commandOnly = (flags.isEmpty || flags == shortcutKey.flag) && raw & shortcutKey.leftMask == 0
-        let rightDown = raw & shortcutKey.rightMask != 0 || (right && flags == shortcutKey.flag && raw & shortcutKey.leftMask == 0)
+        let leftHeld = (deviceBits & shortcutKey.leftMask) != 0
+        let commandOnly = (flags.isEmpty || flags == shortcutKey.flag) && !leftHeld
+        let rightDown = ((deviceBits & shortcutKey.rightMask) != 0 || (right && flags == shortcutKey.flag)) && !leftHeld
         if right, commandOnly, rightDown, holdForVoiceEnabled {
             scheduleVoiceHold(pressedAt: event.timestamp)
+        } else if !rightDown {
+            if holdingForVoice {
+                stopVoiceHold(cancelled: false)
+                pendingSingleTap?.cancel()
+                gesture = RightCommandDoubleTap()
+                return
+            }
+            stopVoiceHold(cancelled: true)
         } else {
-            stopVoiceHold()
+            stopVoiceHold(cancelled: true)
         }
         let ordinaryInput = Self.secondsSinceOrdinaryInput()
         let recognized = gesture.recognize(rightCommand: right, commandOnly: commandOnly, down: rightDown,
                                            at: event.timestamp, secondsSinceOrdinaryInput: ordinaryInput)
         if !right || !commandOnly || rightDown || recognized == .double { pendingSingleTap?.cancel() }
-        if recognized == .double, enabled { activateFromGesture(); return }
+        if recognized == .double, enabled {
+            if let onMagicReply {
+                onMagicReply()
+            } else {
+                activateFromGesture()
+            }
+            return
+        }
         guard sidekickEnabled, recognized == .singleCandidate || recognized == .double else { return }
         let releasedAt = ProcessInfo.processInfo.systemUptime
         let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
         pendingSingleTap?.cancel()
         pendingSingleTap = Task { @MainActor [weak self] in
             do { try await Task.sleep(for: .seconds(RightCommandDoubleTap.doubleTapWindow)) } catch { return }
-            guard let self, self.sidekickEnabled, !self.isBusy, AXIsProcessTrusted(),
+            guard let self, self.sidekickEnabled, !self.isBusy, !self.holdingForVoice,
                   NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
                   Self.secondsSinceOrdinaryInput() > ProcessInfo.processInfo.systemUptime - releasedAt else { return }
             self.showSidekick()
@@ -480,19 +555,27 @@ final class FocusedDraftController {
             do { try await Task.sleep(for: .seconds(Self.voiceHoldDelay)) } catch { return }
             guard let self else { return }
             self.holdTimer = nil
-            guard self.holdForVoiceEnabled, !self.isBusy, AXIsProcessTrusted(),
+            let currentFlags = NSEvent.modifierFlags.intersection([.command, .option, .control, .shift, .function])
+            guard self.holdForVoiceEnabled, !self.isBusy,
+                  currentFlags == self.shortcutKey.flag,
+                  (self.trackedDeviceBits & self.shortcutKey.leftMask) == 0,
                   NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
                   Self.secondsSinceOrdinaryInput() > ProcessInfo.processInfo.systemUptime - pressedAt else { return }
+            self.pendingSingleTap?.cancel()
             self.holdingForVoice = self.beginVoiceHold()
         }
     }
 
-    private func stopVoiceHold() {
+    private func stopVoiceHold(cancelled: Bool = false) {
         holdTimer?.cancel()
         holdTimer = nil
         if holdingForVoice {
             holdingForVoice = false
-            endVoiceHold()
+            if cancelled {
+                cancelVoiceHold()
+            } else {
+                endVoiceHold()
+            }
         }
     }
 

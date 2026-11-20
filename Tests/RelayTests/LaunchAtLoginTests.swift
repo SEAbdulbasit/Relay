@@ -55,4 +55,39 @@ struct LaunchAtLoginTests {
         #expect(loginItem.status == .enabled)
         #expect(loginItem.errorMessage == nil)
     }
+
+    @Test func missingRegistrationCanBeRetriedExplicitlyWithoutAutomaticOptIn() {
+        var systemStatus: SMAppService.Status = .notFound
+        var registrationCount = 0
+        let loginItem = LaunchAtLogin(readStatus: { systemStatus }, register: {
+            registrationCount += 1
+            systemStatus = .requiresApproval
+        }, unregister: {})
+        loginItem.refresh()
+        loginItem.refresh()
+        #expect(registrationCount == 0)
+        loginItem.setEnabled(true)
+        #expect(registrationCount == 1)
+        #expect(loginItem.status == .requiresApproval)
+        #expect(loginItem.errorMessage == nil)
+    }
+
+    @Test func missingRegistrationFailureRemainsVisibleAndRetryCanRecover() {
+        var systemStatus: SMAppService.Status = .notFound
+        var fail = true
+        let loginItem = LaunchAtLogin(readStatus: { systemStatus }, register: {
+            if fail { throw CocoaError(.fileNoSuchFile) }
+            systemStatus = .enabled
+        }, unregister: {})
+        loginItem.setEnabled(true)
+        #expect(loginItem.status == .notFound)
+        #expect(loginItem.errorMessage != nil)
+        loginItem.refresh()
+        #expect(loginItem.errorMessage != nil)
+        fail = false
+        loginItem.setEnabled(true)
+        #expect(loginItem.status == .enabled)
+        #expect(loginItem.errorMessage == nil)
+    }
+
 }

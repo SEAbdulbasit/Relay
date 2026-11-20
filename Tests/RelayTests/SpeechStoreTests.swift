@@ -46,7 +46,7 @@ struct SpeechStoreTests {
         #expect(backend.calls == 1)
         store.draft = "A new request"
         store.send()
-        for _ in 0..<100 where store.isRunning { await Task.yield() }
+        await store.waitForConversationTaskToSettle()
         #expect(!speech.isActive)
         #expect(backend.calls == 1)
         #expect(store.phase == .idle)
@@ -86,10 +86,12 @@ struct SpeechStoreTests {
         })
         store.addMemory("Synthetic old private preference")
         store.draft = "First request"; store.send()
-        for _ in 0..<100 where store.isRunning { await Task.yield() }
+        await store.waitForConversationTaskToSettle()
+        #expect(turn == 1 && !store.isRunning && store.phase == .idle)
         store.deleteMemory(store.memories[0].id)
         store.draft = "New request"; store.send()
-        for _ in 0..<100 where store.isRunning { await Task.yield() }
+        await store.waitForConversationTaskToSettle()
+        #expect(turn == 2 && !store.isRunning && store.phase == .idle)
         #expect(!freshInput.contains("old memory-derived secret"))
         #expect(!freshInput.contains("old private preference"))
         #expect(freshInput.contains("New request"))

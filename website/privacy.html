@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Privacy and Data Flow — Relay</title>
-  <meta name="description" content="See what stays on your Mac with on-device Gemma and what goes to OpenAI when you choose ChatGPT via Codex CLI.">
+  <meta name="description" content="See what stays on your Mac with on-device Gemma 4 and local LM Studio, and how Relay gates context across all 6 model providers (Gemma 4, ChatGPT via Codex CLI, Claude via Claude CLI, LM Studio, OpenRouter, and Custom Responses API).">
 
   <!-- Favicon / Brand Mark -->
-  <link rel="icon" type="image/svg+xml" href="assets/icons/relay-orb.svg">
+  <link rel="icon" type="image/svg+xml" href="assets/icons/relay-icon.svg">
 
   <!-- Google Fonts: Sentient OS 3-Voice Typography System -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -30,7 +30,7 @@
   <header class="site-header" role="banner">
     <div class="container navbar">
       <a href="index.html" class="brand-logo" aria-label="Relay Home">
-        <div class="brand-orb" aria-hidden="true"></div>
+        <div class="brand-icon" aria-hidden="true"></div>
         <span>Relay</span>
       </a>
 
@@ -80,7 +80,7 @@
         </h1>
 
         <p style="font-size: var(--font-size-body-lg); color: var(--color-text-secondary); max-width: 680px; margin: 1.5rem auto 0 auto;">
-          Gemma runs on your Mac by default. If you choose ChatGPT via Codex CLI, your workspace request and action status go to OpenAI. Relay asks before sharing an app list or visible app or webpage text. Mac actions and reviews run locally in either mode.
+          Gemma 4 runs on your Mac by default, and LM Studio also runs locally over loopback. If you choose a remote provider among Relay’s 6 supported backends (ChatGPT via Codex CLI, Claude via Claude CLI, OpenRouter, or a Custom Responses API endpoint), your workspace request and action status go only to the provider you selected, and Relay asks before sharing an app list or visible app or webpage text. Mac actions and reviews always run locally.
         </p>
 
       </div>
@@ -246,9 +246,9 @@
           <div class="eyebrow-badge">
             <span>Direct Comparison</span>
           </div>
-          <h2>Compare Relay’s two model modes</h2>
+          <h2>Compare Relay’s local and optional remote model providers</h2>
           <p>
-            Gemma is the default. Select ChatGPT via Codex CLI in Settings → Model if you want hosted planning.
+            On-device Gemma 4 is the default. Select any of the 6 supported providers (On-device Gemma 4, LM Studio, ChatGPT via Codex CLI, Claude via Claude CLI, OpenRouter, or Custom Responses API) in Settings → Model.
           </p>
         </div>
 
@@ -257,8 +257,8 @@
             <thead>
               <tr>
                 <th scope="col" style="width: 32%;">Security & Architecture Dimension</th>
-                <th scope="col" style="width: 34%;">Gemma on your Mac</th>
-                <th scope="col" style="width: 34%;">Optional ChatGPT via Codex CLI</th>
+                <th scope="col" style="width: 34%;">On-Device (Gemma 4 &amp; LM Studio Loopback)</th>
+                <th scope="col" style="width: 34%;">Optional Remote Providers (ChatGPT CLI, Claude CLI, OpenRouter, Custom API)</th>
               </tr>
             </thead>
             <tbody>
@@ -372,7 +372,7 @@
       <div class="container container-narrow">
         <div class="glass-card" style="text-align: center; padding: 4rem 2rem; border-color: rgba(253, 226, 163, 0.25);">
           
-          <div class="brand-orb" style="width: 56px; height: 56px; margin: 0 auto 1.5rem auto;" aria-hidden="true"></div>
+          <div class="brand-icon" style="width: 56px; height: 56px; margin: 0 auto 1.5rem auto;" aria-hidden="true"></div>
           
           <h2 style="font-size: var(--font-size-h2); margin-bottom: 1rem;">
             Your Data Stays Yours.<br>
@@ -412,7 +412,7 @@
         
         <div class="footer-brand">
           <a href="index.html" class="brand-logo" style="margin-bottom: 0.75rem;">
-            <div class="brand-orb" style="width: 28px; height: 28px;"></div>
+            <div class="brand-icon" style="width: 28px; height: 28px;"></div>
             <span>Relay</span>
           </a>
           <p>

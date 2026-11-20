@@ -24,14 +24,13 @@ import Foundation
                      completeBound: BoundComplete? = nil, complete: Complete) async throws -> Operation {
         try Task.checkCancellation(); try await inputProof?.validate()
         guard taskIsCurrent() else { throw NativeVisionFailure.staleObservation }
-        try session.validatePlanningObservation(observation)
         guard !originalObjective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !requestedStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               requestedStep.utf8.count <= 1024, !requestedStep.contains("\0") else {
             throw RelayError.message("A bounded step within the original task is required; no input was dispatched.")
         }
         let sourceIsCurrent: @MainActor () -> Bool = { [weak session] in
-            taskIsCurrent() && session?.isCurrentForPlanning(observation) == true
+            taskIsCurrent() && session?.isCurrentForModelInput(observation) == true
         }
         let vision = try await NativeVisionPlanningInput.prepare(snapshot: observation.snapshot, sourceIsCurrent: sourceIsCurrent)
         try vision.validate()
@@ -53,6 +52,7 @@ import Foundation
         let reply: ModelReply
         do {
             try await inputProof?.validate(); try vision.validate()
+            try session.validatePlanningObservation(observation)
             if let completeBound { reply = try await completeBound(messages, tools, vision, inputProof) }
             else { reply = try await complete(messages, tools, vision) }
         }
@@ -71,7 +71,6 @@ import Foundation
         let (call, proposal) = try NativeWindowControlTools.decode(reply,
             observationID: observation.snapshot.id, frame: vision.frame)
         guard taskIsCurrent() else { throw NativeVisionFailure.staleObservation }
-        try session.validatePlanningObservation(observation)
         return Operation(taskID: taskID, runRevision: runRevision, originalReply: reply, call: call,
             proposal: proposal, observation: observation, frame: vision.frame, inputProof: inputProof)
     }

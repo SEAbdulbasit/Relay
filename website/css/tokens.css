@@ -5,40 +5,51 @@
 
 :root {
   /* ==========================================================================
-     Color Palette: Obsidian, Pure Black, and Atmospheric Depth
+     Color Palette: Antigravity Matte Graphite & Slate Hierarchy (1:1 RelayColors)
      ========================================================================== */
-  --color-bg-canvas: #000000;
-  --color-bg-deep: #0b0c0e;
-  --color-bg-surface: #0a0a0d;
-  --color-bg-elevated: #121318;
-  --color-bg-elevated-hover: #1a1c24;
-  --color-bg-dock: rgba(10, 10, 14, 0.90);
+  --bg-pitch: #1C1D20;
+  --bg-canvas: #232427;
+  --bg-card: #2B2D31;
+  --bg-surface: #303136;
+  --bg-elevated: #383A40;
+  --accent: #2A7BF6;
+  --green: #34D399;
+
+  --color-bg-pitch: var(--bg-pitch);
+  --color-bg-canvas: var(--bg-canvas);
+  --color-bg-deep: #1C1D20;
+  --color-bg-card: var(--bg-card);
+  --color-bg-surface: var(--bg-surface);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-bg-elevated-hover: #42444C;
+  --color-bg-dock: rgba(28, 29, 32, 0.92);
 
   /* Glassmorphism & Alpha Layers */
-  --color-glass-bg: rgba(20, 22, 28, 0.70);
-  --color-glass-card: rgba(17, 18, 24, 0.65);
+  --color-glass-bg: rgba(43, 45, 49, 0.88);
+  --color-glass-card: rgba(43, 45, 49, 0.82);
   --color-glass-border: rgba(255, 255, 255, 0.10);
   --color-glass-border-hover: rgba(255, 255, 255, 0.20);
   --color-glass-inner-light: rgba(255, 255, 255, 0.05);
 
   /* Hairline Borders */
-  --color-border-subtle: rgba(255, 255, 255, 0.08);
-  --color-border-default: rgba(255, 255, 255, 0.14);
-  --color-border-focus: rgba(253, 226, 163, 0.45);
+  --color-border-subtle: rgba(255, 255, 255, 0.10);
+  --color-border-default: rgba(255, 255, 255, 0.16);
+  --color-border-strong: rgba(255, 255, 255, 0.25);
+  --color-border-focus: rgba(132, 184, 255, 0.48);
 
   /* Text & Foreground Hierarchy */
-  --color-text-primary: #ffffff;
-  --color-text-secondary: #c5c8d1;
-  --color-text-muted: #828795;
-  --color-text-dim: #4e535e;
-  --color-text-inverse: #0b0c0e;
+  --color-text-primary: #F5F7FA;
+  --color-text-secondary: #C4C6CD;
+  --color-text-muted: #A6AAB6;
+  --color-text-dim: #687284;
+  --color-text-inverse: #101319;
 
   /* Button Tokens */
-  --color-btn-face: #e6e6e6;
-  --color-btn-face-hover: #ffffff;
-  --color-btn-ink: #101114;
-  --color-btn-secondary-bg: rgba(255, 255, 255, 0.06);
-  --color-btn-secondary-hover: rgba(255, 255, 255, 0.12);
+  --color-btn-face: #F5F7FA;
+  --color-btn-face-hover: #FFFFFF;
+  --color-btn-ink: #101319;
+  --color-btn-secondary-bg: rgba(255, 255, 255, 0.055);
+  --color-btn-secondary-hover: rgba(255, 255, 255, 0.095);
 
   /* ==========================================================================
      The Signature Relay Prism: 8-stop rainbow spectrum
@@ -91,15 +102,16 @@
   --color-role-critic-border: rgba(52, 211, 153, 0.35);
 
   /* System Accents */
-  --color-accent-emerald: #33ff66;
-  --color-accent-coral: #ff4646;
-  --color-accent-gold: #fde2a3;
+  --color-accent-blue: #2A7BF6;
+  --color-accent-emerald: #34D399;
+  --color-accent-coral: #F87171;
+  --color-accent-gold: #F4D69A;
 
   /* ==========================================================================
-     Typography & Font Stacks (Sentient OS 3-Voice System)
+     Typography & Font Stacks (Crisp Geometric Sans & Monospace — 1:1 RelayTypography)
      ========================================================================== */
-  --font-display: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif;
-  --font-serif: "Newsreader", "Instrument Serif", "New York", Georgia, serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Plus Jakarta Sans", "Inter", system-ui, sans-serif;
+  --font-serif: var(--font-display);
   --font-body: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "SF Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
 

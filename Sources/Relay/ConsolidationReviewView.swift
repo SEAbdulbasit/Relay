@@ -21,44 +21,81 @@ struct ConsolidationReviewView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Linked source brief").font(.title2.weight(.semibold))
-            if review.phase != .cleared { Text(entity.title).font(.headline) }
+            Text("Linked source brief")
+                .font(.relayTitle)
+                .foregroundStyle(RelayColors.textPrimary)
+            if review.phase != .cleared {
+                Text(entity.title)
+                    .font(.relayHeadline)
+                    .foregroundStyle(RelayColors.textPrimary)
+            }
             Text("Review exact excerpts across explicitly linked documents. Relay does not infer facts or merge people with similar names.")
-                .font(.callout).foregroundStyle(.secondary)
+                .font(.relayCallout)
+                .foregroundStyle(RelayColors.textSecondary)
             if review.phase == .initial {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(entity.sourcePaths, id: \.self) { path in
                             let source = records().first { $0.sourcePath == path }
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(source?.title ?? "Unavailable source").font(.callout.weight(.medium))
+                                Text(source?.title ?? "Unavailable source")
+                                    .font(.relayCallout.weight(.medium))
+                                    .foregroundStyle(RelayColors.textPrimary)
                                 Text(source?.coverageNote ?? "Selected indexed extraction")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(.relayCaption)
+                                    .foregroundStyle(RelayColors.textSecondary)
                             }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
                 }
                 .frame(maxHeight: 180)
+                .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
+                )
                 Text("First four eligible lines per linked source, up to 240 UTF-8 bytes each. Review coverage and citations in the resulting Markdown. Nothing is saved automatically.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.relayCaption)
+                    .foregroundStyle(RelayColors.textSecondary)
             } else if review.phase == .ready || review.phase == .stale {
-                TextField("Title", text: Binding(get: { review.title }, set: { review.title = $0 })).textFieldStyle(.roundedBorder)
+                TextField("Title", text: Binding(get: { review.title }, set: { review.title = $0 }))
+                    .textFieldStyle(.plain)
+                    .relayTextField()
                     .accessibilityIdentifier("knowledge.consolidationTitle")
-                TextEditor(text: Binding(get: { review.body }, set: { review.body = $0 })).font(.system(.body, design: .monospaced))
-                    .frame(minHeight: 260).border(Color.secondary.opacity(0.3))
+                TextEditor(text: Binding(get: { review.body }, set: { review.body = $0 }))
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(RelayColors.textPrimary)
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+                    .frame(minHeight: 260)
+                    .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
+                    )
                     .accessibilityLabel("Reviewed source brief Markdown")
                     .accessibilityIdentifier("knowledge.consolidationBody")
                 Text("Save creates an independent historical snapshot. Later source changes cannot overwrite your edits.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.relayCaption)
+                    .foregroundStyle(RelayColors.textSecondary)
             }
-            Text(errorMessage ?? review.message ?? vault.status).font(.caption).foregroundStyle(.secondary)
+            Text(errorMessage ?? review.message ?? vault.status)
+                .font(.relayCaption)
+                .foregroundStyle(RelayColors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if let copyStatus { Text(copyStatus).font(.caption).foregroundStyle(.secondary) }
+            if let copyStatus {
+                Text(copyStatus)
+                    .font(.relayCaption)
+                    .foregroundStyle(RelayColors.textSecondary)
+            }
             HStack {
                 if vault.isGenerating { ProgressView().controlSize(.small) }
                 Spacer()
-                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Close") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .buttonStyle(RelaySecondaryButtonStyle())
                 if review.canCopy {
                     Button("Copy edits") {
                         guard refreshAuthorization() else { return }
@@ -67,11 +104,14 @@ struct ConsolidationReviewView: View {
                         copyStatus = pasteboard.setString("# \(review.title)\n\n\(review.body)", forType: .string)
                             ? "Copied unsaved Markdown." : "The clipboard could not be updated."
                     }
+                    .buttonStyle(RelaySecondaryButtonStyle())
                 }
                 if vault.isGenerating {
                     Button("Stop") { vault.cancel() }
+                        .buttonStyle(RelaySecondaryButtonStyle())
                 } else if review.canSave, let draft = review.sourceDraft {
                     Button("Save editable snapshot") { save(draft.id) }
+                        .buttonStyle(RelayPrimaryButtonStyle())
                         .disabled(review.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || vault.consolidationDraft?.id != draft.id)
                         .accessibilityIdentifier("knowledge.saveConsolidation")
                 } else {
@@ -80,6 +120,7 @@ struct ConsolidationReviewView: View {
                         errorMessage = nil
                         Task { await generate() }
                     }
+                        .buttonStyle(RelayPrimaryButtonStyle())
                         .disabled(!canGenerate() || !(2...CrossSourceKnowledge.maximumSources).contains(entity.sourcePaths.count))
                         .accessibilityIdentifier("knowledge.buildConsolidation")
                 }
@@ -87,6 +128,8 @@ struct ConsolidationReviewView: View {
         }
         .padding(24)
         .frame(minWidth: 600, minHeight: 400)
+        .background(RelayColors.canvas)
+        .relayPreferredAppearance()
         .onAppear { vault.dismissConsolidation() }
         .onChange(of: vault.consolidationDraft) { _, draft in
             if let draft, draft.entity.id == entity.id {

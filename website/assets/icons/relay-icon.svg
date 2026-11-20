@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 100 100">
+  <title>Relay Keycap — Shortcut</title>
+  <defs>
+    <linearGradient id="tile" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1C1E24"/>
+      <stop offset="100%" stop-color="#101216"/>
+    </linearGradient>
+  </defs>
+  <rect x="9.77" y="9.77" width="80.46" height="80.46" rx="18.26" fill="url(#tile)" stroke="#FFFFFF" stroke-opacity="0.16" stroke-width="0.5"/>
+  <path d="M36 49H47L53 43H64" fill="none" stroke="#FFFFFF" stroke-opacity="0.94" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

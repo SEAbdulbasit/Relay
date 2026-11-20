@@ -106,6 +106,8 @@ final class MultiAgentOrchestrator {
     var onRoleChange: ((AgentRole) -> Void)?
     var onActivity: ((AgentActivityItem) -> Void)?
     var onPlanUpdate: (([String]) -> Void)?
+    var onPlanProgress: (([PlanStepProgress]) -> Void)?
+    private(set) var planProgress: [PlanStepProgress] = []
     var onToolResult: ((ToolCall, ToolResult) -> Void)?
     private(set) var didDispatchTool = false
 
@@ -150,6 +152,19 @@ final class MultiAgentOrchestrator {
 
     /// Executes the full multi-agent loop for the provided user goal.
     func executeTask(goal: String) async throws -> MultiAgentResult {
+        planProgress = []
+        onPlanProgress?([])
+        do {
+            return try await executeTaskBody(goal: goal)
+        } catch {
+            if let index = currentStepIndex, planProgress.indices.contains(index), planProgress[index].isInFlight {
+                updateProgress(at: index, state: Task.isCancelled || error is CancellationError ? .stopped : .needsAttention)
+            }
+            throw error
+        }
+    }
+
+    private func executeTaskBody(goal: String) async throws -> MultiAgentResult {
         try gate?()
         blackboard.reset(with: goal)
         didDispatchTool = false; currentStepIndex = nil; stepLease = nil
@@ -168,9 +183,6 @@ final class MultiAgentOrchestrator {
                 try stepCheckpoint.validate(lease)
             }
             stepLease = lease; restored = lease
-            if lease.declined, !lease.requiresReconciliation {
-                return MultiAgentResult(content: "That action was declined. No earlier proposal was recreated or dispatched. Start a fresh task if you want to authorize a different action.", isSuccess: false)
-            }
         } else { restored = nil }
 
         // Restore only the original goal-only plan/cursor. No old observations,
@@ -192,6 +204,21 @@ final class MultiAgentOrchestrator {
             }
         }
         try gate?()
+
+        let identities: [MultiAgentStepCheckpoint.ProgressEntry]?
+        if let stepCheckpoint, let lease = stepLease { identities = try stepCheckpoint.progressEntries(for: lease) }
+        else { identities = nil }
+        let startIndex = restored?.entries == nil ? 0 : (restored?.startIndex ?? 0)
+        planProgress = blackboard.structuredPlan.enumerated().map { index, step in
+            PlanStepProgress(id: identities?[index].token ?? UUID(), title: step.title, role: step.role,
+                             state: index < startIndex ? .earlierRun : .planned,
+                             attempt: identities?[index].attempts ?? 0)
+        }
+        onPlanProgress?(planProgress)
+        if let restored, restored.declined, !restored.requiresReconciliation {
+            updateProgress(at: restored.startIndex, state: .needsAttention)
+            return MultiAgentResult(content: "That action was declined. No earlier proposal was recreated or dispatched. Start a fresh task if you want to authorize a different action.", isSuccess: false)
+        }
 
         // If the planner identified an informational query or produced no automation steps,
         // return the synthesized or informational reply immediately without spinning up navigation/execution.
@@ -215,18 +242,22 @@ final class MultiAgentOrchestrator {
             let outcome: StepOutcome
             if index == start, restored?.requiresReconciliation == true {
                 if let stepCheckpoint, let lease = stepLease { try stepCheckpoint.beginReconciliation(at: index, lease: lease) }
+                updateProgress(at: index, state: .reconciling, beginsAttempt: true)
                 recordActivity(role: .critic, title: "Reconciling interrupted step", detail: "A fresh read is required. The earlier Executor proposal will not be recreated or replayed.")
                 outcome = try await runCriticTurn(step: step, goal: goal, actionResults: nil, requiresFreshRead: true) ? .verified : .unverified
             } else {
                 if let stepCheckpoint, let lease = stepLease { try stepCheckpoint.enterStep(at: index, lease: lease) }
+                updateProgress(at: index, state: .running, beginsAttempt: true)
                 outcome = try await executePlanStepWithVerification(step: step, goal: goal)
             }
             try gate?()
             if index == start, restored?.declined == true {
+                updateProgress(at: index, state: .needsAttention)
                 return MultiAgentResult(content: "Earlier effects were inspected, but the declined action and remaining steps stay paused. No declined proposal was recreated or dispatched.",
                     verifiedResults: blackboard.verifiedResults, artifacts: blackboard.verifiedResults.compactMap(\.artifactPath), isSuccess: false)
             }
             guard outcome == .verified else {
+                updateProgress(at: index, state: .needsAttention)
                 recordActivity(role: step.role, title: "Step incomplete", detail: step.title)
                 // Later steps may depend on this outcome. Stop here without letting synthesis
                 // promote a partial result or send the same action through another step.
@@ -241,6 +272,7 @@ final class MultiAgentOrchestrator {
             }
             if let stepCheckpoint, let lease = stepLease { try stepCheckpoint.complete(at: index, lease: lease) }
             blackboard.completeStep(at: index)
+            updateProgress(at: index, state: step.role == .navigator ? .observationChecked : .stepChecked)
         }
 
         // 3. Synthesis Turn: Planner compiles final verified answer.
@@ -304,6 +336,13 @@ final class MultiAgentOrchestrator {
             blackboard.criticFeedback = directAnswer.trimmingCharacters(in: .whitespacesAndNewlines)
             return false
         }
+    }
+
+    private func updateProgress(at index: Int, state: PlanStepProgress.State, beginsAttempt: Bool = false) {
+        guard planProgress.indices.contains(index) else { return }
+        planProgress[index].state = state
+        if beginsAttempt { planProgress[index].attempt += 1 }
+        onPlanProgress?(planProgress)
     }
 
     /// Executes an individual plan step through the appropriate role sequence (Navigator -> Executor -> Critic).
@@ -403,8 +442,10 @@ final class MultiAgentOrchestrator {
             try gate?()
             if let reason = reviewReason?(call) {
                 guard let requestReview else { throw RelayError.message("This action requires review before dispatch.") }
+                if let index = currentStepIndex { updateProgress(at: index, state: .waitingForReview) }
                 let approved = try await requestReview(call, reason)
                 try gate?()
+                if let index = currentStepIndex { updateProgress(at: index, state: .running) }
                 guard approved else {
                     if let stepCheckpoint, let lease = stepLease, let index = currentStepIndex {
                         try stepCheckpoint.decline(at: index, lease: lease)

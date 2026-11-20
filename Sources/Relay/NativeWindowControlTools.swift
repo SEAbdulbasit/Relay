@@ -1,7 +1,7 @@
 import Foundation
 
-/// Ignored candidate. These finite schemas are not registered or dispatched by
-/// active Relay. A decoded proposal is data, never an authorization capability.
+/// Finite schemas for the opt-in native controller. A decoded proposal still
+/// needs the task owner's live authorization before it can cause input.
 @MainActor enum NativeWindowControlTools {
     static let outerName = "control_native_window"
     static let observeName = "native_observation"
@@ -10,9 +10,10 @@ import Foundation
     static let textName = "native_type_unsent"
 
     static let outerDefinition = definition(outerName,
-        "Perform one ordinary interface step in a task-admitted app through local vision. Scope and dedicated workflows remain enforced. Ambiguous gestures need exact local review; dispatch alone is not verified completion. A step may return an unverified no-input report.",
-        ["bundle_id": string("Original task-admitted app bundle ID"),
-         "instruction": string("One ordinary step within the original user task, at most 1024 UTF-8 bytes")],
+        "One ordinary local-vision step: task-admitted app, enforced scope/dedicated workflows. pointer=click/drag; navigation=key; editor=text. Exact local review for ambiguity. Dispatch!=completion; possible unverified no-input report.",
+        ["bundle_id": string("Task-admitted app bundle ID"),
+         "input_kind": enumeration(["pointer", "navigation", "editor"]),
+         "instruction": string("Ordinary original-task step; ≤1024 UTF8 bytes")],
         required: ["bundle_id", "instruction"])
 
     static let visualDefinitions = [
@@ -43,7 +44,7 @@ import Foundation
         case input(NativeControlSession.Action, intendedEffect: String)
     }
 
-    static func requestedStep(_ call: ToolCall) throws -> (bundleID: String, instruction: String) {
+    static func requestedStep(_ call: ToolCall) throws -> (bundleID: String, instruction: String, needsEditorPreview: Bool, includesTextInsertion: Bool) {
         try ToolPolicy.validate(call, against: [outerDefinition])
         guard let bundle = call.arguments["bundle_id"]?.string, !bundle.isEmpty, bundle.utf8.count <= 255,
               bundle.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || [45, 46, 95].contains($0) }),
@@ -51,7 +52,8 @@ import Foundation
               !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !instruction.contains("\0") else {
             throw RelayError.message("Choose one app selector and a bounded ordinary step; no scope was granted.")
         }
-        return (bundle, instruction)
+        let inputKind = call.arguments["input_kind"]?.string
+        return (bundle, instruction, inputKind != "pointer", inputKind != "navigation")
     }
 
     /// No identity is minted here. The task owner must attach the journal's

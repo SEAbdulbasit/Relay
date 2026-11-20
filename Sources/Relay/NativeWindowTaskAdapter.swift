@@ -10,11 +10,96 @@ final class NativeWindowTaskAdapter {
         case unqualifiedMutation, invalidProtocolHistory, unadmittedApplication
     }
 
-    struct ApplicationAdmission {
+    @MainActor struct ApplicationAdmission {
         let application: DesktopApplicationIdentity
         /// Original invocation/task policy owns this capability. Model bundle
         /// strings, app labels and screenshot contents cannot mint admission.
         let validate: @MainActor () throws -> Void
+        private let metadataOriginal: NativeExactUnsentInvocationAnchor.ApplicationMetadataBinding?
+        private let readOwners: [WeakReadOwner]
+
+        /// Custom/legacy admissions remain opaque and validate in full on
+        /// every metadata query. There is no fast-validator closure parameter.
+        init(application: DesktopApplicationIdentity, validate: @escaping @MainActor () throws -> Void) {
+            self.application = application; self.validate = validate
+            metadataOriginal = nil; readOwners = []
+        }
+        private init(application: DesktopApplicationIdentity, validate: @escaping @MainActor () throws -> Void,
+                     metadataOriginal: NativeExactUnsentInvocationAnchor.ApplicationMetadataBinding?, readOwners: [WeakReadOwner]) {
+            self.application = application; self.validate = validate
+            self.metadataOriginal = metadataOriginal; self.readOwners = readOwners
+        }
+        static func acknowledgedOriginal(_ original: NativeExactUnsentInvocationAnchor.ApplicationMetadataBinding) -> Self {
+            .init(application: original.application, validate: { try original.validateStrong() }, metadataOriginal: original, readOwners: [])
+        }
+        var hasSealedMetadataApplicationAdmission: Bool { metadataOriginal != nil }
+        /// Only this typed actual read owner may add its existing task fence.
+        /// A caller cannot attach a sealed factory to an arbitrary validator.
+        func restricted(to owner: NativeLocalTaskReadAuthority) -> Self {
+            .init(application: application, validate: { [weak owner] in
+                guard let owner else { throw Failure.inactiveTask }
+                try owner.validateMetadataTask(); try self.validate()
+            }, metadataOriginal: metadataOriginal, readOwners: readOwners + [WeakReadOwner(owner)])
+        }
+        fileprivate final class WeakReadOwner {
+            weak var value: NativeLocalTaskReadAuthority?
+            init(_ value: NativeLocalTaskReadAuthority) { self.value = value }
+        }
+        func withMetadataLease<Value>(_ body: @MainActor (MetadataLease) throws -> Value) throws -> Value {
+            guard let metadataOriginal else { throw Failure.unadmittedApplication }
+            return try metadataOriginal.withLease { original in
+                let lease = MetadataLease(original: original, readOwners: readOwners)
+                defer { lease.retire() }
+                try lease.check()
+                let result = Result { try body(lease) }
+                try lease.check()
+                return try result.get()
+            }
+        }
+        @MainActor final class MetadataLease {
+            private let original: NativeExactUnsentInvocationAnchor.ApplicationMetadataLease
+            private let readOwners: [WeakReadOwner]
+            private var active = true
+            fileprivate init(original: NativeExactUnsentInvocationAnchor.ApplicationMetadataLease, readOwners: [WeakReadOwner]) {
+                self.original = original; self.readOwners = readOwners
+            }
+            fileprivate func retire() { active = false }
+            func check(currentQuery: DesktopApplicationTarget.MetadataProcessLease.QueryWitness? = nil) throws {
+                try checkReadOwners { try original.check(currentQuery: currentQuery) }
+            }
+            func checkSealedTechnical(purpose: NativeExactUnsentPurpose, scope: NativeVisualTaskScope,
+                                      currentQuery: DesktopApplicationTarget.MetadataProcessLease.QueryWitness) throws {
+                try requireSealedReadOwner(scope)
+                try checkReadOwners {
+                    try original.checkSealedTechnical(anchor: purpose.objective.anchor, scope: scope, currentQuery: currentQuery)
+                }
+            }
+            func requireSealedProcess(purpose: NativeExactUnsentPurpose, scope: NativeVisualTaskScope,
+                                      context: AssistantStore.ExactUnsentSavedInvocation.MetadataContext,
+                                      currentQuery: DesktopApplicationTarget.MetadataProcessLease.QueryWitness) throws {
+                try requireSealedReadOwner(scope)
+                try original.requireSealedProcess(anchor: purpose.objective.anchor, scope: scope, context: context, currentQuery: currentQuery)
+            }
+            private func requireSealedReadOwner(_ scope: NativeVisualTaskScope) throws {
+                guard active else { throw NativeMetadataPhase.Failure.expired }
+                guard readOwners.count == 1, readOwners.first?.value === scope.readAuthority else { throw Failure.inactiveTask }
+            }
+            private func checkReadOwners(_ checkOriginal: () throws -> Void) throws {
+                guard active else { throw NativeMetadataPhase.Failure.expired }
+                try Task.checkCancellation()
+                for owner in readOwners {
+                    guard let value = owner.value else { throw Failure.inactiveTask }
+                    try value.validateMetadataTask()
+                }
+                try checkOriginal()
+                for owner in readOwners {
+                    guard let value = owner.value else { throw Failure.inactiveTask }
+                    try value.validateMetadataTask()
+                }
+                try Task.checkCancellation()
+                guard active else { throw NativeMetadataPhase.Failure.expired }
+            }
+        }
     }
 
     struct Ownership {

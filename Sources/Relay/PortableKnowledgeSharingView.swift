@@ -12,22 +12,35 @@ struct PortableKnowledgeSharingView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Portable encrypted archive").font(.system(size: 16, weight: .semibold))
-            Text("Save selected Markdown notes as one encrypted file. Keep its recovery code separately. A copy of Relay can open the archive on another Mac, without a server.")
-                .font(.system(size: 13))
-                .foregroundStyle(RelayColors.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .top, spacing: 12) {
+                RelayIconBadge(icon: "archivebox.fill", color: RelayColors.accentEmerald, size: 34, iconSize: 15)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Portable Encrypted Archive")
+                        .font(.relayBodyStrong)
+                        .foregroundStyle(RelayColors.textPrimary)
+                    Text("Save selected Markdown notes as one encrypted file. Keep its recovery code separately. A copy of Relay can open the archive on another Mac, without a server.")
+                        .font(.relayCaption)
+                        .foregroundStyle(RelayColors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+            }
             HStack(spacing: 10) {
                 Button("Create archive…", systemImage: "lock.doc") { sheet = .create }
                     .accessibilityIdentifier("knowledge.createPortableArchive")
                 Button("Open archive…", systemImage: "lock.open") { sheet = .open }
                     .accessibilityIdentifier("knowledge.openPortableArchive")
+                Spacer()
             }
             .buttonStyle(RelaySecondaryButtonStyle())
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(18)
-        .relayGlassCard(cornerRadius: 14)
+        .padding(14)
+        .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
+        )
         .sheet(item: $sheet) { choice in
             switch choice {
             case .create: CreateKnowledgeArchiveSheet()
@@ -48,56 +61,89 @@ private struct CreateKnowledgeArchiveSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Create encrypted archive").font(.title2.weight(.semibold))
+            Text("Create encrypted archive")
+                .font(.relayTitle)
+                .foregroundStyle(RelayColors.textPrimary)
             if let recoveryCode {
                 Text("Keep the recovery code somewhere separate from the archive. Relay does not store it, and the file cannot be opened without it.")
-                    .foregroundStyle(.secondary)
+                    .font(.relayBody)
+                    .foregroundStyle(RelayColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(recoveryCode)
                     .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(RelayColors.textPrimary)
                     .textSelection(.enabled)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
+                    )
                     .accessibilityIdentifier("knowledge.archiveRecoveryCode")
                 Button("Copy recovery code", systemImage: "doc.on.doc") {
                     let pasteboard = NSPasteboard.general
                     pasteboard.clearContents()
                     if pasteboard.setString(recoveryCode, forType: .string) { status = "Recovery code copied." }
                 }
+                .buttonStyle(RelaySecondaryButtonStyle())
             } else {
                 Text("Choose up to \(PortableKnowledgeArchive.maximumNotes) editable notes, with a total archive content limit of 1 MiB.")
-                    .foregroundStyle(.secondary)
+                    .font(.relayBody)
+                    .foregroundStyle(RelayColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if notes.isEmpty {
                     ContentUnavailableView("No editable notes", systemImage: "note.text",
                                            description: Text("Create or copy a note in Knowledge first."))
                         .frame(height: 190)
                 } else {
-                    List(notes) { note in
-                        Toggle(isOn: Binding(
-                            get: { selection.contains(note.url) },
-                            set: { selected in
-                                if selected { selection.insert(note.url) } else { selection.remove(note.url) }
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 8) {
+                            ForEach(notes) { note in
+                                Toggle(isOn: Binding(
+                                    get: { selection.contains(note.url) },
+                                    set: { selected in
+                                        if selected { selection.insert(note.url) } else { selection.remove(note.url) }
+                                    }
+                                )) {
+                                    Text(note.folderName.map { $0 + " / " + note.title } ?? note.title)
+                                        .font(.relayCallout)
+                                        .foregroundStyle(RelayColors.textPrimary)
+                                        .lineLimit(1)
+                                }
+                                .disabled(!selection.contains(note.url) && selection.count >= PortableKnowledgeArchive.maximumNotes)
                             }
-                        )) {
-                            Text(note.folderName.map { $0 + " / " + note.title } ?? note.title)
-                                .lineLimit(1)
                         }
-                        .disabled(!selection.contains(note.url) && selection.count >= PortableKnowledgeArchive.maximumNotes)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .frame(height: 230)
-                    Text("\(selection.count) selected").foregroundStyle(.secondary)
+                    .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
+                    )
+                    Text("\(selection.count) selected")
+                        .font(.relayCaption)
+                        .foregroundStyle(RelayColors.textSecondary)
                 }
             }
             if let status {
-                Text(status).foregroundStyle(.secondary).textSelection(.enabled)
+                Text(status)
+                    .font(.relayCaption)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .textSelection(.enabled)
                     .accessibilityIdentifier("knowledge.archiveExportStatus")
             }
             HStack {
                 Spacer()
                 Button(recoveryCode == nil ? "Cancel" : "Close") { dismiss() }
                     .keyboardShortcut(.cancelAction)
+                    .buttonStyle(RelaySecondaryButtonStyle())
                 if recoveryCode == nil {
                     Button("Save encrypted archive…") { export() }
                         .keyboardShortcut(.defaultAction)
+                        .buttonStyle(RelayPrimaryButtonStyle())
                         .disabled(selection.isEmpty)
                         .accessibilityIdentifier("knowledge.savePortableArchive")
                 }
@@ -105,6 +151,8 @@ private struct CreateKnowledgeArchiveSheet: View {
         }
         .padding(22)
         .frame(width: 525)
+        .background(RelayColors.canvas)
+        .relayPreferredAppearance()
         .onAppear { refreshNotes() }
     }
 
@@ -158,20 +206,28 @@ private struct OpenKnowledgeArchiveSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Open encrypted archive").font(.title2.weight(.semibold))
+            Text("Open encrypted archive")
+                .font(.relayTitle)
+                .foregroundStyle(RelayColors.textPrimary)
             if notes.isEmpty {
                 Text("Choose a Relay archive and enter its recovery code. Relay opens the notes read-only in this window.")
-                    .foregroundStyle(.secondary)
+                    .font(.relayBody)
+                    .foregroundStyle(RelayColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack {
                     Button("Choose archive…", systemImage: "folder") { chooseArchive() }
+                        .buttonStyle(RelaySecondaryButtonStyle())
                         .accessibilityIdentifier("knowledge.choosePortableArchive")
                     if let archiveURL {
-                        Text(archiveURL.lastPathComponent).foregroundStyle(.secondary).lineLimit(1)
+                        Text(archiveURL.lastPathComponent)
+                            .font(.relayCaption)
+                            .foregroundStyle(RelayColors.textSecondary)
+                            .lineLimit(1)
                     }
                 }
                 SecureField("Recovery code", text: $recoveryCode)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
+                    .relayTextField()
                     .accessibilityIdentifier("knowledge.enterArchiveRecoveryCode")
             } else {
                 Picker("Note", selection: $selectedIndex) {
@@ -183,25 +239,35 @@ private struct OpenKnowledgeArchiveSheet: View {
                 ScrollView {
                     Text(verbatim: notes[selectedIndex].markdown)
                         .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(RelayColors.textPrimary)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(10)
                         .accessibilityIdentifier("knowledge.openedArchiveMarkdown")
                 }
                 .frame(height: 270)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
+                )
             }
             if let status {
-                Text(status).foregroundStyle(.secondary).textSelection(.enabled)
+                Text(status)
+                    .font(.relayCaption)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .textSelection(.enabled)
                     .accessibilityIdentifier("knowledge.archiveOpenStatus")
             }
             HStack {
                 Spacer()
                 Button(notes.isEmpty ? "Cancel" : "Close archive") { dismiss() }
                     .keyboardShortcut(.cancelAction)
+                    .buttonStyle(RelaySecondaryButtonStyle())
                 if notes.isEmpty {
                     Button("Unlock archive") { openArchive() }
                         .keyboardShortcut(.defaultAction)
+                        .buttonStyle(RelayPrimaryButtonStyle())
                         .disabled(archiveURL == nil || recoveryCode.isEmpty)
                         .accessibilityIdentifier("knowledge.unlockPortableArchive")
                 }
@@ -209,6 +275,8 @@ private struct OpenKnowledgeArchiveSheet: View {
         }
         .padding(22)
         .frame(width: 525)
+        .background(RelayColors.canvas)
+        .relayPreferredAppearance()
     }
 
     private func chooseArchive() {

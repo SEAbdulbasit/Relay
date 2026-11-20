@@ -287,9 +287,10 @@ struct NotchVoiceHoldTests {
             #expect(backend.running && backend.requiresOnDevice == true)
         }
         func wait(timeout: Duration = .seconds(2), until predicate: () -> Bool) async throws {
-            let deadline = ContinuousClock.now.advanced(by: timeout)
-            while !predicate(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
-            try #require(predicate(), "Synthetic voice work must settle within its bounded wait.")
+            let start = ContinuousClock.now, deadline = start.advanced(by: timeout)
+            var polls = 0
+            while !predicate(), ContinuousClock.now < deadline { polls += 1; try await Task.sleep(for: .milliseconds(5)) }
+            try #require(predicate(), "Synthetic voice bounded wait expired: elapsed_ms=\(WorkerSettlementDiagnostics.milliseconds(start.duration(to: .now))), polls=\(polls).")
         }
         func yieldJobs() async { for _ in 0..<100 { await Task.yield() } }
         func close() {

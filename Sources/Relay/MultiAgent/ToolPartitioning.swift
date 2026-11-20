@@ -16,11 +16,13 @@ nonisolated enum ToolPartitioning {
             return [
                 "observe_app",
                 "inspect_native_window",
+                "inspect_browser_tabs",
                 "list_apps",
                 "calculate",
                 "search_finder",
                 "list_files",
                 "read_file",
+                "search_files",
                 "search_knowledge",
                 "capability_probe"
             ]
@@ -43,7 +45,10 @@ nonisolated enum ToolPartitioning {
                 "open_url",
                 "browser_navigate",
                 "search_web",
-                "stage_attachment", "create_mail_draft", "prepare_mail_send", "send_mail"
+                "focus_browser_tab",
+                "bookmark_browser_tab",
+                "stage_attachment", "create_mail_draft", "prepare_mail_send", "send_mail",
+                "create_calendar_event", "commit_calendar_event", "rollback_calendar_event"
             ]
 
         case .critic:

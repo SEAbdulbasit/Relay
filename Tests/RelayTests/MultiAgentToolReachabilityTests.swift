@@ -9,13 +9,15 @@ import Testing
         let executor = Set(ToolPartitioning.partitionedTools(for: .executor, from: MacTools.definitions).map(\.name))
         #expect(["calculate"].allSatisfy(navigator.contains))
         #expect(["open_file", "preview_file_move", "move_file"].allSatisfy(executor.contains))
-        #expect(navigator.isDisjoint(with: ["read_calendar", "search_files"]), "Private inspection bodies need current-source adapters before downstream automatic use.")
+        #expect(navigator.contains("search_files"), "Current filename metadata uses the actual selected-query producer and saved receipt adapter.")
+        #expect(!navigator.contains("read_calendar"), "Calendar bodies still need their own producer proof before downstream automatic use.")
         #expect(navigator.isDisjoint(with: ["open_file", "write_file", "preview_file_move", "move_file"]))
         #expect(ToolPartitioning.partitionedTools(for: .planner, from: MacTools.definitions).isEmpty)
         let planner = AgentRole.planner.systemPrompt
         #expect(planner.contains("preview_file_move only") && planner.contains("exact returned preview_id"))
         #expect(planner.contains("move_file and explicit review") && planner.contains("separate steps"))
         #expect(planner.contains("Navigator calculate") && planner.contains("answered directly"))
+        #expect(planner.contains("Navigator search_files") && planner.contains("not file contents"))
     }
 
     @Test func navigatorReturnsActualArithmeticEvidenceToSynthesis() async throws {

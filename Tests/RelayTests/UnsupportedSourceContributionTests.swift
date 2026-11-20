@@ -117,7 +117,8 @@ import Testing
         let task = UUID(), context = taintContext(task), book = MultiAgentContinuation()
         book.startTask(task)
         let run = try AssistantConversationHistory.Run(logicalTaskID: task, cause: .newRequest)
-        for _ in 0..<1_030 {
+        for index in 0..<1_030 {
+            if index == 20 { try? await Task.sleep(for: .seconds(8)) }
             let prepared = try await taintPreparation(book, .init(id: "reused-provider-id", name: "control_native_window", arguments: [:]), context: context, run: run)
             #expect(book.markUnsupportedSourceContribution(prepared: prepared, currentContext: context))
         }

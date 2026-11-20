@@ -44,7 +44,8 @@ import Testing
     @Test func sameActualSourceAndOwnerProofDeduplicateAcrossMoreThan1024Turns() async throws {
         let rig = Rig(), entry = rig.entry("source", text: "PRIVATE_SAME_SOURCE")
         var accumulated: ModelInputSourceProof?
-        for _ in 0..<1_030 {
+        for index in 0..<1_030 {
+            if index == 20 { try? await Task.sleep(for: .seconds(8)) }
             let snapshot = try await rig.context.prepare([entry.handle], maximumBytes: 4_000)
             accumulated = try ModelInputSourceProof.merging([accumulated, snapshot.sourceProof])
             #expect(accumulated?.dependencyCount == 2)

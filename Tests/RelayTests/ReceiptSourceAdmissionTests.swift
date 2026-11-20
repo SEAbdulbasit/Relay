@@ -130,6 +130,7 @@ private final class ReceiptReadBarrier: @unchecked Sendable {
         // Setup is independent of the short validation deadline under test. A
         // broad MainActor test wave must not expire before the blocked boundary.
         let setupWorker = SelectedFileProofWorker(timeout: .seconds(5))
+        await awaitParitySuiteQuietWindow(milliseconds: 26000)
         let proof = try await setupWorker.capture(input: source.path, grants: grants)
         let barrier = ReceiptReadBarrier(); defer { barrier.release() }
         worker.pauseAfterNextRead { barrier.pause() }

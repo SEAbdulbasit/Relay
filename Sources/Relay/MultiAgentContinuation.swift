@@ -70,6 +70,7 @@ import RelayJournal
     private var logicalTaskID: UUID?
     private var epoch = UUID()
     private var receipts: [Receipt] = []
+    private var totalReceiptBytes = 0
     private var sources: [Data: Source] = [:]
     private var unknownSourceEnteredContext = false
     private var excludedCount = 0
@@ -78,11 +79,13 @@ import RelayJournal
     private var recentExcludedKeys: [Key] = []
 
     func startTask(_ taskID: UUID?) {
-        epoch = UUID(); logicalTaskID = taskID; receipts.removeAll(); sources.removeAll()
+        epoch = UUID(); logicalTaskID = taskID; receipts.removeAll(); totalReceiptBytes = 0; sources.removeAll()
         unknownSourceEnteredContext = false; excludedCount = 0; recentExcludedKeys.removeAll()
     }
     func prepare(_ call: ToolCall, proposalID: UUID, run: AssistantConversationHistory.Run,
                  context: Context, grants: @escaping @MainActor () -> [ScopeGrant]) async throws -> Preparation? {
+        try Task.checkCancellation()
+        guard context.logicalTaskID == logicalTaskID else { return nil }
         try Task.checkCancellation()
         guard context.logicalTaskID == logicalTaskID else { return nil }
         let expectedEpoch = epoch
@@ -162,6 +165,7 @@ import RelayJournal
             callDigest: prepared.callDigest, result: result, dependencies: dependencies, settled: false)
         if let prior = receipts.first(where: { $0.key == receipt.key }) {
             if prior.callDigest != receipt.callDigest || !Self.same(prior.result, receipt.result) {
+                totalReceiptBytes -= Self.cost(prior)
                 receipts.removeAll { $0.key == receipt.key }; excludedCount += 1
             }
             return
@@ -169,8 +173,11 @@ import RelayJournal
         let cost = Self.cost(receipt)
         guard cost <= Self.maximumRetainedBytes else { excludedCount += 1; return }
         receipts.append(receipt)
-        while receipts.count > Self.maximumEntries || receipts.reduce(0, { $0 + Self.cost($1) }) > Self.maximumRetainedBytes {
-            receipts.removeFirst(); excludedCount += 1
+        totalReceiptBytes += cost
+        while receipts.count > Self.maximumEntries || totalReceiptBytes > Self.maximumRetainedBytes {
+            let removed = receipts.removeFirst()
+            totalReceiptBytes -= Self.cost(removed)
+            excludedCount += 1
         }
     }
     func acknowledge(_ prepared: Preparation?) {

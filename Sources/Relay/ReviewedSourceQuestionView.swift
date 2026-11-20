@@ -16,14 +16,33 @@ struct ReviewedSourceQuestionView: View {
                 Text("The answer uses the response already shown above. It does not send another request or add anything to chat history.")
                     .font(.relayCaption).foregroundStyle(RelayTheme.muted)
                 TextField("Ask about this result", text: $question, axis: .vertical)
-                    .textFieldStyle(.roundedBorder).lineLimit(2...4).disabled(work != nil)
+                    .textFieldStyle(.plain)
+                    .relayTextField()
+                    .lineLimit(2...4)
+                    .disabled(work != nil)
                 HStack {
                     Button("Answer locally") { ask() }.buttonStyle(RelayPrimaryButtonStyle())
                         .disabled(store.isRunning || !store.actionsReady || question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || work != nil)
-                    if let work { Button("Stop") { work.cancel() } }
+                    if let work {
+                        Button("Stop") { work.cancel() }
+                            .buttonStyle(RelaySecondaryButtonStyle())
+                    }
                 }
                 if let status { Text(status).font(.relayCaption).foregroundStyle(RelayTheme.muted) }
-                if let answer { Text(answer).textSelection(.enabled).accessibilityIdentifier("mcp.localAnswer") }
+                if let answer {
+                    Text(answer)
+                        .font(.relayBody)
+                        .foregroundStyle(RelayColors.textPrimary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
+                        )
+                        .accessibilityIdentifier("mcp.localAnswer")
+                }
             }.padding(.vertical, 8)
         }
         .onChange(of: source) { _, _ in clear() }

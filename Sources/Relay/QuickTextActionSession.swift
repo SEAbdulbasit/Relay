@@ -35,6 +35,22 @@ final class QuickTextActionSession {
         self.generate = generate
     }
 
+    /// Text-only specialist entry. Reuses the selection workflow's exact
+    /// prompt and conservative decoder, but owns no selection or writer.
+    /// The accepted main task supplies its own source-bound inference call;
+    /// this never replaces the UI session's mutable generate closure.
+    static func correctSuppliedText(_ original: String, generate: Generate) async throws -> String {
+        try Task.checkCancellation()
+        guard BoundTextSelection.usableText(original, maximumBytes: BoundTextSelection.maximumSelectionBytes),
+              !original.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw RelayError.message("Provide readable text of up to 8,000 UTF-8 bytes for correction.")
+        }
+        let reply = try await generate(messages(kind: .proofread, selectedText: original))
+        try Task.checkCancellation()
+        guard reply.toolCalls.isEmpty else { throw RelayError.message("A text correction cannot request tools. No field was changed.") }
+        return try validatedResult(reply.content, kind: .proofread, original: original)
+    }
+
     func start(kind: Kind, selection: BoundTextSelection) throws {
         guard !isBusy else { throw RelayError.message("Wait for the current selected-text action to finish stopping.") }
         try Task.checkCancellation()
@@ -99,6 +115,75 @@ final class QuickTextActionSession {
         case .copyOnly(let reason), .uncertain(let reason): errorMessage = reason
         }
         return outcome
+    }
+
+    /// Async browser-capable replacement entry point that restores focus to a
+    /// bookmarked browser/WebKit editor when needed before undo-safe `Cmd+V`.
+    func replaceReviewedSelectionAsync() async throws -> BoundTextSelection.ReplacementOutcome {
+        try Task.checkCancellation()
+        guard phase == .ready, !isBusy, kind == .proofread, replacementOutcome == nil, let selection else {
+            throw RelayError.message("Review a completed proofreading result before replacing a selection.")
+        }
+        let outcome = try await selection.replaceReviewedAsync(with: resultText)
+        replacementOutcome = outcome
+        switch outcome {
+        case .replaced, .unchanged: errorMessage = nil
+        case .copyOnly(let reason), .uncertain(let reason): errorMessage = reason
+        }
+        return outcome
+    }
+
+    /// Popup-free in-place Proofread (`PFR-06`, `PFR-07`, `PFR-10`): corrects the captured
+    /// native or browser selection and replaces it directly when unchanged/verified,
+    /// returning `.copyOnly` with the corrected text if focus or selection drifted.
+    func proofreadSelectionInPlace(_ selection: BoundTextSelection) async throws -> (corrected: String, outcome: BoundTextSelection.ReplacementOutcome) {
+        let original = selection.selectedText
+        let corrected = try await Self.correctSuppliedText(original, generate: generate)
+        if corrected.utf16.elementsEqual(original.utf16) {
+            selection.clear()
+            return (corrected, .unchanged)
+        }
+        let outcome = try await selection.replaceReviewedAsync(with: corrected)
+        selection.clear()
+        return (corrected, outcome)
+    }
+
+    /// App-owned Home composer draft snapshot Proofread (`PFR-10`, `test_home_proofread_routing`):
+    /// corrects the selected range (or whole non-empty draft) without touching system Copy/Paste,
+    /// applying only if `currentDraft()` and `isSameConversation()` still match the snapshot.
+    static func proofreadHomeDraftSnapshot(
+        snapshotDraft: String,
+        selectedRange: NSRange? = nil,
+        generate: Generate,
+        isSameConversation: @MainActor () -> Bool,
+        currentDraft: @MainActor () -> String,
+        applyUpdatedDraft: @MainActor (String) -> Void
+    ) async throws -> Bool {
+        let nsDraft = snapshotDraft as NSString
+        let targetRange: NSRange
+        if let selectedRange,
+           selectedRange.location != NSNotFound,
+           selectedRange.length > 0,
+           selectedRange.location + selectedRange.length <= nsDraft.length {
+            targetRange = selectedRange
+        } else {
+            targetRange = NSRange(location: 0, length: nsDraft.length)
+        }
+        let targetSlice = nsDraft.substring(with: targetRange)
+        guard !targetSlice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+        let correctedSlice = try await correctSuppliedText(targetSlice, generate: generate)
+        try Task.checkCancellation()
+        guard isSameConversation(), currentDraft().utf16.elementsEqual(snapshotDraft.utf16) else {
+            return false
+        }
+        guard !correctedSlice.utf16.elementsEqual(targetSlice.utf16) else {
+            return true
+        }
+        let updated = nsDraft.replacingCharacters(in: targetRange, with: correctedSlice)
+        applyUpdatedDraft(updated)
+        return true
     }
 
     func stop() {

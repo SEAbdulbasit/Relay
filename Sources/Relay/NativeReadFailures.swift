@@ -89,6 +89,7 @@ nonisolated enum NativeProviderFailureText {
 
 nonisolated struct NativeReadProviderError: LocalizedError, Equatable, Sendable {
     let detail: String
+    var needsFreshConnection: Bool { detail == "bootstrapTimedOut" }
     init(result: OwnedNativeComputerUseClient.NativeResult) {
         detail = NativeProviderFailureText.detail(result) ?? "The native provider returned an error without usable text details."
     }
@@ -133,7 +134,7 @@ extension TargetBoundNativeObservation.Failure: LocalizedError {
         case .stopped: "Native reading was stopped. No late observation was published; resume with a fresh read."
         case .busy: "A native read is already in progress. Wait for it or stop it before requesting another read."
         case .staleRequest: "The native read request expired. Request fresh state instead of reusing its old references."
-        case .ambiguousApplication: "The intended app's process or launch identity is unavailable or ambiguous. Resolve the exact running app before reading it again."
+        case .ambiguousApplication, .missingExclusiveApplication, .multipleExclusiveApplications, .changedExclusiveApplication: "The intended app's process or launch identity is unavailable or ambiguous. Resolve the exact running app before reading it again."
         case .unavailableWindow: "The intended app has no qualified readable native window. Inspect its actual window state or use another suitable read-only source."
         case .changedTarget: "The original process, window, document or browser tab changed during reading. No replacement source was published. Inspect fresh state before continuing."
         case .malformedHeader: "The native response did not provide valid app/window provenance. No state was published; request fresh state or inspect the native runtime error."

@@ -337,8 +337,22 @@ enum BrowserPageReader {
         return result
     }
 
+    private static func activeBrowserWindow(root: AXUIElement, expectedWindow: AXUIElement? = nil) -> AXUIElement? {
+        let allWindows = (attribute(root, kAXWindowsAttribute) as? [AXUIElement]) ?? []
+        if let expectedWindow {
+            return allWindows.contains(where: { CFEqual($0, expectedWindow) }) ? expectedWindow : nil
+        }
+        if let focused = element(root, kAXFocusedWindowAttribute) { return focused }
+        if let main = element(root, kAXMainWindowAttribute) { return main }
+        return allWindows.first {
+            string($0, kAXRoleAttribute) == "AXWindow" && (attribute($0, kAXMinimizedAttribute) as? Bool) != true
+        }
+    }
+
     private static func identity(root: AXUIElement, pid: pid_t, expected: URL?, expectedWindow: AXUIElement? = nil) throws -> Identity {
-        guard let window = element(root, kAXFocusedWindowAttribute) else { throw RelayError.message("The browser has no identifiable selected window.") }
+        guard let window = activeBrowserWindow(root: root, expectedWindow: expectedWindow) else {
+            throw RelayError.message("The browser has no identifiable selected window.")
+        }
         guard expectedWindow.map({ CFEqual($0, window) }) ?? true else {
             throw RelayError.message("The selected browser window changed before metadata capture. No other window was inspected.")
         }

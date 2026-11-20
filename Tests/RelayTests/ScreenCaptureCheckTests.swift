@@ -9,6 +9,7 @@ import Testing
 @MainActor
 struct ScreenCaptureCheckTests {
     @Test func visibleMarkerMustMatchTheFixtureLaunch() async throws {
+        try await prepareOwnedOCRReadinessRecordingFailure()
         let image = try bitmap(text: "RELAY SCREEN CHECK 24681")
         #expect(try await ScreenCaptureCheck.markerIsVisible(in: image, nonce: "24681"))
         #expect(try await !ScreenCaptureCheck.markerIsVisible(in: image, nonce: "24682"))
@@ -27,6 +28,7 @@ struct ScreenCaptureCheckTests {
         let path = try #require(ProcessInfo.processInfo.environment["RELAY_AX_FIXTURE_APP"],
                                 "Set RELAY_AX_FIXTURE_APP to the bundled RelayAccessibilityFixture.app.")
         try #require(path.hasPrefix("/"), "RELAY_AX_FIXTURE_APP must be an absolute path.")
+        try await prepareOwnedOCRReadinessRecordingFailure()
         let report = try await ScreenCaptureCheck.run(fixtureURL: URL(fileURLWithPath: path))
         #expect(report.allPassed, Comment(rawValue: report.summary))
     }
@@ -43,6 +45,7 @@ struct ScreenCaptureCheckTests {
         let fixture = URL(fileURLWithPath: path)
         let bundleID = AccessibilityCheckRunner.fixtureBundleID
         try #require(Bundle(url: fixture)?.bundleIdentifier == bundleID)
+        try await prepareOwnedOCRReadinessRecordingFailure()
         for _ in 0..<20 where !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty {
             try await Task.sleep(for: .milliseconds(100))
         }

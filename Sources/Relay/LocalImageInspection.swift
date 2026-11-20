@@ -86,17 +86,31 @@ enum LocalImageInference {
         let config = LiteRTLM.ConversationConfig(systemMessage: system, automaticToolCalling: false)
         let conversation = try await runtime.createConversation(config: config)
         try Task.checkCancellation()
-        let timer = Task {
+        var timedOut = false
+        let timer = Task { @MainActor in
             do { try await Task.sleep(for: .seconds(90)) } catch { return }
+            timedOut = true
             conversation.cancel()
         }
         defer { timer.cancel() }
-        let reply = try await withTaskCancellationHandler {
-            try await conversation.send(LiteRTLM.Message(of: .imageData(image.jpeg), .text(question)))
-        } onCancel: {
-            conversation.cancel()
+        let reply: LiteRTLM.Message
+        do {
+            reply = try await withTaskCancellationHandler {
+                try await conversation.send(LiteRTLM.Message(of: .imageData(image.jpeg), .text(question)))
+            } onCancel: {
+                conversation.cancel()
+            }
+        } catch {
+            try Task.checkCancellation()
+            if timedOut {
+                throw RelayError.message("Local image inspection timed out after 90 seconds.")
+            }
+            throw error
         }
         try Task.checkCancellation()
+        if timedOut {
+            throw RelayError.message("Local image inspection timed out after 90 seconds.")
+        }
         let answer = try LocalModelClient.parseReply(reply, availableTools: []).content
         return String(answer.prefix(12_000))
     }
@@ -105,8 +119,9 @@ enum LocalImageInference {
 @Observable @MainActor
 final class ImageInspectionController: NSObject {
     var generate: (@MainActor (InspectionImage, String, ModelConfiguration, @escaping @MainActor @Sendable () -> Bool) async throws -> String)?
+    var onImageReady: (@MainActor (InspectionImage) -> Void)?
     var question = "What do you see in this image?"
-    private(set) var image: InspectionImage?
+    var image: InspectionImage?
     private(set) var answer: String?
     private(set) var status = "Choose a file or select one window."
     private(set) var isBusy = false
@@ -116,6 +131,13 @@ final class ImageInspectionController: NSObject {
     @ObservationIgnored private var holdingPicker = false
     @ObservationIgnored private var revision = 0
 
+    func attachImage(_ attached: InspectionImage) {
+        stop()
+        image = attached
+        answer = nil
+        status = "Attached \(attached.label) to your prompt."
+    }
+
     func loadFile(_ url: URL) {
         guard !isBusy else { return }
         start(status: "Preparing image…") { controller in
@@ -124,7 +146,12 @@ final class ImageInspectionController: NSObject {
             let prepared = try await InspectionImage.loadFile(url)
             try Task.checkCancellation()
             controller.image = prepared
-            controller.status = "Image ready. Ask a question or request a description."
+            controller.status = "Image ready. Attached to your prompt."
+            controller.isBusy = false
+            if let callback = controller.onImageReady {
+                controller.onImageReady = nil
+                callback(prepared)
+            }
         }
     }
 
@@ -168,6 +195,7 @@ final class ImageInspectionController: NSObject {
 
     func stop() {
         revision += 1
+        onImageReady = nil
         if picking { endPicker(); isBusy = false }
         releasePicker()
         task?.cancel()
@@ -234,14 +262,21 @@ final class ImageInspectionController: NSObject {
             config.ignoreShadowsSingleWindow = true
             let captured = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
             try Task.checkCancellation()
-            controller.image = try InspectionImage.encode(captured, label: "Selected window")
-            controller.status = "Window frame ready. It will be discarded when you close this panel."
+            let prepared = try InspectionImage.encode(captured, label: "Selected window")
+            controller.image = prepared
+            controller.status = "Window attached to your prompt. Press Send or Take Over to run directly in conversation."
+            controller.isBusy = false
+            if let callback = controller.onImageReady {
+                controller.onImageReady = nil
+                callback(prepared)
+            }
         }
     }
 
     private func didEndPicker(failed: Bool) {
         guard picking else { return }
         endPicker()
+        onImageReady = nil
         isBusy = false
         status = failed ? "macOS could not open window selection. Choose an image file instead." : "Window selection canceled."
     }

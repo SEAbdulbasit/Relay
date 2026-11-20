@@ -85,6 +85,7 @@ import Testing
         let invalid = [ModelMessage(role: "tool", content: "Source", toolCallID: "orphan", toolName: "calculate")]
         await #expect(throws: LMStudioFailure.malformedHistory) { try await client.complete(messages: invalid, tools: [], selection: selection) }
         #expect(await fixture.requests.isEmpty)
+        await awaitParitySuiteQuietWindow(milliseconds: 3500)
         let models = try await client.listModels(endpoint: selection.endpoint)
         #expect(models == ["inert-fixture-model"])
         #expect(await fixture.requests.last?.url == selection.endpoint.modelsURL)
@@ -146,12 +147,15 @@ import Testing
     private var messages: [ModelMessage] { [.init(role: "user", content: "Synthetic request")] }
     private func selected() throws -> LMStudioSelection { try .init(endpoint: .init(), modelID: "inert-fixture-model") }
     private func wait(_ condition: () async -> Bool) async throws {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        let start = ContinuousClock.now, deadline = start.advanced(by: .seconds(2))
+        var polls = 0
         while ContinuousClock.now < deadline {
+            polls += 1
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(1))
         }
-        throw LMStudioFailure.busy
+        throw InferenceFixtureWaitFailure.deadlineExpired(budgetMilliseconds: 2_000,
+            elapsedMilliseconds: WorkerSettlementDiagnostics.milliseconds(start.duration(to: .now)), polls: polls)
     }
     @MainActor private final class SourceLifetime { var current = true }
     private enum SourceFailure: Error, Equatable { case changed }

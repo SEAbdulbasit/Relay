@@ -368,6 +368,29 @@ import Testing
         store.stop(); rig.client.unload()
     }
 
+    @Test func failedVisualReadLeavesNamedControlFallbackGuidanceWithoutAnInputEffect() async throws {
+        let rig = try StoreRig(); defer { rig.remove() }
+        rig.canvas.captureFailureAt = 1
+        var turns = 0
+        let store = rig.store(complete: { input, _, _ in
+            turns += 1
+            let system = try #require(input.first?.content)
+            if turns == 1 {
+                #expect(system.contains("For named desktop controls, start with observe_app"))
+                #expect(!system.contains("A visual window read failed in this run"))
+                return .init(content: "", toolCalls: [.init(name: NativeWindowReadTool.name,
+                    arguments: ["bundle_id": .string(rig.canvas.application.bundleID), "question": .string("Inspect the original control.")])])
+            }
+            #expect(system.contains("A visual window read failed in this run"))
+            #expect(system.contains("Never substitute another control"))
+            return .init(content: "The requested control remains unverified.", toolCalls: [])
+        })
+        try await rig.start(store)
+        #expect(turns == 2 && rig.canvas.captureCount == 1)
+        #expect(rig.canvas.commands.isEmpty && rig.canvas.textWrites == 0)
+        store.stop(); rig.client.unload()
+    }
+
     @Test func ordinaryComposerOmitsTheWholeNativeGroupWhenItsOriginalSourceChangesBeforeNextInference() async throws {
         let rig = try StoreRig(); defer { rig.remove() }
         let secret = "PRIVATE_ORDINARY_NATIVE_" + UUID().uuidString
@@ -729,16 +752,32 @@ import Testing
                             refreshOriginal: { [self] previous in
                                 let original = try canvas.session.source(from: previous.observation)
                                 return try source(await canvas.session.refreshOriginalForRead(original))
-                            }, refreshForInputPlanning: { [self] previous in
+                            }, refreshForInputPlanning: { [self] previous, includesTextInsertion in
                                 if runtime.kind == .report { return previous }
                                 let original = try canvas.session.source(from: previous.observation)
-                                return try source(await canvas.session.refreshOriginalForInputPlanning(original, authorizeInputPlanning: { try scope.validate() }))
+                                return try source(await canvas.session.refreshOriginalForInputPlanning(original, includesTextInsertion: includesTextInsertion,
+                                    authorizeInputPlanning: { try scope.validate() }))
                             }, prepareForReview: { [self] action, identity, previous, frame in
                                 try await canvas.session.prepareForReview(action, request: identity.admission(scope: scope), from: previous.observation, frame: frame)
                             }, executeAdmitted: { [self] ticket in
                                 do { return .controller(try await canvas.session.execute(ticket)) }
                                 catch { return .uncertain("Inert controller execution remained uncertain.") }
-                            }, closeOwnedClient: { [self] in closes += 1 })
+                            }, closeOwnedClient: { [self] in closes += 1 },
+                            // Explicit inert callbacks test loop ownership only;
+                            // they do not qualify actual OS policy/image admission.
+                            observeForControl: { [self] _ in
+                                let selected = selectThird ? thirdCanvas : selectSecondary ? secondaryCanvas : canvas
+                                runtime.readAnswer = answers[selected.sourceID] ?? runtime.readAnswer
+                                var controlled = selected.target()
+                                controlled.policyTarget = { .init(sourceID: selected.sourceID, application: selected.application,
+                                    originalWindow: AXUIElementCreateApplication(selected.application.processID), validateOriginalSource: { try scope.validate() }) }
+                                return try source(await canvas.session.observeForRead(target: controlled,
+                                    authorizeSourceBeforeCapture: { _ in try scope.validate() }))
+                            }, refreshOriginalForControl: { [self] previous in
+                                try previous.validateOriginalSource()
+                                let original = try canvas.session.source(from: previous.observation)
+                                return try source(await canvas.session.refreshOriginalForRead(original))
+                            })
                     }), inspect: { [self] _, scope in
                         try scope.validate()
                         return .init(boundary: requiresReview ? .review : .ordinary, permitsTaskAuthorizedFocus: false,

@@ -1,0 +1,45 @@
+# Workspace design audit — 20 November 2026
+
+Fresh independent review of the current source, after the reliability pass. This is a design/product audit, not a live visual qualification. Existing design skills were deliberately not applied, per the user's request for an independent direction. No source code was changed in this audit.
+
+## Verdict
+
+Relay's differentiation is that a request can become checked work on a Mac, with reusable local knowledge. Its main surface still looks organized around explaining features and managing a chat app. The next design pass should make it feel like a place where useful work takes shape: an inviting start, a clear current task, a legible handoff to review, and a lasting result. More cards, glows or animated AI metaphors would obscure that distinction.
+
+## Five highest-value gaps
+
+| Priority | Gap and source evidence | Consequence | Improvement |
+| --- | --- | --- | --- |
+| 1 | Empty Home combines a generic question, three prompt chips, setup pill, four-feature showcase and optional proactive cards. `MainView.swift:731`, `:779`, `:810`, `:237`. The showcase's substantial content uses fictional sample people/projects (`:4030` onward). | The first screen makes users evaluate capabilities instead of starting meaningful work; it repeats onboarding on every new chat. Examples have honest labels now, but remain privileged over real work. | Replace the default showcase with an editorial start surface: **Make room for your next idea.** A small Relay signature, one generous headline, a short product-specific sentence, and three numbered action rows: Write something, Understand something, Work across apps. These populate explicit drafts or open existing pickers; no automatic execution. Keep demos reachable from setup/help rather than the work surface. |
+| 2 | Starting any run forcibly opens the sidebar and changes History to Activity (`MainView.swift:308`). Plan, role, checked steps and tool events are compressed into the 248-point sidebar (`:2140`, `:2177`); in the transcript the main signal is a spinner and phase sentence (`:954`). | Work appears in a peripheral technical log while the central surface stays a chat transcript. Users lose the history context they chose. | Add one compact, central **Now** strip above the composer with current phase, current factual step when available, and Inspect activity. Keep Stop visible. Do not infer a percentage or whole-request completion from checked steps. Longer term separate task inspector from history so both can coexist on wide windows; user-controlled inspector on compact windows. |
+| 3 | Composer mixes attachment, Take Over, Magic Reply, Summarize, Proofread, mic, Send, and provider choice (`MainView.swift:1207`–`:1435`). Tools are hidden in right-click menus and some named actions execute immediately (`:1311`, `:1340`, `:1350`). | It is hard to predict which controls insert context, start work or transform the draft. “Take Over” emphasizes agency while hiding scope. The product's strongest actions read like a tray of features. | Establish a simple hierarchy: input first; attachment/context on the left; compact provider on the right; primary Send/Stop. Group optional transformations in a named actions menu. Use “Work in an app…” for window picking and describe the next step. Distinguish draft creation from sending. Preserve keyboard/AX labels for all icon-only actions. |
+| 4 | Every assistant message exposes Reply, Quote, Copy, Regenerate, Save to Vault and optionally read-aloud before its body (`MainView.swift:3090`–`:3145`). Tool evidence is a separate disclosure below the body (`:3163`) and details in Activity (`:2259`). | Utility chrome competes with reading, especially in a long conversation. The result and what actually happened are scattered. | Give each response a quieter author line and strong text measure. Show primary Copy and Save actions in a small footer; place less common actions in a keyboard-accessible menu, never hover-only. Provide a response-level evidence summary only from existing receipts; expand to detail and navigate to the matching activity. Retain warning/uncertainty text explicitly. |
+| 5 | Review lives inside a growing bottom dock; evidence has a 120–150-point allocation for ordinary sharing/review (`MainView.swift:1142`, `:2310`, `:2334`). Error, audio, storage, recovery and activity can also stack there (`:1128`–`:1167`). | The most consequential moment can have less reading space than the transcript, particularly at short height. Multiple independent cards create a crowded control area. | Treat review as a deliberate **Your decision** state. Group title, target, proposed change/share and approval scope in a clear review surface, allow larger evidence expansion, and place Decline/Approve in a stable bottom row. Keep full evidence scrollable and preserve existing authority boundaries. Consolidate recovery into the current-task surface rather than adding more banners. |
+
+## Proposed direction: “The work surface”
+
+- **Character:** an attentive native desktop instrument, with editorial confidence. Warm neutral canvas, ink-first typography, a single restrained brand accent. Minimal dividers, purposeful whitespace, and strong left-aligned composition.
+- **Home:** one focal headline at a comfortable reading width. Three broad, numbered action rows rather than a grid of feature cards. Honest readiness appears as a compact contextual line beside the relevant action; a configured cloud model must never imply local-only inference.
+- **Conversation:** content has the greatest contrast. Work has a distinct visual rhythm through a narrow task strip and factual step state. Technical names stay in inspectable details.
+- **History:** a quiet library with current selection and date groups; avoid persistent destructive Clear History chrome competing with New chat. Keep deletion reachable through existing menus and confirmations.
+- **Activity:** a timeline, not a vertical stack of equally weighted bordered boxes. Current action first, plan below it, previous events quieter. Warnings and reviews use both language and symbol. A checked action must remain distinct from an answer being ready.
+- **Review:** a readable document with a decision attached, rather than an alert decorated as a card.
+
+## Implementation ownership and first slice
+
+Workspace owner can safely own `MainView.swift` welcome, status, sidebar, composer and transcript presentation, plus one new `WorkspaceStartView.swift` or `WorkspaceTaskStrip.swift`. Root should own `RelayDesignSystem.swift` to avoid cross-lane collisions. Knowledge/settings and onboarding should have separate owners. Do not modify `AssistantStore`, the engine or approval contracts for this design slice.
+
+Recommended first slice: replace default Home demo deck with real task starts; improve central running status into an inspectable strip; reduce History/Activity ornamental card repetition; give composer a coherent visual hierarchy. Defer deep response–receipt matching and new persistent task models until the data contract is designed.
+
+## Finish criteria
+
+Verify fresh Home with model ready and unready; a nonempty chat; planning/acting/review/stopped/failed; compact width and short height; both appearances; keyboard labels; reduced motion. Existing source scopes, permissions and model selection must remain unchanged. Root owns live app observation and final integrated build. This source audit does not claim screenshot, VoiceOver, or hardware qualification.
+
+## Implemented first slice
+
+- Added `WorkspaceStartView.swift`: editorial left-aligned workbench, three real numbered draft starters, actual model readiness, separate Mac-control setup, quiet Knowledge/Brief links. Default Home no longer invokes the fictional showcase. Starters explicitly explain that they populate a draft and wait for Send.
+- Added a central factual task strip above the composer from existing phase and current actual step. Inspect opens the real Activity. Removed the duplicate transcript spinner and automatic History→Activity switch on every run; explicit Activity/image-inspection routing remains.
+- Wired global reading/composer widths and simplified the composer to attachment, context-sensitive Work in app/Run task, a native Actions menu, and model choice. All original reply/summary/proofread handlers remain available; no permissions or backend behavior changed.
+- Moved assistant utilities out of the author line into a quiet Copy/Save footer and accessible More response actions menu. Reply, quote, regenerate and read aloud remain available; user actions now sit after the message rather than competing beside its text.
+- Activity events now use fine separators rather than equally weighted bordered cards. Phase tint no longer suggests success for stopped/failed states. Review gains a clear Your decision label and a larger bounded evidence area.
+- Swift frontend parsing and targeted whitespace checks passed. Integrated compilation and live visual verification remain owned by root.

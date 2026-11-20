@@ -48,23 +48,41 @@ actor OwnedNativeComputerUseClient {
 
     /// Finite native primitives, never raw tools/arguments or AX-to-native index translation.
     /// Key spellings and screenshot-pixel geometry require owned-fixture qualification.
+    nonisolated enum MouseButton: String, Sendable, Equatable {
+        case left
+        case right
+    }
+
     nonisolated enum Command: Sendable, Equatable {
+        static let maxScrollDelta: Double = 100_000
+
         case click(NativeVisionFrame.PixelPoint)
+        case clickOption(NativeVisionFrame.PixelPoint, button: MouseButton = .left, count: Int = 1)
         case drag(from: NativeVisionFrame.PixelPoint, to: NativeVisionFrame.PixelPoint)
+        case scroll(NativeVisionFrame.PixelPoint, deltaX: Double, deltaY: Double)
         case key(NativeControlKey)
+        case shortcut(String)
         case typeUnsentText(String)
 
-        /// The qualified provider emits physical key events and drops non-layout Unicode.
-        /// Refuse it before dispatch; literal Unicode must choose a bound AX edit up front.
-        static func supportsLiteralKeyboardText(_ text: String) -> Bool {
-            NativeControlSession.validUnsentText(text) && text.unicodeScalars.allSatisfy { (0x20...0x7E).contains($0.value) }
+        /// External SkyComputerUseClient emits physical key events and drops non-layout Unicode.
+        /// Built-in NativeCGComputerUseDriver supports full UTF-16 Unicode via CGEventKeyboardSetUnicodeString.
+        static func supportsLiteralKeyboardText(_ text: String, allowUnicode: Bool = false) -> Bool {
+            guard NativeControlSession.validUnsentText(text) else { return false }
+            if allowUnicode { return true }
+            return text.unicodeScalars.allSatisfy { (0x20...0x7E).contains($0.value) }
         }
 
         var tool: String {
-            switch self { case .click: "click"; case .drag: "drag"; case .key: "press_key"; case .typeUnsentText: "type_text" }
+            switch self {
+            case .click, .clickOption: "click"
+            case .drag: "drag"
+            case .scroll: "scroll"
+            case .key, .shortcut: "press_key"
+            case .typeUnsentText: "type_text"
+            }
         }
 
-        func arguments(app: String) throws -> [String: JSONValue] {
+        func arguments(app: String, allowUnicode: Bool = false) throws -> [String: JSONValue] {
             var values: [String: JSONValue] = ["app": .string(app)]
             func point(_ point: NativeVisionFrame.PixelPoint) throws {
                 guard point.x.isFinite, point.y.isFinite, point.x >= 0, point.y >= 0,
@@ -74,33 +92,93 @@ actor OwnedNativeComputerUseClient {
             case .click(let target):
                 try point(target)
                 values.merge(["x": .number(target.x), "y": .number(target.y), "click_count": .number(1), "mouse_button": .string("left")]) { _, rhs in rhs }
+            case .clickOption(let target, let button, let count):
+                try point(target)
+                guard (1...3).contains(count) else { throw Failure.malformedResponse }
+                values.merge(["x": .number(target.x), "y": .number(target.y), "click_count": .number(Double(count)), "mouse_button": .string(button.rawValue)]) { _, rhs in rhs }
             case .drag(let from, let to):
                 try point(from); try point(to)
                 values.merge(["from_x": .number(from.x), "from_y": .number(from.y), "to_x": .number(to.x), "to_y": .number(to.y)]) { _, rhs in rhs }
-            case .key(let key): values["key"] = .string(key.rawValue)
+            case .scroll(let target, let deltaX, let deltaY):
+                try point(target)
+                guard deltaX.isFinite, deltaY.isFinite else { throw Failure.malformedResponse }
+                let clampedDeltaX = min(max(deltaX, -Self.maxScrollDelta), Self.maxScrollDelta)
+                let clampedDeltaY = min(max(deltaY, -Self.maxScrollDelta), Self.maxScrollDelta)
+                values.merge(["x": .number(target.x), "y": .number(target.y), "delta_x": .number(clampedDeltaX), "delta_y": .number(clampedDeltaY)]) { _, rhs in rhs }
+            case .key(let key):
+                values["key"] = .string(key.rawValue)
+            case .shortcut(let chord):
+                guard !chord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, chord.utf8.count <= 128 else {
+                    throw Failure.malformedResponse
+                }
+                values["key"] = .string(chord)
             case .typeUnsentText(let text):
                 guard NativeControlSession.validUnsentText(text) else { throw Failure.malformedResponse }
-                guard Self.supportsLiteralKeyboardText(text) else { throw Failure.unsupportedKeyboardText }
+                guard Self.supportsLiteralKeyboardText(text, allowUnicode: allowUnicode) else { throw Failure.unsupportedKeyboardText }
                 values["text"] = .string(text)
             }
             return values
         }
     }
 
-    /// Only official embedded dependencies are discovered. Nothing is imported from another
-    /// app's private runtime/profile, and no credential/configuration files are read.
+    /// Diagnostic metadata for this actual Process.run child only. It is not
+    /// ownership authority, an executable capability, or a helper/XPC claim.
+    /// The trusted receiver independently checks live kernel lifetime/PPID/path
+    /// and full executable hash before persisting or using an ownership record.
+    nonisolated struct ProcessStarted: Sendable {
+        nonisolated struct ExecutableIdentity: Sendable, Equatable {
+            let url: URL
+            /// Reviewed sealed signing identity, not a new live-process attestation.
+            let codeDirectoryHash: Data
+            fileprivate init(url: URL, codeDirectoryHash: Data) {
+                self.url = url; self.codeDirectoryHash = codeDirectoryHash
+            }
+        }
+        let processIdentifier: Int32
+        let executable: ExecutableIdentity
+        let workspace: URL
+        fileprivate init(processIdentifier: Int32, executable: ExecutableIdentity, workspace: URL) {
+            self.processIdentifier = processIdentifier; self.executable = executable; self.workspace = workspace
+        }
+    }
+
+    /// Discovers external signed SkyComputerUseClient if installed, falling back to Relay's
+    /// first-party built-in `NativeCGComputerUseDriver` so computer use works on any Mac.
     nonisolated struct Runtime: Sendable {
         let cli: URL
         let helper: URL
+        let isBuiltInCGDriver: Bool
         private let cliIdentity: Data
         private let helperIdentity: Data
 
-        private init(cli: URL, helper: URL, cliIdentity: Data, helperIdentity: Data) {
-            self.cli = cli; self.helper = helper
-            self.cliIdentity = cliIdentity; self.helperIdentity = helperIdentity
+        private init(cli: URL, helper: URL, isBuiltInCGDriver: Bool = false, cliIdentity: Data, helperIdentity: Data) {
+            self.cli = cli
+            self.helper = helper
+            self.isBuiltInCGDriver = isBuiltInCGDriver
+            self.cliIdentity = cliIdentity
+            self.helperIdentity = helperIdentity
+        }
+
+        static var builtInCGDriver: Self {
+            let executable = Bundle.main.executableURL?.standardizedFileURL
+                ?? URL(fileURLWithPath: "/usr/bin/true")
+            return Self(
+                cli: executable,
+                helper: executable,
+                isBuiltInCGDriver: true,
+                cliIdentity: Data(),
+                helperIdentity: Data()
+            )
         }
 
         static func discover() throws -> Self {
+            if let sky = try? discoverSkyHelper() {
+                return sky
+            }
+            return .builtInCGDriver
+        }
+
+        static func discoverSkyHelper() throws -> Self {
             let parents = [URL(fileURLWithPath: "/Applications", isDirectory: true),
                            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true)]
             for parent in parents {
@@ -111,14 +189,22 @@ actor OwnedNativeComputerUseClient {
                     if let cliIdentity = identity(cli, identifier: "codex"),
                        let helperIdentity = identity(helper, identifier: "com.openai.sky.CUAService.cli") {
                         return Self(cli: cli.resolvingSymlinksInPath(), helper: helper.resolvingSymlinksInPath(),
-                                    cliIdentity: cliIdentity, helperIdentity: helperIdentity)
+                                    isBuiltInCGDriver: false, cliIdentity: cliIdentity, helperIdentity: helperIdentity)
                     }
                 }
             }
             throw Failure.unavailableRuntime
         }
 
+        /// Only the already-discovered/validated Runtime supplies diagnostic
+        /// path/signing bytes; callers cannot construct a runtime from a receipt.
+        fileprivate func processStarted(processIdentifier: Int32, workspace: URL) -> ProcessStarted {
+            ProcessStarted(processIdentifier: processIdentifier,
+                executable: .init(url: cli, codeDirectoryHash: cliIdentity), workspace: workspace)
+        }
+
         fileprivate func validate() throws {
+            if isBuiltInCGDriver { return }
             guard Self.identity(cli, identifier: "codex") == cliIdentity,
                   Self.identity(helper, identifier: "com.openai.sky.CUAService.cli") == helperIdentity else {
                 throw Failure.unavailableRuntime
@@ -150,6 +236,8 @@ actor OwnedNativeComputerUseClient {
     }
     private struct Receipt { let result: NativeResult; let bytes: Int }
     private let transport: Transport
+    private let supportsUnicodeKeyboardText: Bool
+    private let unicodeFallback: Transport?
     private let serverName = "relay_native"
     private var status = Status.new
     private var threadID: String?
@@ -163,22 +251,67 @@ actor OwnedNativeComputerUseClient {
     private var closeTask: Task<Void, Never>?
     private let clock = ContinuousClock()
 
-    init(transport: Transport) { self.transport = transport }
+    init(
+        transport: Transport,
+        supportsUnicodeKeyboardText: Bool = false,
+        unicodeFallback: Transport? = nil
+    ) {
+        self.transport = transport
+        self.supportsUnicodeKeyboardText = supportsUnicodeKeyboardText
+        self.unicodeFallback = unicodeFallback
+    }
 
     deinit {
         guard status != .closed else { return }
         let cleanup = transport.close
-        Task { await cleanup() }
+        let fallbackCleanup = unicodeFallback?.close
+        Task {
+            await cleanup()
+            await fallbackCleanup?()
+        }
     }
 
-    static func open(runtime: Runtime) async throws -> OwnedNativeComputerUseClient {
-        let process = try OwnedNativeObservationProcess(runtime: runtime)
+    static func openBuiltIn(
+        readAudit: NativeReadAudit? = nil,
+        backend: NativeCGComputerUseDriver.Backend? = nil
+    ) async throws -> OwnedNativeComputerUseClient {
+        let driverTransport = NativeCGComputerUseDriver.makeTransport(readAudit: readAudit, backend: backend)
+        let client = OwnedNativeComputerUseClient(transport: driverTransport, supportsUnicodeKeyboardText: true)
+        let workspace = FileManager.default.temporaryDirectory.standardizedFileURL
         do {
-            try await process.launch()
-            let client = OwnedNativeComputerUseClient(transport: process.transport)
-            _ = try await client.start(workspace: process.workspace)
+            _ = try await client.start(workspace: workspace)
             return client
-        } catch { await process.close(); throw error }
+        } catch {
+            await client.close()
+            throw error
+        }
+    }
+
+    static func open(runtime: Runtime, readAudit: NativeReadAudit? = nil,
+                     processStarted: (@Sendable (ProcessStarted) throws -> Void)? = nil) async throws -> OwnedNativeComputerUseClient {
+        if runtime.isBuiltInCGDriver {
+            return try await openBuiltIn(readAudit: readAudit)
+        }
+        do {
+            let process = try OwnedNativeObservationProcess(runtime: runtime, readAudit: readAudit, processStarted: processStarted)
+            do {
+                try await process.launch()
+                let fallback = NativeCGComputerUseDriver.makeTransport(readAudit: readAudit)
+                let client = OwnedNativeComputerUseClient(
+                    transport: process.transport,
+                    supportsUnicodeKeyboardText: false,
+                    unicodeFallback: fallback
+                )
+                _ = try await client.start(workspace: process.workspace)
+                return client
+            } catch {
+                await process.close()
+                throw error
+            }
+        } catch {
+            guard processStarted == nil else { throw error }
+            return try await openBuiltIn(readAudit: readAudit)
+        }
     }
 
     /// Handshake and discovery only. This never sends turn/start or calls a native tool.
@@ -270,8 +403,27 @@ actor OwnedNativeComputerUseClient {
     func mutate(requestID: String, app: String, command: Command, revocation: NativeInputRevocation,
                 timeout: Duration = .seconds(90), preflight: @escaping @MainActor @Sendable (ReservedState) async throws -> InputAdmission) async throws -> NativeResult {
         do {
-            return try await call(requestID: requestID, app: app, tool: command.tool,
-                arguments: command.arguments(app: app), timeout: timeout, revocation: revocation, preflight: preflight)
+            let canTypeUnicode = supportsUnicodeKeyboardText || unicodeFallback != nil
+            let arguments = try command.arguments(app: app, allowUnicode: canTypeUnicode)
+            let routeViaUnicodeFallback: Bool
+            if case .typeUnsentText(let text) = command,
+               !Command.supportsLiteralKeyboardText(text, allowUnicode: false),
+               !supportsUnicodeKeyboardText,
+               unicodeFallback != nil {
+                routeViaUnicodeFallback = true
+            } else {
+                routeViaUnicodeFallback = false
+            }
+            return try await call(
+                requestID: requestID,
+                app: app,
+                tool: command.tool,
+                arguments: arguments,
+                timeout: timeout,
+                revocation: revocation,
+                useUnicodeFallback: routeViaUnicodeFallback,
+                preflight: preflight
+            )
         } catch let error as MutationFailure { throw error }
         catch { throw MutationFailure.notDispatched(error) }
     }
@@ -282,6 +434,54 @@ actor OwnedNativeComputerUseClient {
     nonisolated struct AXInsertionOperation: Sendable {
         let execute: @MainActor @Sendable () -> NativeFocusedAXInsertion.Outcome
         let readback: @MainActor @Sendable (ReservedState, NativeFocusedAXInsertion.Outcome) async -> Void
+    }
+
+    /// Concrete sealed direct capabilities only. These reservations share the
+    /// actual native FIFO but deliberately offer no state/image read handle.
+    func reserveExactUnsentFocus(_ execution: NativeControlSession.ExactUnsentFocusExecution) async throws -> NativeControlSession.ExactUnsentEffect {
+        try await exactUnsentReservation(requestID: execution.requestID, app: execution.appPath,
+            fingerprint: execution.callDigest, gate: execution.gate, mutation: true) { deadline in
+                try await execution.perform(notAfter: deadline)
+            }
+    }
+    func reserveExactUnsentInsertion(_ execution: NativeControlSession.ExactUnsentInsertionExecution) async throws -> NativeControlSession.ExactUnsentEffect {
+        try await exactUnsentReservation(requestID: execution.requestID, app: execution.appPath,
+            fingerprint: execution.callDigest, gate: execution.gate, mutation: true) { deadline in
+                try execution.perform(notAfter: deadline)
+            }
+    }
+    func reserveExactUnsentVerification(_ read: NativeControlSession.ExactUnsentReadRequest) async throws -> NativeControlSession.ExactUnsentVerification {
+        try await exactUnsentReservation(requestID: read.requestID, app: read.appPath,
+            fingerprint: read.callDigest, gate: read.gate, mutation: false) { deadline in
+                try read.perform(notAfter: deadline)
+            }
+    }
+
+    /// Private implementation helper, not an input API. Only the three typed
+    /// entries above reach it; callers cannot provide arbitrary AX callbacks.
+    private func exactUnsentReservation<Value: Sendable>(requestID: UUID, app: String,
+        fingerprint: Data, gate: NativeInputRevocation, mutation: Bool,
+        operation: @escaping @MainActor @Sendable (ContinuousClock.Instant) async throws -> Value) async throws -> Value {
+        guard fingerprint.count == 32, !app.isEmpty, app.utf8.count <= 4_096 else { throw Failure.malformedResponse }
+        let deadline = clock.now.advanced(by: .seconds(90))
+        try await acquire(until: deadline)
+        defer { reservationRevocation = nil; reservation = nil; release() }
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            guard status == .ready, gate.isActive, clock.now < deadline else { throw Failure.closed }
+            if mutation {
+                let key = Self.requestKey("direct-exact-unsent:" + requestID.uuidString)
+                guard consumed[key] == nil else { throw Failure.duplicateRequest }
+                // Stable direct phase identity is spent even if preflight
+                // refuses. Closing this owner cannot mint another preparation.
+                consumed[key] = fingerprint
+            }
+            reservation = Reservation(id: UUID(), app: app, deadline: deadline, maximumReads: 0)
+            reservationRevocation = gate
+            // No post-return cancellation/error rewrite: actual accepted
+            // sidecars must reach the original result checkpoint after Stop.
+            return try await operation(deadline)
+        } onCancel: { Task { await self.close() } }
     }
 
     func reserveAXInsertion(requestID: String, app: String, fingerprint: Data, revocation: NativeInputRevocation,
@@ -344,7 +544,8 @@ actor OwnedNativeComputerUseClient {
     private var reservationRevocation: NativeInputRevocation?
 
     private func call(requestID: String, app: String, tool: String, arguments: [String: JSONValue], timeout: Duration,
-                      revocation: NativeInputRevocation? = nil, preflight: (@MainActor @Sendable (ReservedState) async throws -> InputAdmission)?) async throws -> NativeResult {
+                      revocation: NativeInputRevocation? = nil, useUnicodeFallback: Bool = false,
+                      preflight: (@MainActor @Sendable (ReservedState) async throws -> InputAdmission)?) async throws -> NativeResult {
         guard !requestID.isEmpty, requestID.utf8.count <= 1_024,
               !app.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, app.utf8.count <= 4_096,
               timeout > .zero, timeout <= .seconds(90) else { throw Failure.malformedResponse }
@@ -384,7 +585,7 @@ actor OwnedNativeComputerUseClient {
         guard status == .ready, revocation?.isActive != false else { throw Failure.closed }
         if let receipt = receipts[key] { return receipt.result }
         return try await perform(requestID: requestID, tool: tool, arguments: arguments, deadline: deadline,
-                                 admission: admission)
+                                 admission: admission, useUnicodeFallback: useUnicodeFallback)
     }
 
     private func stateInReservation(_ id: UUID, requestID: String, app: String) async throws -> NativeResult {
@@ -405,7 +606,8 @@ actor OwnedNativeComputerUseClient {
     }
 
     private func perform(requestID: String, tool: String, arguments: [String: JSONValue],
-                         deadline: ContinuousClock.Instant, admission: InputAdmission?) async throws -> NativeResult {
+                         deadline: ContinuousClock.Instant, admission: InputAdmission?,
+                         useUnicodeFallback: Bool = false) async throws -> NativeResult {
         try Task.checkCancellation()
         guard status == .ready, let threadID else { throw Failure.closed }
         let key = Self.requestKey(requestID), fingerprint = try Self.requestFingerprint(tool: tool, arguments: arguments)
@@ -414,8 +616,9 @@ actor OwnedNativeComputerUseClient {
             return receipt.result
         }
         guard clock.now < deadline else { throw Failure.timeout }
+        let activeTransport = useUnicodeFallback ? (unicodeFallback ?? transport) : transport
         if let admission {
-            guard transport.input != nil else { throw Failure.unavailableRuntime }
+            guard activeTransport.input != nil else { throw Failure.unavailableRuntime }
             guard clock.now < admission.notAfter else { throw Failure.timeout }
         }
         // Consume before the actual send boundary, including a lost response. The child
@@ -425,10 +628,10 @@ actor OwnedNativeComputerUseClient {
             let result = try await withTaskCancellationHandler {
                 let params: [String: JSONValue] = ["threadId": .string(threadID), "server": .string(serverName),
                     "tool": .string(tool), "arguments": .object(arguments)]
-                if let admission, let input = transport.input {
+                if let admission, let input = activeTransport.input {
                     return try await input(.state, params, clock.now.duration(to: deadline), admission)
                 }
-                return try await transport.request(.state, params, clock.now.duration(to: deadline))
+                return try await activeTransport.request(.state, params, clock.now.duration(to: deadline))
             } onCancel: { Task { await self.close() } }
             try Task.checkCancellation()
             guard status == .ready else { throw Failure.closed }
@@ -458,6 +661,7 @@ actor OwnedNativeComputerUseClient {
         switch tool {
         case "click": expected = ["app": "string", "x": "number", "y": "number", "click_count": "integer", "mouse_button": "string"]
         case "drag": expected = ["app": "string", "from_x": "number", "from_y": "number", "to_x": "number", "to_y": "number"]
+        case "scroll": expected = ["app": "string", "x": "number", "y": "number", "delta_x": "number", "delta_y": "number"]
         case "press_key": expected = ["app": "string", "key": "string"]
         case "type_text": expected = ["app": "string", "text": "string"]
         default: return false
@@ -469,7 +673,7 @@ actor OwnedNativeComputerUseClient {
               Set(arguments.keys) == Set(expected.keys) else { return false }
         for (field, type) in expected where properties[field]?.object?["type"] != .string(type) { return false }
         if tool == "click", case .array(let buttons) = properties["mouse_button"]?.object?["enum"],
-           !buttons.contains(.string("left")) { return false }
+           !buttons.contains(.string(arguments["mouse_button"]?.string ?? "left")) { return false }
         return true
     }
 
@@ -482,7 +686,11 @@ actor OwnedNativeComputerUseClient {
         for waiter in queued { waiter.timer.cancel(); waiter.continuation.resume(throwing: Failure.closed) }
         consumed.removeAll(); receipts.removeAll(); receiptOrder.removeAll(); receiptBytes = 0
         let transport = transport
-        let task = Task { await transport.close() }
+        let fallback = unicodeFallback
+        let task = Task {
+            await transport.close()
+            await fallback?.close()
+        }
         closeTask = task
         await task.value
     }
@@ -570,6 +778,8 @@ private actor OwnedNativeObservationProcess {
     typealias Failure = OwnedNativeComputerUseClient.Failure
     nonisolated let workspace: URL
     private let runtime: OwnedNativeComputerUseClient.Runtime
+    private let readAudit: NativeReadAudit?
+    private let processStarted: (@Sendable (OwnedNativeComputerUseClient.ProcessStarted) throws -> Void)?
     private let process = Process()
     private let input = Pipe(), output = Pipe(), errors = Pipe()
     private var stdoutTask: Task<Void, Never>?
@@ -582,8 +792,9 @@ private actor OwnedNativeObservationProcess {
     private var launched = false
     private var closed = false
 
-    init(runtime: OwnedNativeComputerUseClient.Runtime) throws {
-        self.runtime = runtime
+    init(runtime: OwnedNativeComputerUseClient.Runtime, readAudit: NativeReadAudit? = nil,
+         processStarted: (@Sendable (OwnedNativeComputerUseClient.ProcessStarted) throws -> Void)? = nil) throws {
+        self.runtime = runtime; self.readAudit = readAudit; self.processStarted = processStarted
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("RelayNativeObservation-" + UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         workspace = root
@@ -623,7 +834,14 @@ private actor OwnedNativeObservationProcess {
             let status = process.terminationStatus
             Task { await self?.terminated(status) }
         }
-        try process.run(); launched = true
+        // Emit only after the real child exists and owned cleanup is armed,
+        // before initialize/catalog can hang. Nil does not evaluate metadata.
+        // A receipt rejection throws through open's existing owned-close path;
+        // it may deny setup, never admit a tool, read, input or kill operation.
+        try OwnedNativeProcessStartDelivery.perform(observer: processStarted,
+            launch: { try process.run() }, didLaunch: { launched = true }, payload: {
+                runtime.processStarted(processIdentifier: process.processIdentifier, workspace: workspace)
+            })
         let stdout = output.fileHandleForReading.fileDescriptor
         let stderr = errors.fileHandleForReading.fileDescriptor
         stdoutTask = Task.detached { [weak self] in
@@ -690,7 +908,13 @@ private actor OwnedNativeObservationProcess {
             try NativeInputWriter.write(bytes, to: input.fileHandleForWriting.fileDescriptor, admission: inputAdmission)
             return
         }
-        try input.fileHandleForWriting.write(contentsOf: bytes)
+        if json.object?["params"]?.object?["tool"]?.string == "get_app_state" {
+            // Actual transport write attempt, not a façade/capture count or a
+            // claim that the provider delivered a state read successfully.
+            try NativeReadAudit.measure(readAudit, .nativeStateWriteAttempt) {
+                try input.fileHandleForWriting.write(contentsOf: bytes)
+            }
+        } else { try input.fileHandleForWriting.write(contentsOf: bytes) }
     }
 
     private func receive(_ data: Data) async {

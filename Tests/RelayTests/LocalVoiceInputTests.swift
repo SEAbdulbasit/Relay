@@ -220,6 +220,7 @@ struct LocalVoiceInputTests {
     }
 
     @Test func durationLimitStopsRecordingWithoutSendingText() async throws {
+        await awaitParitySuiteQuietWindow(milliseconds: 12000)
         let backend = VoiceBackendFixture()
         let voice = LocalVoiceInput(maximumDuration: 1, backend: backend)
         await voice.start()

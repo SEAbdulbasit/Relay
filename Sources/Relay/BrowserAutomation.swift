@@ -5,22 +5,71 @@ import Foundation
 /// Qualified navigation only. No model-selected keyboard shortcuts, page clicks or form submission.
 @MainActor
 enum BrowserAutomation {
-    enum Browser: String {
+    nonisolated enum Browser: String, CaseIterable, Sendable {
         case chrome = "com.google.Chrome"
         case safari = "com.apple.Safari"
-        var name: String { self == .chrome ? "Google Chrome" : "Safari" }
+        case arc = "company.thebrowser.Browser"
+        case brave = "com.brave.Browser"
+        case edge = "com.microsoft.edgemac"
+        case dia = "company.thebrowser.dia"
+
+        var name: String {
+            switch self {
+            case .chrome: return "Google Chrome"
+            case .safari: return "Safari"
+            case .arc: return "Arc"
+            case .brave: return "Brave Browser"
+            case .edge: return "Microsoft Edge"
+            case .dia: return "Dia"
+            }
+        }
+
+        var isChromiumFamily: Bool {
+            switch self {
+            case .chrome, .arc, .brave, .edge, .dia: return true
+            case .safari: return false
+            }
+        }
     }
 
     // Only explicitly identified capability gaps before any destination input
     // may use Launch Services instead of the address control.
     enum DirectOpenFallback: Error { case unsupportedAddressControl, unavailableSafariTabSelection }
 
+    nonisolated static func isSupportedBrowserBundleID(_ bundleID: String) -> Bool {
+        let trimmed = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return Browser.allCases.contains { $0.rawValue.caseInsensitiveCompare(trimmed) == .orderedSame }
+    }
+
+    static func defaultInstalledBrowser(workspace: NSWorkspace = .shared) -> Browser {
+        if let frontmostID = workspace.frontmostApplication?.bundleIdentifier,
+           let frontmost = Browser.allCases.first(where: { $0.rawValue.caseInsensitiveCompare(frontmostID) == .orderedSame }),
+           workspace.urlForApplication(withBundleIdentifier: frontmost.rawValue) != nil {
+            return frontmost
+        }
+        if workspace.urlForApplication(withBundleIdentifier: Browser.chrome.rawValue) != nil {
+            return .chrome
+        }
+        for candidate in [Browser.safari, .arc, .brave, .edge, .dia] {
+            if workspace.urlForApplication(withBundleIdentifier: candidate.rawValue) != nil {
+                return candidate
+            }
+        }
+        return .chrome
+    }
+
     static func validatedBrowser(_ name: String) throws -> Browser {
         let normalized = name.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").lowercased()
         switch normalized {
         case "chrome", "google chrome", "com.google.chrome": return .chrome
-        case "safari", "com.apple.safari": return .safari
-        default: throw RelayError.message("Browser navigation supports Google Chrome or Safari. Specify one installed browser; other browsers and ambiguous descriptions are not qualified.")
+        case "safari", "apple safari", "com.apple.safari": return .safari
+        case "arc", "arc browser", "company.thebrowser.browser": return .arc
+        case "brave", "brave browser", "com.brave.browser": return .brave
+        case "edge", "microsoft edge", "com.microsoft.edgemac": return .edge
+        case "dia", "dia browser", "company.thebrowser.dia": return .dia
+        default:
+            throw RelayError.message("Browser navigation supports Google Chrome, Safari, Arc, Brave, Microsoft Edge, or Dia. Specify one installed browser; other browsers and ambiguous descriptions are not qualified.")
         }
     }
 
@@ -65,7 +114,9 @@ enum BrowserAutomation {
     }
 
     static func destination(for call: ToolCall) throws -> (url: URL, browser: Browser) {
-        guard let browserName = call.arguments["browser"]?.string else { throw RelayError.message("Choose Chrome or Safari for this browser task.") }
+        guard let browserName = call.arguments["browser"]?.string else {
+            throw RelayError.message("Choose Chrome, Safari, Arc, Brave, Edge, or Dia for this browser task.")
+        }
         let browser = try validatedBrowser(browserName)
         switch call.name {
         case "browser_navigate":
@@ -249,6 +300,10 @@ enum BrowserAutomation {
             if browser == .safari, isOrdinarySafariWindow(stringAttribute(originalWindow, kAXIdentifierAttribute)) {
                 try assertForeground(pid)
                 throw DirectOpenFallback.unavailableSafariTabSelection
+            }
+            if browser == .arc || browser == .dia {
+                try assertForeground(pid)
+                throw DirectOpenFallback.unsupportedAddressControl
             }
             throw RelayError.message("The browser does not expose one original selected tab identity. No new tab, address entry or confirmation was dispatched. In Safari, open a blank second tab or show the tab bar manually, then retry the reviewed request. Hidden single-tab navigation is not qualified; other unsupported layouts need manual inspection.")
         }
@@ -598,7 +653,8 @@ enum BrowserAutomation {
         }
         guard parent != nil, depth < 16 else { return false }
         let label = [kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute, kAXIdentifierAttribute].map { stringAttribute(field, $0) }.joined(separator: " ").lowercased()
-        return ["address and search", "address bar", "smart search", "addressfield", "omnibox", "location field"].contains { label.contains($0) }
+        return ["address and search", "address bar", "smart search", "addressfield", "omnibox", "location field",
+                "search or enter web address", "search or type url", "command bar", "url bar"].contains { label.contains($0) }
     }
 
     private static func rejectSensitiveWindow(_ window: AXUIElement) throws {

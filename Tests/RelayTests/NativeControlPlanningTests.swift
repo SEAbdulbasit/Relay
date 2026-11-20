@@ -225,6 +225,7 @@ import Testing
         let rig = NextNativeControlRig(); rig.includeImage = false
         let first = try await rig.read(), source = try rig.session.source(from: first)
         for turn in 0..<1_025 {
+            if turn == 20 { try? await Task.sleep(for: .seconds(8)) }
             let observation = try await rig.session.refreshOriginalForInputPlanning(source,
                 authorizeInputPlanning: { try rig.authorizePlanning() })
             let request = NextNativeControlRig.Request("accepted-turn-\(turn)")

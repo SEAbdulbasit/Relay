@@ -6,14 +6,24 @@ struct AppUpdateView: View {
     @State private var checkTask: Task<Void, Never>?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Relay updates").font(.relayHeadline.weight(.semibold))
-                Text(installedDescription).font(.relayBody)
-                Text("Checks the public GitHub releases when you ask. Download and install updates from the release page.")
-                    .font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                RelayIconBadge(icon: "arrow.triangle.2.circlepath.circle.fill", color: RelayColors.accentBlue, size: 38, iconSize: 17)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text("Relay Updates")
+                            .font(.relayHeadline)
+                            .foregroundStyle(RelayColors.textPrimary)
+                        RelayBadge(installedDescription, tint: RelayColors.textSecondary)
+                    }
+                    Text("Checks the public GitHub releases when you ask. Download and install updates from the release page.")
+                        .font(.relayCaption)
+                        .foregroundStyle(RelayColors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
             }
+
             HStack(spacing: 10) {
                 Button("Check for updates") {
                     guard checkTask == nil else { return }
@@ -25,23 +35,36 @@ struct AppUpdateView: View {
                 .buttonStyle(RelaySecondaryButtonStyle())
                 .disabled(checker.state == .checking)
                 .accessibilityIdentifier("updates.check")
-                if checker.state == .checking { ProgressView().controlSize(.small).accessibilityHidden(true) }
+
+                if checker.state == .checking {
+                    ProgressView().controlSize(.small).accessibilityHidden(true)
+                }
+
+                if let release = checker.release {
+                    Button("View release and downloads") { NSWorkspace.shared.open(release.url) }
+                        .buttonStyle(RelaySecondaryButtonStyle())
+                        .accessibilityIdentifier("updates.release")
+                }
+
+                Button("GitHub · SEAbdulbasit/Relay", systemImage: "arrow.up.right") {
+                    NSWorkspace.shared.open(RelayReleaseSource.releasesPage)
+                }
+                .buttonStyle(RelayGhostButtonStyle())
+                .accessibilityIdentifier("updates.source")
+
+                Spacer()
             }
-            Text(statusDescription).font(.relayBody).textSelection(.enabled)
+
+            Text(statusDescription)
+                .font(.relayCaption)
+                .foregroundStyle(RelayColors.textSecondary)
+                .textSelection(.enabled)
                 .accessibilityIdentifier("updates.status")
-            if let release = checker.release {
-                Button("View release and downloads") { NSWorkspace.shared.open(release.url) }
-                    .buttonStyle(RelaySecondaryButtonStyle())
-                    .accessibilityIdentifier("updates.release")
-            }
-            Button("GitHub · SEAbdulbasit/Relay", systemImage: "arrow.up.right") {
-                NSWorkspace.shared.open(RelayReleaseSource.releasesPage)
-            }
-            .buttonStyle(RelayGhostButtonStyle())
-            .accessibilityIdentifier("updates.source")
+
             if let checked = checker.lastCheckedAt {
                 Text("Last checked \(checked.formatted(date: .abbreviated, time: .shortened))")
-                    .font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
+                    .font(.relayCaption)
+                    .foregroundStyle(RelayColors.textMuted)
             }
         }
         .onDisappear { checkTask?.cancel() }

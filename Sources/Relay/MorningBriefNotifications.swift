@@ -132,7 +132,7 @@ struct MorningBriefNotificationView: View {
             }
             if let error = notifications.errorMessage { Text(error).textSelection(.enabled) }
         }
-        .font(.system(size: 14))
+        .font(.relayCaption)
         .buttonStyle(RelaySecondaryButtonStyle())
         .task { await notifications.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in

@@ -199,28 +199,69 @@ struct CompletionLoopTests {
     }
 
     @Test(arguments: ["read_file", "read_calendar", "search_knowledge", "read_browser_page", "search_files"])
-    func verifiedInformationFinishesWithoutDiscardedModelTurns(tool: String) async {
+    func verifiedInformationFinishesWithoutDiscardedModelTurns(tool: String) async throws {
         var turns = 0
         var dispatches = 0
         let body = "The synthetic launch review is Tuesday at 10. Café."
+        let worker = FilenameSearchWorker(), tools = MacTools()
+        let calendarFixture: CalendarProtocolFixture?
+        if tool == "read_calendar" { calendarFixture = try CalendarProtocolFixture(); calendarFixture?.backend.change(body) }
+        else { calendarFixture = nil }
+        var selected: URL?, expectedPath: String?
+        if tool == "search_files" {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("relay-completion-query-" + UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+            let root = try ToolPolicy.canonicalURL(directory.path)
+            let file = root.appendingPathComponent("owned-needle.txt")
+            try Data("OWNED content is not filename query input".utf8).write(to: file)
+            selected = root; expectedPath = file.path
+        }
+        let grants = selected.map { [ScopeGrant(path: $0.path)] } ?? []
+        tools.grants = grants
         let store = AssistantStore(persistenceURL: nil, complete: { input, _, _ in
             turns += 1
             #expect(!input.contains { $0.content.hasPrefix("Reconsider your proposed handoff") })
+            if turns == 2, let expectedPath {
+                let message = try #require(input.first { $0.role == "tool" && $0.toolName == "search_files" })
+                let feedback = try JSONDecoder().decode(ToolResult.self, from: Data(message.content.utf8))
+                #expect(feedback.verified && feedback.summary.contains(expectedPath))
+            }
             return turns == 1
-                ? ModelReply(content: "", toolCalls: [ToolCall(name: tool, arguments: [:])])
+                ? ModelReply(content: "", toolCalls: [ToolCall(name: tool, arguments: tool == "search_files" ? ["query": .string("needle")] : tool == "read_calendar" ? ["days": .string("7")] : [:])])
                 : ModelReply(content: body, toolCalls: [])
-        }, execute: { _ in
+        }, conversationHistory: calendarFixture?.history, execute: { _ in
+            #expect(tool != "search_files" && tool != "read_calendar")
             dispatches += 1
             return ToolResult(summary: body, evidence: "Synthetic read-only source oracle", verified: true)
-        })
-        store.draft = "Read the selected synthetic source and return the exact body. Do not change anything."
-        store.send()
-        await settle(store)
-        #expect(turns == 2)
-        #expect(dispatches == 1)
-        #expect(store.messages.last?.text.hasPrefix(body) == true)
-        #expect(store.phase == .idle)
-        #expect(!store.activity.contains { $0.name == "Checking next step" })
+        }, executeFilenameSearch: { call, scope in
+            #expect(tool == "search_files")
+            dispatches += 1
+            return try await tools.execute(call, filenameSearchScope: scope, filenameSearchWorker: worker)
+        }, filenameSearchWorker: worker, executeCalendarRead: { call, scope in
+            #expect(tool == "read_calendar")
+            let fixture = try #require(calendarFixture)
+            dispatches += 1
+            return try await fixture.worker.read(call: call, scope: scope).result
+        }, calendarReadWorker: calendarFixture?.worker)
+        do {
+            if let calendarFixture { store.calendarSource.selectedCalendarIDs = calendarFixture.source.selectedCalendarIDs }
+            store.grants = grants
+            store.draft = "Read the selected synthetic source and return the exact body. Do not change anything."
+            store.send()
+            await settle(store)
+            #expect(turns == 2)
+            #expect(dispatches == 1)
+            #expect(store.messages.last?.text.hasPrefix(body) == true)
+            #expect(store.phase == .idle)
+            #expect(!store.activity.contains { $0.name == "Checking next step" })
+            store.stop(); await store.waitForConversationTaskToSettle(); await worker.drain()
+            if let calendarFixture { await calendarFixture.close() }
+            if let selected { try FileManager.default.removeItem(at: selected) }
+        } catch {
+            store.stop(); await store.waitForConversationTaskToSettle(); await worker.drain()
+            if let calendarFixture { await calendarFixture.close() }
+            if let selected { try? FileManager.default.removeItem(at: selected) }; throw error
+        }
     }
 
     @Test(arguments: [
@@ -292,9 +333,10 @@ struct CompletionLoopTests {
         })
         store.draft = "check Gmail for email from bradly cooper"
         store.send()
-        for _ in 0..<1000 where store.isRunning {
+        let completionDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while store.isRunning && ContinuousClock.now < completionDeadline {
             if store.pendingReview != nil { store.approveReview() }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(1))
         }
         #expect(!store.isRunning)
         #expect(correctionSeen)
@@ -317,9 +359,10 @@ struct CompletionLoopTests {
         })
         store.draft = "check Gmail"
         store.send()
-        for _ in 0..<1000 where store.isRunning {
+        let completionDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while store.isRunning && ContinuousClock.now < completionDeadline {
             if store.pendingReview != nil { store.approveReview() }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(1))
         }
         #expect(!store.isRunning)
         #expect(!correctionSeen)
@@ -327,7 +370,15 @@ struct CompletionLoopTests {
     }
 
     private func settle(_ store: AssistantStore) async {
-        for _ in 0..<500 where store.isRunning { await Task.yield() }
+        // An actor yield count is not an elapsed-time allowance for worker I/O.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while store.isRunning && ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(1))
+        }
         #expect(!store.isRunning)
+        if store.isRunning {
+            store.stop()
+            await store.waitForConversationTaskToSettle()
+        }
     }
 }

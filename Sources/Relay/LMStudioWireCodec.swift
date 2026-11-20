@@ -40,9 +40,16 @@ nonisolated enum LMStudioWireCodec {
         !value.isEmpty && value.utf8.count <= 128
             && value.range(of: #"^[A-Za-z_][A-Za-z0-9_]*$"#, options: .regularExpression) != nil
     }
+    private static let jsonEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return encoder
+    }()
+    private static let encoderLock = NSLock()
     static func jsonData(_ value: JSONValue) throws -> Data {
-        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-        do { return try encoder.encode(value) }
+        encoderLock.lock()
+        defer { encoderLock.unlock() }
+        do { return try jsonEncoder.encode(value) }
         catch { throw LMStudioFailure.malformedInput }
     }
 
@@ -87,6 +94,60 @@ nonisolated enum LMStudioWireCodec {
 
     static func request(selection: LMStudioSelection, messages: [ModelMessage], tools: [ToolDefinition],
                         image: Data? = nil, imageAnnotation: String? = nil, stream: Bool = true) throws -> Data {
+        try request(modelID: selection.modelID, messages: messages, tools: tools,
+            image: image, imageAnnotation: imageAnnotation, stream: stream)
+    }
+
+    private struct CachedToolSchemas: Sendable {
+        let tools: [ToolDefinition]
+        let schemas: [JSONValue]
+        let schemasByteCount: Int
+        let nodes: Int
+        let remainingDeduction: Int
+    }
+    private static let cacheLock = NSLock()
+    nonisolated(unsafe) private static var cachedToolSchemas: [CachedToolSchemas] = []
+
+    private static func schemas(for tools: [ToolDefinition]) throws -> CachedToolSchemas {
+        if tools.isEmpty {
+            return CachedToolSchemas(tools: [], schemas: [], schemasByteCount: 2, nodes: 0, remainingDeduction: 0)
+        }
+        cacheLock.lock()
+        if let cached = cachedToolSchemas.first(where: { $0.tools == tools }) {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
+        var shape = InputShapeBudget()
+        let startRemaining = shape.remaining
+        let startNodes = shape.nodes
+        for tool in tools {
+            try shape.text(tool.name); try shape.text(tool.description); try shape.value(tool.parameters)
+        }
+        let schemas = tools.map { tool in JSONValue.object(["type": .string("function"), "function": .object([
+            "name": .string(tool.name), "description": .string(tool.description), "parameters": tool.parameters])]) }
+        let schemasData = try jsonData(.array(schemas))
+        let entry = CachedToolSchemas(
+            tools: tools,
+            schemas: schemas,
+            schemasByteCount: schemasData.count,
+            nodes: shape.nodes - startNodes,
+            remainingDeduction: startRemaining - shape.remaining
+        )
+        cacheLock.lock()
+        if cachedToolSchemas.count >= 16 { cachedToolSchemas.removeFirst() }
+        cachedToolSchemas.append(entry)
+        cacheLock.unlock()
+        return entry
+    }
+
+    /// Shared bounded Chat Completions wire only; this method selects no host,
+    /// provider, credential or transport and grants no source/action authority.
+    static func request(modelID: String, messages: [ModelMessage], tools: [ToolDefinition],
+                        image: Data? = nil, imageAnnotation: String? = nil, stream: Bool = true) throws -> Data {
+        guard !modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, modelID.utf8.count <= 256,
+              !modelID.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw LMStudioFailure.invalidModel }
         let history = try canonicalHistory(messages)
         guard tools.count <= 64, Set(tools.map(\.name)).count == tools.count,
               tools.allSatisfy({ validName($0.name) && $0.parameters.object?["type"] == .string("object") }) else {
@@ -101,9 +162,11 @@ nonisolated enum LMStudioWireCodec {
                 try shape.text(call.id); try shape.text(call.name); try shape.value(.object(call.arguments))
             }
         }
-        for tool in tools {
-            try shape.text(tool.name); try shape.text(tool.description); try shape.value(tool.parameters)
-        }
+        let toolCache = try schemas(for: tools)
+        guard shape.nodes + toolCache.nodes <= maximumInputNodes,
+              toolCache.remainingDeduction <= shape.remaining else { throw LMStudioFailure.inputLimit }
+        shape.nodes += toolCache.nodes
+        shape.remaining -= toolCache.remainingDeduction
         var encoded: [JSONValue] = try history.map { message in
             var object: [String: JSONValue] = ["role": .string(message.role), "content": .string(message.content)]
             if message.role == "tool", let id = message.toolCallID { object["tool_call_id"] = .string(id) }
@@ -129,10 +192,9 @@ nonisolated enum LMStudioWireCodec {
             .object(["role": .string(message.role), "content": .string(message.content),
                 "calls": .array(message.toolCalls.map { .object(["id": .string($0.id), "name": .string($0.name), "arguments": .object($0.arguments)]) })])
         }))
-        let schemas = tools.map { tool in JSONValue.object(["type": .string("function"), "function": .object([
-            "name": .string(tool.name), "description": .string(tool.description), "parameters": tool.parameters])]) }
-        guard textOnly.count + (try jsonData(.array(schemas))).count <= maximumInputBytes else { throw LMStudioFailure.inputLimit }
-        var request: [String: JSONValue] = ["model": .string(selection.modelID), "messages": .array(encoded),
+        let schemas = toolCache.schemas
+        guard textOnly.count + toolCache.schemasByteCount <= maximumInputBytes else { throw LMStudioFailure.inputLimit }
+        var request: [String: JSONValue] = ["model": .string(modelID), "messages": .array(encoded),
             "stream": .bool(stream), "temperature": .number(0.15), "max_tokens": .number(1_536)]
         if !tools.isEmpty { request["tools"] = .array(schemas); request["tool_choice"] = .string("auto") }
         let data = try jsonData(.object(request))
@@ -185,6 +247,7 @@ nonisolated struct LMStudioSSEDecoder {
     private(set) var completed: ModelReply?
     let availableTools: Set<String>
     var priorCallIDs = Set<LMStudioProtocolID>()
+    var acceptsTerminalUsage = false
 
     mutating func feed(_ data: Data) throws {
         guard completed == nil else {
@@ -241,6 +304,17 @@ nonisolated struct LMStudioSSEDecoder {
         guard !id.isEmpty, id.utf8.count <= 512 else { throw LMStudioFailure.malformedResponse }
         if let responseID { guard LMStudioProtocolID.same(responseID, id) else { throw LMStudioFailure.malformedResponse } } else { responseID = id }
         if entries.isEmpty, object["usage"]?.object != nil { return }
+        // OpenRouter's final accounting frame repeats the already accepted
+        // terminal reason. It may not append content, tools or change IDs.
+        if acceptsTerminalUsage, let finish, object["usage"]?.object != nil {
+            guard entries.count == 1, let choice = entries.first?.object,
+                  choice["index"] == .number(0), choice["finish_reason"] == .string(finish),
+                  let delta = choice["delta"]?.object,
+                  Set(delta.keys).isSubset(of: ["content", "role"]),
+                  delta["content"] == nil || delta["content"] == .null || delta["content"] == .string(""),
+                  delta["role"] == nil || delta["role"] == .string("assistant") else { throw LMStudioFailure.malformedResponse }
+            return
+        }
         guard finish == nil, entries.count == 1,
               let choice = entries.first?.object, choice["index"] == .number(0),
               let delta = choice["delta"]?.object else { throw LMStudioFailure.malformedResponse }

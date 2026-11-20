@@ -25,3 +25,27 @@ struct ActivityPresentationTests {
         #expect(presentation.title == "Read calendar")
     }
 }
+
+struct WorkspaceTaskPresentationTests {
+    @Test(arguments: [RunPhase.stopped, .failed, .needsInput, .awaitingReview])
+    func interruptedRunNeverClaimsLiveExecutionOrCompletion(phase: RunPhase) {
+        let status = WorkspaceTaskPresentation(phase: phase).status
+        #expect(!status.contains("Using tools"))
+        #expect(!status.contains("finished"))
+    }
+
+    @Test func planningDoesNotClaimComputerActions() {
+        #expect(WorkspaceTaskPresentation(phase: .thinking).status == "Planning the next step…")
+        #expect(WorkspaceTaskPresentation(phase: .acting).status == "Using tools for your request…")
+    }
+}
+
+struct UncertainActivityPresentationTests {
+    @Test func uncertainEffectsRequireAttentionWithoutClaimingFailureOrSuccess() {
+        let presentation = ActivityPresentation(name: "write_file", status: "effect uncertain")
+        #expect(presentation.needsAttention)
+        #expect(!presentation.failed)
+        #expect(!presentation.verified)
+        #expect(presentation.icon == "exclamationmark.triangle")
+    }
+}

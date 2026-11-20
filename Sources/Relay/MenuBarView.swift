@@ -22,7 +22,7 @@ struct RelayMenuBarView: View {
                 set: { NotchOverlayController.shared.setPinned($0) }
             ))
         }
-        Text(store.isPreparingModel ? "Preparing local model" : store.voice.isBusy ? (store.voice.isRecording ? "Microphone on · local dictation" : store.voice.phase == .finishing ? "Microphone off · finishing transcript" : "Voice permission request") : store.speechDiagnostic.isBusy ? "Checking local speech support" : store.knowledgeSearch.isBusy ? "Local search in progress" : store.speech.isActive ? "Reading a response aloud" : store.isRunning ? "Task in progress" : (store.workspaceUsesCodex ? "Workspace uses ChatGPT" : store.actionsReady ? "Local model ready" : "Model not loaded"))
+        Text(statusTitle)
         if store.focusedDraft.enabled { Text(store.focusedDraft.status) }
         Button("Stop current task or audio") { store.stop() }.disabled(!store.isRunning && !store.voice.isBusy && !store.speech.isActive && !store.knowledgeSearch.isBusy && !store.speechDiagnostic.isBusy)
         Divider()
@@ -31,4 +31,30 @@ struct RelayMenuBarView: View {
             NSApplication.shared.terminate(nil)
         }
     }
+
+    static func statusTitle(for store: AssistantStore) -> String {
+        if store.isPreparingModel { return "Preparing local model" }
+        if store.checkingClaude { return "Checking Claude CLI" }
+        if store.checkingCodex { return "Checking Codex CLI" }
+        if store.voice.isBusy {
+            if store.voice.isRecording { return "Microphone on · local dictation" }
+            if store.voice.phase == .finishing { return "Microphone off · finishing transcript" }
+            return "Voice permission request"
+        }
+        if store.speechDiagnostic.isBusy { return "Checking local speech support" }
+        if store.knowledgeSearch.isBusy { return "Local search in progress" }
+        if store.speech.isActive { return "Reading a response aloud" }
+        if store.isRunning { return "Task in progress" }
+        if store.workspaceUsesCodexCLI { return "Workspace uses ChatGPT (Codex CLI)" }
+        if store.workspaceUsesCodex { return "Workspace uses ChatGPT" }
+        if store.workspaceUsesClaude { return "Workspace uses Claude (\(store.claudeConfiguration.displayModelName))" }
+        if store.actionsReady {
+            return store.configuration.usesCloudInference
+                ? "Workspace uses \(store.configuration.localProviderName)"
+                : "Local model ready"
+        }
+        return "Model not loaded"
+    }
+
+    private var statusTitle: String { Self.statusTitle(for: store) }
 }

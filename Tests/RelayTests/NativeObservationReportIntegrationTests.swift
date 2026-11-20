@@ -1,3 +1,4 @@
+import ApplicationServices
 import Foundation
 import Testing
 @testable import Relay
@@ -236,9 +237,23 @@ import Testing
                     try previous.validateOriginalSource()
                     let original = try canvas.session.source(from: previous.observation)
                     return try source(await canvas.session.refreshOriginalForRead(original))
-                }, refreshForInputPlanning: { previous in try previous.validateOriginalSource(); return previous },
+                }, refreshForInputPlanning: { previous, _ in try previous.validateOriginalSource(); return previous },
                     prepareForReview: { _, _, _, _ in flags.prepares += 1; throw NativeVisualTaskFailure.staleTask },
-                    executeAdmitted: { _ in flags.executes += 1; return .uncertain("An observation report has no input path.") }, closeOwnedClient: {})
+                    executeAdmitted: { _ in flags.executes += 1; return .uncertain("An observation report has no input path.") }, closeOwnedClient: {},
+                    // Explicit inert report-planning seam; not OS qualification.
+                    observeForControl: { _ in
+                        try grant.validate()
+                        var controlled = canvas.target()
+                        controlled.policyTarget = { .init(sourceID: canvas.sourceID, application: canvas.application,
+                            originalWindow: AXUIElementCreateApplication(canvas.application.processID), validateOriginalSource: { try grant.validate() }) }
+                        return try source(await canvas.session.observeForRead(target: controlled,
+                            authorizeSourceBeforeCapture: { _ in try grant.validate() }))
+                    },
+                    refreshOriginalForControl: { previous in
+                        try previous.validateOriginalSource()
+                        let original = try canvas.session.source(from: previous.observation)
+                        return try source(await canvas.session.refreshOriginalForRead(original))
+                    })
             })
             owner = NativeComputerTaskSession(scope: scope, factory: factory, policy: policy)
             outerCall = .init(id: "accepted-outer-call", name: NativeWindowControlTools.outerName,

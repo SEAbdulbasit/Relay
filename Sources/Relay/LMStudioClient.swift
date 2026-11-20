@@ -11,7 +11,7 @@ nonisolated struct LMStudioVisionAttachment: Sendable {
 
 /// Direct traffic is restricted to the selected loopback service. No CLI,
 /// account token, provider fallback, remote image URL or server startup exists.
-actor LMStudioClient {
+@MainActor final class LMStudioClient: @unchecked Sendable {
     struct Response: Sendable {
         let url: URL
         let status: Int
@@ -26,7 +26,8 @@ actor LMStudioClient {
     private var revision: UInt64 = 0
     private var operationID: UUID?
     private var cancelOperation: (@Sendable () -> Void)?
-    private var drainOperation: Task<Void, Never>?
+    private var drainOperation: (@Sendable () async -> Void)?
+    var isDraining: Bool { drainOperation != nil }
     private var verifiedVision: LMStudioSelection?
 
     init(transport: Transport = LMStudioHTTPTransport.make()) { self.transport = transport }
@@ -38,7 +39,7 @@ actor LMStudioClient {
         verifiedVision = nil
         cancelOperation?()
     }
-    func drain() async { await drainOperation?.value }
+    func drain() async { await drainOperation?() }
     func visionIsVerified(for selection: LMStudioSelection) -> Bool { verifiedVision == selection }
     private func validateRevision(_ expected: UInt64) throws {
         guard revision == expected, revision < .max else { throw CancellationError() }
@@ -128,12 +129,13 @@ actor LMStudioClient {
         request.httpBody = data
         let preparedRequest = request
         let transport = transport, names = Set(tools.map(\.name)), priorIDs = Set(messages.flatMap(\.toolCalls).map { LMStudioProtocolID($0.id) })
-        let reply = try await perform {
+        let reply = try await perform(beforeOpen: {
             // Revalidate after encoding/queue admission, immediately before the
             // transport open. Revocation after this admission cannot unsend bytes.
             try await vision?.validate()
             try await sourceAuthorization?()
-            try await self.validateRevision(expectedRevision)
+            try self.validateRevision(expectedRevision)
+        }) {
             try Task.checkCancellation()
             let response = try await transport.open(preparedRequest)
             defer { response.cancel() }
@@ -161,32 +163,53 @@ actor LMStudioClient {
         return reply
     }
 
-    private func perform<Value: Sendable>(_ body: @escaping @Sendable () async throws -> Value) async throws -> Value {
+    nonisolated private final class CancelFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var flag = false
+        var isCancelled: Bool { lock.withLock { flag } }
+        func cancel() { lock.withLock { flag = true } }
+    }
+
+    private func perform<Value: Sendable>(
+        beforeOpen: (() async throws -> Void)? = nil,
+        _ body: @escaping @Sendable () async throws -> Value
+    ) async throws -> Value {
         guard operationID == nil else { throw LMStudioFailure.busy }
         guard revision < .max else { throw CancellationError() }
         try Task.checkCancellation()
         let id = UUID(), expected = revision
-        let task = Task { try await body() }
-        operationID = id; cancelOperation = { task.cancel() }
-        let drain = Task { _ = try? await task.value }
-        drainOperation = drain
+        operationID = id
+        let flag = CancelFlag()
+        cancelOperation = { flag.cancel() }
         defer {
             if operationID == id { operationID = nil; cancelOperation = nil; drainOperation = nil }
         }
-        let value: Value
-        do { value = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() } }
-        catch {
-            // URLSession can report cancellation as a transport-specific error.
-            // The caller revision remains authoritative even on a failure path.
+        do {
+            if let beforeOpen {
+                try await withTaskCancellationHandler {
+                    try await beforeOpen()
+                } onCancel: {
+                    flag.cancel()
+                }
+            }
+            if flag.isCancelled { throw CancellationError() }
+            try Task.checkCancellation()
+            guard revision == expected, revision < .max else { throw CancellationError() }
+            let task = Task.detached(priority: .userInitiated) { try await body() }
+            cancelOperation = { task.cancel() }
+            if flag.isCancelled { task.cancel() }
+            drainOperation = { _ = try? await task.value }
+            let value = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+            try Task.checkCancellation()
+            guard revision == expected else { throw CancellationError() }
+            return value
+        } catch {
             try Task.checkCancellation()
             guard revision == expected else { throw CancellationError() }
             if error is CancellationError { throw CancellationError() }
             if error is LMStudioFailure || error is ModelProtocolError { throw error }
             throw LMStudioFailure.unavailable
         }
-        try Task.checkCancellation()
-        guard revision == expected else { throw CancellationError() }
-        return value
     }
 
     private nonisolated static func request(url: URL, method: String) -> URLRequest {

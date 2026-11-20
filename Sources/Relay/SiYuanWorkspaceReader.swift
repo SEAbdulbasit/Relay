@@ -33,11 +33,11 @@ import Foundation
     static let maximumSourceBytes = 33_554_432
     static let maximumTextBytes = 16_777_216
     // Known bundled notebook identifiers, not a scan of an installed app.
-    static let guideIDs: Set<String> = ["20210808180117-6v0mkxr", "20210808180117-czj9bvb", "20211226090932-5lcq56f", "20240530133126-axarxgx"]
+    nonisolated static let guideIDs: Set<String> = ["20210808180117-6v0mkxr", "20210808180117-czj9bvb", "20211226090932-5lcq56f", "20240530133126-axarxgx"]
 
     /// Structural recognition also catches a damaged config so a workspace cannot
     /// silently fall back to generic recursive .sy/JSON indexing.
-    static func recognizes(_ root: URL) -> Bool {
+    nonisolated static func recognizes(_ root: URL) -> Bool {
         let fm = FileManager.default
         let data = root.appendingPathComponent("data")
         guard fm.fileExists(atPath: data.path) else { return false }
@@ -58,9 +58,10 @@ import Foundation
     }
 
     static func snapshot(root selected: URL, grants: [ScopeGrant], limits requested: Limits = .init(),
-                         isCurrent: @escaping @MainActor () -> Bool = { true }) async throws -> Snapshot {
+                         isCurrent: @escaping @Sendable @MainActor () -> Bool = { true }) async throws -> Snapshot {
+        let canonicalGrants = grants.compactMap { try? ToolPolicy.canonicalURL($0.path) }
         let root = try ToolPolicy.canonicalURL(selected.path)
-        guard grants.contains(where: { (try? ToolPolicy.canonicalURL($0.path)) == root }), recognizes(root) else { throw Failure.scope }
+        guard canonicalGrants.contains(root), recognizes(root) else { throw Failure.scope }
         var limits = requested
         limits.maximumNotes = max(0, min(requested.maximumNotes, maximumNotes))
         limits.maximumEntries = max(0, min(requested.maximumEntries, 10_000))
@@ -68,17 +69,37 @@ import Foundation
         limits.maximumTextBytes = max(0, min(requested.maximumTextBytes, maximumTextBytes))
         limits.maximumNoteBytes = max(0, min(requested.maximumNoteBytes, 65_536))
         limits.maximumSeconds = requested.maximumSeconds.isFinite ? max(0, min(requested.maximumSeconds, 30)) : 30
-        var worker = Worker(root: root, grants: grants, limits: limits, isCurrent: isCurrent)
+        return try await runWorker(root: root, grants: grants, canonicalGrants: canonicalGrants, limits: limits, isCurrent: isCurrent)
+    }
+
+    @concurrent private static func runWorker(root: URL, grants: [ScopeGrant], canonicalGrants: [URL], limits: Limits,
+                                              isCurrent: @escaping @Sendable @MainActor () -> Bool) async throws -> Snapshot {
+        var worker = Worker(root: root, grants: grants, canonicalGrants: canonicalGrants, limits: limits, isCurrent: isCurrent)
         return try await worker.run()
     }
 
-    static func identity(root: String, documentID: String) -> String {
+    nonisolated static func identity(root: String, documentID: String) -> String {
         "siyuan:" + digest(Data(root.utf8)) + ":" + documentID
     }
-    static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+    nonisolated private static let hexDigits = Array("0123456789abcdef".utf8)
+    nonisolated static func digest(_ data: Data) -> String {
+        let digest = SHA256.hash(data: data)
+        var bytes = [UInt8]()
+        bytes.reserveCapacity(64)
+        for byte in digest {
+            bytes.append(hexDigits[Int(byte >> 4)])
+            bytes.append(hexDigits[Int(byte & 0x0f)])
+        }
+        return String(decoding: bytes, as: UTF8.self)
+    }
+    nonisolated private static func isValidHexDigest(_ text: String) -> Bool {
+        let utf8 = text.utf8
+        guard utf8.count == 64 else { return false }
+        return utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+    }
 
     /// Restore-time metadata checks never open dependency files.
-    static func validMetadata(_ record: KnowledgeRecord) -> Bool {
+    nonisolated static func validMetadata(_ record: KnowledgeRecord) -> Bool {
         guard let root = record.workspaceRoot, root.hasPrefix("/"), root.utf8.count <= 4096,
               let identity = record.sourceIdentity, let deps = record.sourceDependencies, (2...32).contains(deps.count),
               Set(deps.map(\.path)).count == deps.count, record.sourcePath.hasPrefix(root + "/data/"),
@@ -93,7 +114,7 @@ import Foundation
             guard dependency.path.utf8.count <= 4096, dependency.modifiedAt.timeIntervalSince1970.isFinite,
                   dependency.byteCount >= -1, dependency.byteCount <= 2_097_152,
                   (dependency.byteCount == -1 && dependency.contentHash == "missing")
-                    || dependency.contentHash.range(of: #"^[0-9a-f]{64}$"#, options: .regularExpression) != nil else { return false }
+                    || isValidHexDigest(dependency.contentHash) else { return false }
             if dependency.path == root + "/conf/conf.json" { return dependency.byteCount >= 0 }
             if dependency.path == root + "/data/" + relative[0] + "/.siyuan/conf.json" { return dependency.byteCount >= 0 }
             let avPrefix = root + "/data/storage/av/"
@@ -108,15 +129,16 @@ import Foundation
         }
     }
 
-    static func dependenciesAreCurrent(_ record: KnowledgeRecord, grants: [ScopeGrant], cache: inout [KnowledgeDependency: Bool]) -> Bool {
+    nonisolated static func dependenciesAreCurrent(_ record: KnowledgeRecord, grants: [ScopeGrant], canonicalGrants: [URL]? = nil, cache: inout [KnowledgeDependency: Bool]) -> Bool {
+        let roots = canonicalGrants ?? grants.compactMap { try? ToolPolicy.canonicalURL($0.path) }
         guard validMetadata(record), let root = record.workspaceRoot,
-              grants.contains(where: { (try? ToolPolicy.canonicalURL($0.path))?.path == root }),
+              roots.contains(where: { $0.path == root }),
               (try? ToolPolicy.canonicalURL(root))?.path == root else { return false }
         for dependency in record.sourceDependencies ?? [] {
             if let valid = cache[dependency] { if !valid { return false }; continue }
             let url = URL(fileURLWithPath: dependency.path)
             let valid: Bool
-            if (try? secureURL(url, root: URL(fileURLWithPath: root), grants: grants)) != url { valid = false }
+            if (try? secureURL(url, root: URL(fileURLWithPath: root), canonicalGrants: roots, grants: grants)) != url { valid = false }
             else if dependency.byteCount == -1 { valid = missing(url) }
             else if let data = try? LocalStateFile.read(url, maximumBytes: 2_097_152), data.count == dependency.byteCount,
                     let date = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate {
@@ -128,30 +150,41 @@ import Foundation
         return true
     }
 
-    private static func secureURL(_ url: URL, root: URL, grants: [ScopeGrant]) throws -> URL {
+    nonisolated private static func secureURL(_ url: URL, root: URL, canonicalGrants: [URL], grants: [ScopeGrant]) throws -> URL {
         guard url.path == root.path || url.path.hasPrefix(root.path + "/"),
-              try ToolPolicy.canonicalURL(url.path).path == url.path,
-              try ToolPolicy.scopedURL(url.path, grants: grants).path == url.path else { throw Failure.scope }
+              try ToolPolicy.scopedURL(url.path, grants: grants, canonicalGrants: canonicalGrants).path == url.path else { throw Failure.scope }
         return url
     }
-    private static func missing(_ url: URL) -> Bool {
+    nonisolated private static func secureURL(_ url: URL, root: URL, grants: [ScopeGrant]) throws -> URL {
+        try secureURL(url, root: root, canonicalGrants: grants.compactMap { try? ToolPolicy.canonicalURL($0.path) }, grants: grants)
+    }
+    nonisolated private static func missing(_ url: URL) -> Bool {
         var info = stat()
         return url.path.withCString { lstat($0, &info) } != 0 && errno == ENOENT
     }
 
-    private struct Read {
+    private struct Read: Sendable {
         let data: Data
         let receipt: KnowledgeDependency
     }
-    private struct Worker {
+    nonisolated private struct Worker: Sendable {
         let root: URL
         let grants: [ScopeGrant]
+        let canonicalGrants: [URL]
         let limits: Limits
-        let isCurrent: @MainActor () -> Bool
+        let isCurrent: @Sendable @MainActor () -> Bool
         let began = ProcessInfo.processInfo.systemUptime
+        private let updatedFormatter: DateFormatter = {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyyMMddHHmmss"
+            formatter.isLenient = false
+            return formatter
+        }()
         var files: [String: Read] = [:]
         var readBytes = 0
         var entries = 0
+        var yieldStep = 0
         var textBytes = 0
         var skipped = 0
         var capped = false
@@ -162,13 +195,12 @@ import Foundation
 
         func check() throws {
             try Task.checkCancellation()
-            guard isCurrent() else { throw CancellationError() }
             guard ProcessInfo.processInfo.systemUptime - began < limits.maximumSeconds else { throw Failure.limit }
         }
         mutating func read(_ url: URL, maximum: Int = 2_097_152) throws -> Read {
             try check()
             if let cached = files[url.path] { return cached }
-            _ = try secureURL(url, root: root, grants: grants)
+            _ = try secureURL(url, root: root, canonicalGrants: canonicalGrants, grants: grants)
             let data = try LocalStateFile.read(url, maximumBytes: maximum)
             guard data.count <= limits.maximumSourceBytes - readBytes,
                   let date = try url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate else { throw Failure.limit }
@@ -179,7 +211,7 @@ import Foundation
         }
         mutating func list(_ url: URL) throws -> [URL] {
             try check()
-            _ = try secureURL(url, root: root, grants: grants)
+            _ = try secureURL(url, root: root, canonicalGrants: canonicalGrants, grants: grants)
             let metadata = try url.resourceValues(forKeys: [.isDirectoryKey, .volumeIsLocalKey, .isUbiquitousItemKey])
             guard metadata.isDirectory == true, metadata.volumeIsLocal == true, metadata.isUbiquitousItem != true,
                   let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: nil,
@@ -194,6 +226,7 @@ import Foundation
             return result.sorted { $0.lastPathComponent < $1.lastPathComponent }
         }
         mutating func run() async throws -> Snapshot {
+            guard await isCurrent() else { throw CancellationError() }
             let conf = try read(root.appendingPathComponent("conf/conf.json"), maximum: 65_536)
             _ = try SiYuanJSON.object(conf.data, maximumBytes: 65_536)
             let notebooks = try list(root.appendingPathComponent("data"))
@@ -213,6 +246,7 @@ import Foundation
                 try await walk(notebook, trail: [name], ancestors: [conf.receipt, book.receipt], depth: 0)
             } } catch Failure.limit { capped = true }
             try check()
+            guard await isCurrent() else { throw CancellationError() }
             let sorted = candidates.sorted { a, b in
                 a.updated == b.updated ? (a.record.sourceIdentity ?? "") < (b.record.sourceIdentity ?? "") : a.updated > b.updated
             }
@@ -231,7 +265,11 @@ import Foundation
             try check()
             guard depth <= 8, !capped else { capped = true; return }
             for url in try list(directory) where url.pathExtension == "sy" && SiYuanJSON.validID(url.deletingPathExtension().lastPathComponent) {
-                await Task.yield()
+                if yieldStep & 7 == 0 { await Task.yield() }
+                yieldStep += 1
+                if yieldStep & 31 == 0 {
+                    guard await isCurrent() else { throw CancellationError() }
+                }
                 try check()
                 let source: Read
                 let parsed: SiYuanDocumentReader.Document
@@ -275,10 +313,8 @@ import Foundation
                         modifiedAt: source.receipt.modifiedAt, contentHash: source.receipt.contentHash,
                         byteCount: source.data.count, coverageNote: coverage, sourceDependencies: dependencies,
                         workspaceRoot: root.path, sourceIdentity: identity(root: root.path, documentID: url.deletingPathExtension().lastPathComponent))
-                    let object = try SiYuanJSON.object(source.data, maximumBytes: 2_097_152)
-                    let stamp = ((object["Properties"] as? [String: Any])?["updated"] as? String) ?? ""
-                    let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyyMMddHHmmss"; formatter.isLenient = false
-                    let updated = max(formatter.date(from: stamp) ?? source.receipt.modifiedAt,
+                    let stamp = document.updated ?? ""
+                    let updated = max(updatedFormatter.date(from: stamp) ?? source.receipt.modifiedAt,
                                       dependencies.filter { $0.path.contains("/storage/av/") }.map(\.modifiedAt).max() ?? .distantPast)
                     record.sourceUpdatedAt = min(updated, Date())
                     candidates.append((record, record.sourceUpdatedAt ?? updated))

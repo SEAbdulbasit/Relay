@@ -7,7 +7,7 @@ struct SemanticSearchView: View {
         DisclosureGroup("Search by meaning · optional") {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Find related passages even when the wording differs. Preparing asks macOS for local language support; macOS manages its assets and may need internet during preparation. No source text is supplied in that step.")
-                    .font(.system(size: 14)).lineSpacing(4)
+                    .font(.relayCaption).lineSpacing(4)
                 Picker("Language to check", selection: $search.language) {
                     Text("English").tag("en")
                     Text("Arabic").tag("ar")
@@ -17,7 +17,7 @@ struct SemanticSearchView: View {
                     Text("Italian").tag("it")
                     Text("Portuguese").tag("pt")
                     Text("Chinese (Simplified)").tag("zh-Hans")
-                }.font(.system(size: 15)).disabled(search.state == .preparing || search.state == .ready)
+                }.font(.relayCallout).disabled(search.state == .preparing || search.state == .ready)
                 HStack {
                     if search.state == .preparing {
                         ProgressView().controlSize(.small)
@@ -27,13 +27,13 @@ struct SemanticSearchView: View {
                     }
                     Button("Use keyword search only") { search.turnOff() }.disabled(search.state == .off)
                 }.buttonStyle(RelaySecondaryButtonStyle())
-                Text(search.status).font(.system(size: 14)).textSelection(.enabled)
+                Text(search.status).font(.relayCaption).textSelection(.enabled)
                 Text("Availability depends on this Mac and language. Searches use only the prepared model and current selected sources; no hosted search model is used. Passage limits apply. Results are candidates to review, not proof of a fact. This option starts off after relaunch.")
-                    .font(.system(size: 14)).lineSpacing(4)
+                    .font(.relayCaption).lineSpacing(4)
             }.padding(.top, 12)
         }
-        .font(.system(size: 14.5, weight: .medium))
-        .foregroundStyle(.white)
+        .font(.relayCallout.weight(.medium))
+        .foregroundStyle(RelayColors.textPrimary)
         .disclosureGroupStyle(RelayDisclosureGroupStyle(accent: RelayColors.accentGold))
     }
 }

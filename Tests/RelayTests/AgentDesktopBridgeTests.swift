@@ -13,7 +13,7 @@ struct AgentDesktopBridgeTests {
             }
         }
     }
-    @Test("Resolves vendored agent-desktop CLI and verifies libagent_desktop_ffi.dylib ABI v6")
+    @Test("Resolves vendored agent-desktop CLI and verifies libagent_desktop_ffi.dylib ABI v7")
     func resolvesBinaryAndVerifiesFfiAbi() async throws {
         let execURL = AgentDesktopBridge.resolveExecutableURL()
         #expect(execURL != nil)
@@ -23,12 +23,24 @@ struct AgentDesktopBridgeTests {
 
         let ffiCheck = AgentDesktopBridge.verifyFfiLibrary()
         #expect(ffiCheck.loaded == true)
-        #expect(ffiCheck.abiMajor == 6)
+        #expect(ffiCheck.abiMajor == 7)
 
         let status = await AgentDesktopBridge.queryStatus()
         #expect(status.available == true)
         #expect(status.ffiLoaded == true)
         #expect(!status.version.isEmpty)
+    }
+
+    @Test func incompatibleAbiIsRejectedAndReportsTheActuallyLoadedMajor() throws {
+        let library = try #require(AgentDesktopBridge.resolveFfiLibraryURL())
+        let mismatch = AgentDesktopBridge.verifyFfiLibrary(at: library, expectedAbiMajor: 6)
+        #expect(!mismatch.loaded)
+        #expect(mismatch.abiMajor == 7)
+        let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let header = try String(contentsOf: repository.appendingPathComponent("Vendor/agent-desktop/include/agent_desktop.h"), encoding: .utf8)
+        #expect(header.contains("#define AD_ABI_VERSION_MAJOR \(AgentDesktopBridge.expectedFfiAbiMajor)\n"))
+        let matching = AgentDesktopBridge.verifyFfiLibrary(at: library, expectedAbiMajor: AgentDesktopBridge.expectedFfiAbiMajor)
+        #expect(matching.loaded && matching.abiMajor == AgentDesktopBridge.expectedFfiAbiMajor)
     }
 
     @Test("Executes agent-desktop version and permissions commands via JSON envelope parser")

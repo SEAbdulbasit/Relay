@@ -1,19 +1,33 @@
+import Darwin
 import Foundation
 import CryptoKit
 
 /// Files are usable only through explicit grants. Resolve symlinks before comparing components.
 enum ToolPolicy {
-    nonisolated static func scopedURL(_ path: String, grants: [ScopeGrant], writing: Bool = false) throws -> URL {
+    nonisolated static func scopedURL(_ path: String, grants: [ScopeGrant], canonicalGrants: [URL]? = nil, writing: Bool = false) throws -> URL {
         guard path.count <= 4096, path.hasPrefix("/") || path.hasPrefix("~/") else { throw RelayError.message("Use an absolute path from the selected files or folders.") }
         let url = try canonicalURL(path)
         let manager = FileManager.default
-        let allowed = grants.contains { grant in
-            guard !writing || grant.writable else { return false }
-            guard let root = try? canonicalURL(grant.path) else { return false }
-            var directory: ObjCBool = false
-            guard manager.fileExists(atPath: root.path, isDirectory: &directory) else { return false }
-            if directory.boolValue { return url.path == root.path || url.path.hasPrefix(root.path.hasSuffix("/") ? root.path : root.path + "/") }
-            return url.path == root.path
+        let allowed: Bool
+        if let canonicalGrants, !writing {
+            allowed = canonicalGrants.contains { root in
+                let rootPath = root.path
+                if url.path == rootPath { return true }
+                let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+                guard url.path.hasPrefix(prefix) else { return false }
+                var directory: ObjCBool = false
+                guard manager.fileExists(atPath: rootPath, isDirectory: &directory) else { return false }
+                return directory.boolValue
+            }
+        } else {
+            allowed = grants.contains { grant in
+                guard !writing || grant.writable else { return false }
+                guard let root = try? canonicalURL(grant.path) else { return false }
+                var directory: ObjCBool = false
+                guard manager.fileExists(atPath: root.path, isDirectory: &directory) else { return false }
+                if directory.boolValue { return url.path == root.path || url.path.hasPrefix(root.path.hasSuffix("/") ? root.path : root.path + "/") }
+                return url.path == root.path
+            }
         }
         guard allowed else { throw RelayError.message(writing ? "This destination is not inside a writable selected file or folder. Add it in Context and enable writing." : "This path is outside the selected files and folders. Ask the user to grant access.") }
         return url
@@ -22,23 +36,32 @@ enum ToolPolicy {
     /// Foundation does not consistently resolve a symlink when the final output does not yet
     /// exist. Walk every component (including dangling links) before permitting a new write.
     nonisolated static func canonicalURL(_ path: String) throws -> URL {
-        var components = (path as NSString).expandingTildeInPath.split(separator: "/").map(String.init)
-        var resolved = URL(fileURLWithPath: "/", isDirectory: true)
+        let expanded = (path as NSString).expandingTildeInPath
+        if let real = realpath(expanded, nil) {
+            defer { free(real) }
+            return URL(fileURLWithPath: String(cString: real))
+        }
+        var components = expanded.split(separator: "/").map(String.init)
+        var resolved: [String] = []
         var links = 0
+        var probe: CChar = 0
         while !components.isEmpty {
             try Task.checkCancellation()
             let part = components.removeFirst()
             if part == "." { continue }
-            if part == ".." { resolved.deleteLastPathComponent(); continue }
-            let candidate = resolved.appendingPathComponent(part)
-            if let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: candidate.path) {
+            if part == ".." { _ = resolved.popLast(); continue }
+            let candidatePath = "/" + (resolved + [part]).joined(separator: "/")
+            if Darwin.readlink(candidatePath, &probe, 1) >= 0,
+               let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: candidatePath) {
                 links += 1
                 guard links <= 40 else { throw RelayError.message("Too many symbolic links in selected path.") }
-                if destination.hasPrefix("/") { resolved = URL(fileURLWithPath: "/", isDirectory: true) }
+                if destination.hasPrefix("/") { resolved.removeAll(keepingCapacity: true) }
                 components = destination.split(separator: "/").map(String.init) + components
-            } else { resolved = candidate }
+            } else {
+                resolved.append(part)
+            }
         }
-        return resolved
+        return URL(fileURLWithPath: "/" + resolved.joined(separator: "/"))
     }
 
     static func fingerprint(_ call: ToolCall) -> String {

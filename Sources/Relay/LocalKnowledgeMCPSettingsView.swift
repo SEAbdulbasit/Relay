@@ -30,9 +30,10 @@ struct LocalKnowledgeMCPSettingsView: View {
                         .accessibilityIdentifier("knowledgeSharing.feedback")
                 }
             }
-            .font(.system(size: 14))
+            .font(.relayCaption)
             .padding(.top, 12)
         }
+        .font(.relayCallout.weight(.medium))
         .onChange(of: expanded) { _, value in if value, !server.isActive { refresh() } }
         .accessibilityIdentifier("knowledgeSharing.disclosure")
     }

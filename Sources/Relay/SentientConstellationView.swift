@@ -118,13 +118,16 @@ struct SkyGraph {
                         .map { $0.trimmingCharacters(in: .whitespaces) }
                         .first { !$0.isEmpty && !$0.hasPrefix("#") } ?? "Indexed source excerpt."
                     let body = "# \(record.title)\n\nSource: \(record.sourcePath)\n\n\(record.text)"
+                    let recordURL = record.sourcePath.hasPrefix("relay-live://")
+                        ? (URL(string: record.sourcePath) ?? URL(fileURLWithPath: record.sourcePath))
+                        : URL(fileURLWithPath: record.sourcePath)
                     let index = add(record.title, String(preview.prefix(140)), body, domain: domain,
-                                    url: URL(fileURLWithPath: record.sourcePath))
+                                    url: recordURL)
                     sourceIndices[record.sourcePath] = index
                     // Exact revision targets keep duplicate titles unambiguous and
                     // stop resolving after any source change or scope revocation.
                     indices[wikiKey(CrossSourceKnowledge.Revision(record).citationTarget), default: []].append(index)
-                    documentText[index] = (record.text, URL(fileURLWithPath: record.sourcePath).pathExtension.lowercased() == "md")
+                    documentText[index] = (record.text, recordURL.pathExtension.lowercased() == "md")
                     link(hub, index)
                 }
             } else if name == GeneratedKnowledgeNote.domain {
@@ -246,6 +249,7 @@ private struct SplitMix64: RandomNumberGenerator {
 final class SkySimulation {
     private(set) var pos: [CGPoint]
     private var vel: [CGPoint]
+    private var forceBuffer: [CGPoint] = []
     private(set) var alpha: Double = 1
     let anchors: [CGPoint]
     private let graph: SkyGraph
@@ -273,6 +277,7 @@ final class SkySimulation {
             return CGPoint(x: cos(ang) * r, y: sin(ang) * r)
         }
         vel = [CGPoint](repeating: .zero, count: graph.nodes.count)
+        forceBuffer = [CGPoint](repeating: .zero, count: graph.nodes.count)
         if !entrance { settle() }
     }
 
@@ -296,7 +301,13 @@ final class SkySimulation {
     private func substep() {
         let count = graph.nodes.count
         guard count > 0 else { return }
-        var force = [CGPoint](repeating: .zero, count: count)
+        if forceBuffer.count != count {
+            forceBuffer = [CGPoint](repeating: .zero, count: count)
+        } else {
+            for i in 0..<count {
+                forceBuffer[i] = .zero
+            }
+        }
         let cutoff2 = SkyTuning.repulsionCutoff * SkyTuning.repulsionCutoff
 
         for i in 0..<count {
@@ -311,8 +322,8 @@ final class SkySimulation {
                 let dist = sqrt(max(dist2, 25))
                 let f = SkyTuning.repulsion / max(dist2, 25)
                 let dir = CGPoint(x: d.x / dist, y: d.y / dist)
-                force[i] = CGPoint(x: force[i].x + dir.x * f, y: force[i].y + dir.y * f)
-                force[j] = CGPoint(x: force[j].x - dir.x * f, y: force[j].y - dir.y * f)
+                forceBuffer[i] = CGPoint(x: forceBuffer[i].x + dir.x * f, y: forceBuffer[i].y + dir.y * f)
+                forceBuffer[j] = CGPoint(x: forceBuffer[j].x - dir.x * f, y: forceBuffer[j].y - dir.y * f)
             }
         }
 
@@ -323,17 +334,17 @@ final class SkySimulation {
             let dist = max(hypot(d.x, d.y), 0.01)
             let f = (dist - rest) * k
             let dir = CGPoint(x: d.x / dist, y: d.y / dist)
-            force[e.a] = CGPoint(x: force[e.a].x + dir.x * f, y: force[e.a].y + dir.y * f)
-            force[e.b] = CGPoint(x: force[e.b].x - dir.x * f, y: force[e.b].y - dir.y * f)
+            forceBuffer[e.a] = CGPoint(x: forceBuffer[e.a].x + dir.x * f, y: forceBuffer[e.a].y + dir.y * f)
+            forceBuffer[e.b] = CGPoint(x: forceBuffer[e.b].x - dir.x * f, y: forceBuffer[e.b].y - dir.y * f)
         }
 
         for i in 0..<count {
             let n = graph.nodes[i]
             let pull = SkyTuning.anchorPull * (n.domain >= 0 ? 1 : 0.5)
             let anchor = anchorPoint(n.domain)
-            force[i] = CGPoint(
-                x: force[i].x + (anchor.x - pos[i].x) * pull - pos[i].x * SkyTuning.centerPull,
-                y: force[i].y + (anchor.y - pos[i].y) * pull - pos[i].y * SkyTuning.centerPull
+            forceBuffer[i] = CGPoint(
+                x: forceBuffer[i].x + (anchor.x - pos[i].x) * pull - pos[i].x * SkyTuning.centerPull,
+                y: forceBuffer[i].y + (anchor.y - pos[i].y) * pull - pos[i].y * SkyTuning.centerPull
             )
         }
 
@@ -341,8 +352,8 @@ final class SkySimulation {
         for i in 0..<count {
             if graph.nodes[i].isRoot { pos[i] = .zero; vel[i] = .zero; continue }
             if i == dragIndex { pos[i] = dragTarget; vel[i] = .zero; continue }
-            var vx = (vel[i].x + force[i].x * heat) * SkyTuning.damping
-            var vy = (vel[i].y + force[i].y * heat) * SkyTuning.damping
+            var vx = (vel[i].x + forceBuffer[i].x * heat) * SkyTuning.damping
+            var vy = (vel[i].y + forceBuffer[i].y * heat) * SkyTuning.damping
             let speed = hypot(vx, vy)
             if speed > SkyTuning.maxSpeed {
                 vx *= SkyTuning.maxSpeed / speed
@@ -513,6 +524,7 @@ final class NightSkyModel: ObservableObject {
         camera.pan.y += dy
         hoverInfo = nil
         hoverIndex = nil
+        objectWillChange.send()
     }
 
     func zoom(by factor: CGFloat, at s: CGPoint, size: CGSize) {
@@ -571,21 +583,25 @@ final class NightSkyModel: ObservableObject {
         dragging = true
         clearHover()
         sim?.beginDrag(i)
+        objectWillChange.send()
     }
 
     func dragStar(to s: CGPoint, size: CGSize) {
         sim?.drag(to: toWorld(s, size: size))
+        objectWillChange.send()
     }
 
     func endDrag() {
         dragging = false
         sim?.endDrag()
+        objectWillChange.send()
     }
 
     func highlight(_ url: URL) {
         guard let graph, let i = graph.nodes.firstIndex(where: { $0.url == url }) else { return }
         highlightIndex = i
         highlightBlend = 1.0
+        objectWillChange.send()
     }
 
     func sunOverlay(size: CGSize) -> (center: CGPoint, diameter: CGFloat, opacity: Double)? {
@@ -986,16 +1002,32 @@ struct NightSkyView: View {
     var body: some View {
         GeometryReader { geo in
             let size = geo.size
+            let isIdle = !(model.sim?.isAwake ?? false)
+                && model.hoverIndex == nil
+                && model.focusBlend <= 0.02
+                && model.highlightIndex == nil
+                && model.pulses.isEmpty
             ZStack(alignment: .topLeading) {
                 Color.black
 
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reducedMotion || scenePhase != .active)) { timeline in
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reducedMotion || scenePhase != .active || isIdle)) { timeline in
                     let now = timeline.date.timeIntervalSinceReferenceDate
                     Canvas { ctx, canvasSize in
                         if !model.camera.initialized || (!reducedMotion && scenePhase == .active) {
                             model.tick(now: now, size: canvasSize)
                         }
                         SkyRenderer.draw(ctx, size: canvasSize, model: model, t: now)
+                    }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityChildren {
+                        if let graph = model.graph {
+                            ForEach(graph.nodes) { node in
+                                Button(node.title) {
+                                    onOpenNode(node)
+                                }
+                                .accessibilityHint(node.preview)
+                            }
+                        }
                     }
                 }
                 .gesture(
@@ -1043,9 +1075,9 @@ struct NightSkyView: View {
                     }
                 }
 
-                // Floating SpinningLogo at the central Sun (Overview / README.md)
+                // Floating RelayActivityMark at the central Sun (Overview / README.md)
                 if let sun = model.sunOverlay(size: size) {
-                    SpinningLogo(size: sun.diameter, fast: false)
+                    RelayActivityMark(size: sun.diameter, fast: false)
                         .opacity(sun.opacity)
                         .position(sun.center)
                         .allowsHitTesting(false)
@@ -1069,10 +1101,10 @@ struct NightSkyView: View {
                                 Text("\(graph.nodes.count) STARS · \(graph.edges.count) CONNECTIONS · \(graph.domains.count) CONSTELLATIONS")
                                     .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
                                     .tracking(1.6)
-                                    .foregroundStyle(RelayColors.textSecondary)
+                                    .foregroundStyle(Color.white.opacity(0.80))
                                 Text("Hover a star to ignite connected notes · Drag stars to bend the constellation · Click any star to inspect its indexed excerpt")
                                     .font(.system(size: 11.5))
-                                    .foregroundStyle(RelayColors.textMuted)
+                                    .foregroundStyle(Color.white.opacity(0.56))
                             }
                             Spacer()
                             HStack(spacing: 6) {
@@ -1082,8 +1114,12 @@ struct NightSkyView: View {
                                     Image(systemName: "plus")
                                         .font(.system(size: 11.5, weight: .semibold))
                                         .frame(width: 32, height: 32)
-                                        .background(Color.white.opacity(0.08), in: Circle())
-                                        .contentShape(Circle())
+                                        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                                        )
+                                        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                                 }
                                 .buttonStyle(RelayPressStyle())
                                 .help("Zoom in")
@@ -1094,8 +1130,12 @@ struct NightSkyView: View {
                                     Image(systemName: "minus")
                                         .font(.system(size: 11.5, weight: .semibold))
                                         .frame(width: 32, height: 32)
-                                        .background(Color.white.opacity(0.08), in: Circle())
-                                        .contentShape(Circle())
+                                        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                                        )
+                                        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                                 }
                                 .buttonStyle(RelayPressStyle())
                                 .help("Zoom out")
@@ -1107,8 +1147,12 @@ struct NightSkyView: View {
                                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                                         .padding(.horizontal, 12)
                                         .frame(height: 32)
-                                        .background(Color.white.opacity(0.08), in: Capsule())
-                                        .contentShape(Capsule())
+                                        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                                        )
+                                        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                                 }
                                 .buttonStyle(RelayPressStyle())
                                 .help("Fit galaxy to viewport")
@@ -1134,13 +1178,13 @@ struct SkyHoverCard: View {
                     .fill(SkyRenderer.domainColor(info.domainIndex))
                     .frame(width: 6, height: 6)
                 Text(info.domainName.uppercased())
-                    .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                     .tracking(1.6)
                     .foregroundStyle(SkyRenderer.domainColor(info.domainIndex))
                 Spacer(minLength: 4)
                 if info.recentlyChanged {
                     Text("RECENTLY INDEXED")
-                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                         .tracking(1.1)
                         .foregroundStyle(RelayColors.accentCyan)
                 }
@@ -1154,19 +1198,19 @@ struct SkyHoverCard: View {
             if !info.preview.isEmpty {
                 Text(info.preview)
                     .font(.system(size: 11.5))
-                    .foregroundStyle(RelayColors.textSecondary)
+                    .foregroundStyle(Color.white.opacity(0.80))
                     .lineSpacing(3)
                     .lineLimit(2)
             }
 
             HStack {
                 Text("\(info.degree) connected notes")
-                    .font(.system(size: 9.5, design: .monospaced))
-                    .foregroundStyle(RelayColors.textMuted)
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(Color.white.opacity(0.56))
                 Spacer()
                 Text("Click to open →")
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(RelayColors.knowledgeLink)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(Color(red: 0.65, green: 0.92, blue: 1.0))
             }
             .padding(.top, 2)
         }
@@ -1177,47 +1221,5 @@ struct SkyHoverCard: View {
                 .strokeBorder(SkyRenderer.domainColor(info.domainIndex, alpha: 0.42), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.65), radius: 18, y: 8)
-    }
-}
-
-/// Sentient OS `SkyDoor`: top-right glowing pill toggling between `Constellation View` and `Markdown Reader`.
-struct SkyDoorButton: View {
-    let showingSky: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 7) {
-                Image(systemName: showingSky ? "book.pages" : "sparkles")
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(showingSky ? RelayColors.accentCyan : RelayColors.accentGold)
-                Text(showingSky ? "Markdown Reader" : "Constellation View")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
-                Text("⌘⇧G")
-                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(RelayColors.textMuted)
-            }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 7)
-            .background(Color.white.opacity(0.06), in: Capsule())
-            .overlay(
-                Capsule()
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                RelayColors.accentGold.opacity(0.55),
-                                RelayColors.accentAmethyst.opacity(0.55),
-                                RelayColors.accentCyan.opacity(0.55)
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        ),
-                        lineWidth: 1
-                    )
-            )
-        }
-        .buttonStyle(RelayPressStyle())
-        .keyboardShortcut("g", modifiers: [.command, .shift])
     }
 }

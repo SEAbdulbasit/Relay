@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Relay — On-Device Assistance for macOS</title>
-  <meta name="description" content="Relay is a macOS assistant that uses on-device Gemma by default. You can also use your existing ChatGPT sign-in via Codex CLI for workspace requests while Relay runs Mac actions locally.">
+  <meta name="description" content="Relay is a macOS assistant powered by on-device Gemma 4 by default, with support for 6 model providers: On-Device Gemma 4, ChatGPT via Codex CLI, Claude via Claude CLI, LM Studio, OpenRouter, and Custom Responses API.">
 
   <!-- Favicon / Brand Mark -->
-  <link rel="icon" type="image/svg+xml" href="assets/icons/relay-orb.svg">
+  <link rel="icon" type="image/svg+xml" href="assets/icons/relay-icon.svg">
 
   <!-- Google Fonts: Sentient OS 3-Voice Typography System (Display Sans, Editorial Serif, Monospace) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -30,7 +30,7 @@
   <header class="site-header" role="banner">
     <div class="container navbar">
       <a href="index.html" class="brand-logo" aria-label="Relay Home">
-        <div class="brand-orb" aria-hidden="true"></div>
+        <div class="brand-icon" aria-hidden="true"></div>
         <span>Relay</span>
       </a>
 
@@ -76,7 +76,7 @@
           <div>
             <div class="eyebrow-badge">
               <span class="pulse-dot" aria-hidden="true"></span>
-              <span>On-Device Gemma by Default • Optional ChatGPT</span>
+              <span>On-Device Gemma 4 by Default • 6 Model Providers Supported</span>
             </div>
 
             <h1 style="line-height: 1.08;">
@@ -88,7 +88,7 @@
               <span><strong>Remembers</strong> your local files, notes, and workspace context.</span>
               <span><strong>Coordinates</strong> four specialized agents on a shared Blackboard.</span>
               <span><strong>Acts</strong> across your Mac with scoped tools and action reviews.</span>
-              <span>Optional ChatGPT uses your existing sign-in through Codex CLI. Requests go to OpenAI, and Relay asks before sharing app or webpage excerpts.</span>
+              <span>Supports <strong>6 model providers</strong>: On-device Gemma 4, ChatGPT via Codex CLI, Claude via Claude CLI, LM Studio, OpenRouter, and Custom Responses API. Relay asks before sharing app or webpage excerpts with remote providers.</span>
             </div>
 
             <!-- Call to Action Buttons -->
@@ -123,10 +123,9 @@
             </div>
           </div>
 
-          <!-- Right Column: Interactive 3D Sentient Particle Sphere & Glowing Orbital Ring -->
-          <div class="hero-orb-stage" aria-hidden="true">
-            <div class="hero-orb-aura"></div>
-            <canvas id="sentient-orb-canvas" width="520" height="520"></canvas>
+          <!-- Right Column: Relay Brand Icon -->
+          <div class="hero-icon-stage" aria-hidden="true">
+            <img class="hero-icon" src="assets/icons/relay-icon.svg" alt="" width="520" height="520">
           </div>
 
         </div>
@@ -151,7 +150,7 @@
               <div id="demo-living-notch" class="living-notch-pill" role="button" tabindex="0" aria-label="Click to expand living notch Sidekick">
                 <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;">
                   <div style="display: flex; align-items: center; gap: 0.55rem;">
-                    <span class="brand-orb" style="width: 18px; height: 18px;"></span>
+                    <span class="brand-icon" style="width: 18px; height: 18px;"></span>
                     <span id="notch-status-title" style="font-size: 0.8rem; font-weight: 600;">Sidekick · Click notch to hand off a task</span>
                   </div>
                   <span id="notch-role-pill" class="role-badge planner" style="font-size: 0.65rem;">IDLE · ⌘⇧Space</span>
@@ -667,7 +666,7 @@
 
             <div class="under-hood-engine-bar">
               <div style="display: flex; align-items: center; gap: 0.85rem;">
-                <div class="brand-orb" style="width: 34px; height: 34px;"></div>
+                <div class="brand-icon" style="width: 34px; height: 34px;"></div>
                 <div>
                   <div style="font-weight: 600; color: var(--color-text-primary); font-size: 1rem;">On-device Gemma 4 E2B</div>
                   <div style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--color-text-muted);">LiteRT-LM C++ Runtime · 2.59 GB SHA-256 Verified</div>
@@ -688,21 +687,22 @@
             </div>
           </div>
 
-          <!-- Right Box: OPTIONAL CHATGPT MODE -->
+          <!-- Right Box: 6 FLEXIBLE MODEL PROVIDERS -->
           <div class="under-hood-cloud">
-            <div class="mono-whisper" style="color: var(--color-text-dim);">OPTIONAL CHATGPT MODE</div>
-            <div style="padding: 2.5rem 0;">
-              <div class="font-serif" style="font-size: 2rem; font-style: italic; color: var(--color-text-secondary); margin-bottom: 1rem;">
-                ChatGPT via Codex CLI
+            <div class="mono-whisper" style="color: var(--color-text-dim);">OPTIONAL LOCAL &amp; CLOUD PROVIDERS (6 TOTAL)</div>
+            <div style="padding: 2.0rem 0;">
+              <div class="font-serif" style="font-size: 1.65rem; color: var(--color-text-secondary); margin-bottom: 1rem;">
+                Gemma 4 · ChatGPT CLI · Claude CLI · LM Studio · OpenRouter · Custom API
               </div>
               <div style="display: flex; flex-direction: column; gap: 0.35rem; font-family: var(--font-mono); font-size: 0.72rem; color: var(--color-text-dim); letter-spacing: 0.14em;">
-                <span>OFF BY DEFAULT</span>
-                <span>EXISTING CHATGPT SIGN-IN</span>
+                <span>ON-DEVICE GEMMA 4 DEFAULT</span>
+                <span>CHATGPT &amp; CLAUDE CLI · LM STUDIO</span>
+                <span>OPENROUTER &amp; CUSTOM RESPONSES API</span>
                 <span>MAC ACTIONS STAY LOCAL</span>
               </div>
             </div>
             <div style="font-size: 0.75rem; color: var(--color-text-dim);">
-              Relay asks before sharing an app list or a visible app or webpage excerpt.
+              Relay asks before sharing an app list or a visible app or webpage excerpt with any remote provider.
             </div>
           </div>
         </div>
@@ -919,7 +919,7 @@
               <img src="assets/icons/chevron-down.svg" alt="" class="faq-chevron" aria-hidden="true">
             </summary>
             <div class="faq-content">
-              Relay is optimized for <strong>Google Gemma 4 E2B</strong> packaged in LiteRT-LM format (`.litertlm`). Relay verifies the pinned download with SHA-256. You can also select a compatible `.litertlm` model from your own drive.
+              Relay supports <strong>6 model providers</strong>: default on-device <strong>Google Gemma 4 E2B</strong> packaged in LiteRT-LM format (`.litertlm`, SHA-256 verified), local <strong>LM Studio</strong> (OpenAI-compatible loopback server), <strong>ChatGPT via Codex CLI</strong>, <strong>Claude via Claude CLI</strong>, <strong>OpenRouter</strong>, and <strong>Custom Responses API</strong> endpoints.
             </div>
           </details>
 
@@ -945,7 +945,7 @@
       <div class="container container-narrow">
         <div class="glass-card" style="text-align: center; padding: 4rem 2rem; border-color: rgba(253, 226, 163, 0.25);">
           
-          <div class="brand-orb" style="width: 56px; height: 56px; margin: 0 auto 1.5rem auto;" aria-hidden="true"></div>
+          <div class="brand-icon" style="width: 56px; height: 56px; margin: 0 auto 1.5rem auto;" aria-hidden="true"></div>
           
           <h2 style="font-size: var(--font-size-h2); margin-bottom: 1rem;">
             Experience Autonomous AI.<br>
@@ -997,7 +997,7 @@
         
         <div class="footer-brand">
           <a href="index.html" class="brand-logo" style="margin-bottom: 0.75rem;">
-            <div class="brand-orb" style="width: 28px; height: 28px;"></div>
+            <div class="brand-icon" style="width: 28px; height: 28px;"></div>
             <span>Relay</span>
           </a>
           <p>

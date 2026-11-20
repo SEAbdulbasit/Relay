@@ -38,9 +38,9 @@ import Foundation
     static func isNative(_ name: String) -> Bool {
         [NativeWindowReadTool.name, NativeWindowControlTools.outerName].contains(name)
     }
-    /// A current plain-file adapter is already qualified separately. Its exact
-    /// result must not fall back to old role strings when history omits it.
-    static func requiresCurrentSource(_ name: String) -> Bool { isNative(name) || name == "read_file" }
+    /// Actual file/query bodies must use their typed current-source adapters.
+    /// Missing/omitted data must not fall back to unbound legacy role strings.
+    static func requiresCurrentSource(_ name: String) -> Bool { isNative(name) || name == "read_file" || name == "search_files" || name == "read_calendar" || MainAgentMCPTools.names.contains(name) || ConversationHistoryQueryTools.names.contains(name) || name == MainAgentTextCorrectionTool.name || name == MainAgentSummaryTool.name }
     private let owner = UUID()
     private var epoch = UUID()
     private var entries: [UUID: Entry] = [:]

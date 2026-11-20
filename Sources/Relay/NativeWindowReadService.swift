@@ -56,7 +56,8 @@ import Foundation
                 evidence: captured.evidence + " The local model interpreted only that source. This verifies capture scope, not the interpretation's facts or any application effect. No input was performed.", verified: true)
             return NativeSourcedToolResult(result: result, source: returned.source)
         } catch {
-            if let transport = error as? NativeReadTransportError, transport.needsFreshConnection {
+            if (error as? NativeReadTransportError)?.needsFreshConnection == true
+                || (error as? NativeReadProviderError)?.needsFreshConnection == true {
                 // Retire a definitely broken READ connection. Return this error
                 // unchanged; only a later explicit model read opens another one.
                 // No request or mutation is replayed inside this catch.

@@ -72,10 +72,10 @@ struct ScopedFileToolTests {
         defer { try? FileManager.default.removeItem(at: root) }
         try Data("Match".utf8).write(to: destination)
         let tools = MacTools(); tools.grants = [.init(path: root.path, writable: false)]
-        let result = try await tools.execute(ToolCall(name: "search_files", arguments: ["query": .string("renamed")]))
+        let result = try await tools.execute(ToolCall(name: "search_files", arguments: ["query": .string("renamed")]), filenameSearchWorker: FilenameSearchWorker())
         #expect(result.verified)
         #expect(result.summary.contains(destination.path))
         tools.grants = []
-        await #expect(throws: (any Error).self) { try await tools.execute(ToolCall(name: "search_files", arguments: ["query": .string("renamed")])) }
+        await #expect(throws: (any Error).self) { try await tools.execute(ToolCall(name: "search_files", arguments: ["query": .string("renamed")]), filenameSearchWorker: FilenameSearchWorker()) }
     }
 }

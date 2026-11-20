@@ -22,6 +22,7 @@ import Foundation
     private struct Leaf {
         let id: Identity
         let check: @MainActor @Sendable () async throws -> Void
+        let finalMetadata: (@MainActor @Sendable () throws -> Void)?
     }
     enum Failure: LocalizedError {
         case capacity
@@ -36,7 +37,14 @@ import Foundation
     /// Trusted callers create this once for an actual retained source or an
     /// immutable source snapshot's extracted validate function, never its body.
     static func source(identity: Identity, _ check: @escaping @MainActor @Sendable () async throws -> Void) -> Self {
-        Self(leaves: [Leaf(id: identity, check: check)])
+        Self(leaves: [Leaf(id: identity, check: check, finalMetadata: nil)])
+    }
+    /// Known revocation only. The required labelled fence is synchronous and
+    /// must retain no private body or perform IO; it is not an atomic OS proof.
+    static func source(identity: Identity,
+                       finalMetadata: @escaping @MainActor @Sendable () throws -> Void,
+                       _ check: @escaping @MainActor @Sendable () async throws -> Void) -> Self {
+        Self(leaves: [Leaf(id: identity, check: check, finalMetadata: finalMetadata)])
     }
     /// Nil means no private-source input. Duplicate trusted leaf IDs coalesce;
     /// equal source strings/hashes do not identify a validation capability.
@@ -50,17 +58,25 @@ import Foundation
         }
         return merged.isEmpty ? nil : Self(leaves: merged)
     }
-    func validate() async throws {
-        for leaf in leaves {
+    private static func validateFinalMetadata(_ checks: [Leaf]) throws {
+        for leaf in checks {
+            try Task.checkCancellation()
+            try leaf.finalMetadata?()
+        }
+        try Task.checkCancellation()
+    }
+    private static func validate(_ checks: [Leaf]) async throws {
+        for leaf in checks {
             try Task.checkCancellation(); try await leaf.check(); try Task.checkCancellation()
         }
+        // No await below this point. A later leaf cannot hide an already
+        // recorded revocation of an earlier leaf while it was suspended.
+        try validateFinalMetadata(checks)
     }
+    func validateFinalMetadata() throws { try Self.validateFinalMetadata(leaves) }
+    func validate() async throws { try await Self.validate(leaves) }
     var validator: @MainActor @Sendable () async throws -> Void {
         let checks = leaves
-        return {
-            for leaf in checks {
-                try Task.checkCancellation(); try await leaf.check(); try Task.checkCancellation()
-            }
-        }
+        return { try await Self.validate(checks) }
     }
 }

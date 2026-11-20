@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Testing
 @testable import Relay
 
@@ -7,6 +8,89 @@ struct PreparationSchedulerTests {
     private func date(_ value: String) -> Date { ISO8601DateFormatter().date(from: value)! }
     private let utc = TimeZone(secondsFromGMT: 0)!
 
+    @Test(.timeLimit(.minutes(1))) func automaticRunLimitReleasesHoldBeforeCancelledRefreshDrains() async {
+        let now = date("2026-10-30T10:00:00Z")
+        let limit = AsyncStream<Void>.makeStream()
+        let started = AsyncStream<Void>.makeStream()
+        let released = AsyncStream<Void>.makeStream()
+        var finishRefresh: CheckedContinuation<Void, Never>?
+        var acquisitions: [TimeInterval] = []
+        var releases = 0
+        var attempts = 0
+        let scheduler = PreparationScheduler(
+            automaticTimers: false, lowPower: { false }, thermalLimited: { false },
+            onExternalPower: { true },
+            holdIdleSleep: { seconds in
+                acquisitions.append(seconds)
+                return {
+                    releases += 1
+                    released.continuation.yield()
+                }
+            },
+            waitForRunLimit: {
+                var signal = limit.stream.makeAsyncIterator()
+                _ = await signal.next()
+            }
+        )
+        scheduler.preparesLocalDrafts = { true }
+        scheduler.prepare = { "Synthetic" }
+        scheduler.refreshAndPrepare = { _, _, _ in
+            attempts += 1
+            await withCheckedContinuation { continuation in
+                finishRefresh = continuation
+                started.continuation.yield()
+            }
+            return .init(summary: "Late result")
+        }
+        scheduler.setEnabled(true)
+        scheduler.tick(now: now, timeZone: utc)
+        var startSignal = started.stream.makeAsyncIterator()
+        _ = await startSignal.next()
+        #expect(acquisitions == [1200])
+        limit.continuation.yield()
+        var releaseSignal = released.stream.makeAsyncIterator()
+        _ = await releaseSignal.next()
+        #expect(scheduler.isPreparing)
+        #expect(scheduler.status.contains("time limit"))
+        scheduler.refreshNow()
+        scheduler.tick(now: now.addingTimeInterval(86_400), timeZone: utc)
+        #expect(attempts == 1)
+        finishRefresh?.resume()
+        await scheduler.waitForCurrentPreparation()
+        #expect(!scheduler.isPreparing)
+        #expect(scheduler.lastPreparedAt == nil)
+        #expect(scheduler.status.contains("time limit"))
+        #expect(releases == 1)
+    }
+
+    @Test func scheduledRunsRequireKnownBatteryChargeAndUseFirstRunAndUpdateFloors() {
+        let now = date("2026-10-30T10:00:00Z")
+        var batteryCharge: Int?
+        var attempts = 0
+        let scheduler = PreparationScheduler(
+            automaticTimers: false, lowPower: { false }, thermalLimited: { false },
+            onExternalPower: { false }, batteryCharge: { batteryCharge }
+        )
+        scheduler.prepare = { attempts += 1; return "Synthetic" }
+        scheduler.setEnabled(true)
+        scheduler.tick(now: now, timeZone: utc)
+        #expect(scheduler.status.contains("known power state"))
+        batteryCharge = 49
+        scheduler.tick(now: now, timeZone: utc)
+        #expect(scheduler.status.contains("more battery charge"))
+        #expect(attempts == 0)
+        batteryCharge = 50
+        scheduler.tick(now: now, timeZone: utc)
+        #expect(attempts == 1)
+        let nextDay = now.addingTimeInterval(86_400)
+        batteryCharge = 29
+        scheduler.tick(now: nextDay, timeZone: utc)
+        #expect(attempts == 1)
+        batteryCharge = 30
+        scheduler.tick(now: nextDay, timeZone: utc)
+        #expect(attempts == 2)
+    }
+
     @Test func disabledInitAndTickNeverPrepare() {
         let scheduler = PreparationScheduler(automaticTimers: false, lowPower: { false }, thermalLimited: { false })
         var count = 0
@@ -14,6 +98,31 @@ struct PreparationSchedulerTests {
         scheduler.tick(now: date("2026-10-30T10:00:00Z"), timeZone: utc)
         #expect(!scheduler.enabled)
         #expect(count == 0)
+    }
+
+    @Test func byteDistinctCalendarRefreshSelectionUpdatesActualStorageAndObservedEpoch() {
+        let composed = "caf\u{e9}", decomposed = "cafe\u{301}"
+        var eligible: Set<String> = [composed]
+        let scheduler = PreparationScheduler(automaticTimers: false, lowPower: { false }, thermalLimited: { false })
+        var preparations = 0
+        scheduler.prepare = { preparations += 1; return "No preparation expected" }
+        scheduler.eligibleCalendarRefreshIDs = { eligible }
+        scheduler.setCalendarRefreshEnabled(true)
+        let epoch = scheduler.calendarRefreshEpoch, observed = CalendarRefreshObservationCount()
+        #expect(CalendarSelectionIdentity.keys(scheduler.calendarRefreshIDs) == [Data(composed.utf8)])
+        withObservationTracking { _ = scheduler.calendarRefreshIDs } onChange: { observed.increment() }
+        eligible = [decomposed]
+        scheduler.setCalendarRefreshEnabled(true)
+        #expect(CalendarSelectionIdentity.keys(scheduler.calendarRefreshIDs) == [Data(decomposed.utf8)])
+        #expect(scheduler.calendarRefreshIDs.first.map { Data($0.utf8) } == Data(decomposed.utf8))
+        #expect(scheduler.calendarRefreshEpoch != epoch && observed.value == 1)
+        let currentEpoch = scheduler.calendarRefreshEpoch, unchanged = CalendarRefreshObservationCount()
+        withObservationTracking { _ = scheduler.calendarRefreshIDs } onChange: { unchanged.increment() }
+        scheduler.setCalendarRefreshEnabled(true)
+        #expect(scheduler.calendarRefreshEpoch == currentEpoch && unchanged.value == 0)
+        #expect(scheduler.agenda.isEmpty && preparations == 0 && !scheduler.isPreparing)
+        scheduler.setCalendarRefreshEnabled(false)
+        #expect(scheduler.calendarRefreshIDs.isEmpty && scheduler.calendarRefreshEpoch != currentEpoch)
     }
     @Test func sleepDefersPreparationAndWakeUsesCurrentTimeZoneOnce() {
         let now = date("2026-10-30T07:00:00Z")
@@ -155,7 +264,14 @@ struct PreparationSchedulerTests {
     }
     @Test func disablingInsideInitialAutomaticTickDoesNotRetainScheduler() throws {
         let now = date("2026-10-30T10:00:00Z")
-        var scheduler: PreparationScheduler? = PreparationScheduler(automaticTimers: true, lowPower: { false }, clock: { now }, thermalLimited: { false })
+        var scheduler: PreparationScheduler? = PreparationScheduler(
+            automaticTimers: true,
+            lowPower: { false },
+            clock: { now },
+            thermalLimited: { false },
+            onExternalPower: { true },
+            batteryCharge: { 100 }
+        )
         let components = Calendar.current.dateComponents([.hour, .minute], from: now)
         try scheduler?.setTime(hour: components.hour ?? 0, minute: components.minute ?? 0)
         var count = 0
@@ -474,4 +590,11 @@ struct PreparationSchedulerTests {
         scheduler.setCalendarRefreshEnabled(false)
         #expect(scheduler.agenda.isEmpty)
     }
+}
+
+nonisolated private final class CalendarRefreshObservationCount: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int { lock.lock(); defer { lock.unlock() }; return count }
+    func increment() { lock.lock(); defer { lock.unlock() }; count += 1 }
 }

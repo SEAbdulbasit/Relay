@@ -1,7 +1,7 @@
 import Foundation
 
-/// The specialized agent roles in Relay's totally offline multi-agent architecture.
-/// Each role is tailored for local inference on Apple Silicon using Gemma 4 E2B.
+/// Specialized planning, inspection, execution and verification roles.
+/// Inference follows the explicitly selected provider; tool authority stays local.
 nonisolated enum AgentRole: String, CaseIterable, Codable, Sendable {
     case planner = "planner"
     case navigator = "navigator"
@@ -70,6 +70,7 @@ nonisolated enum AgentRole: String, CaseIterable, Codable, Sendable {
 
             For a requested file move or rename, plan two ordered Executor steps: first preview_file_move only; then a later step uses the exact returned preview_id with move_file and explicit review. Dependent calls belong in separate steps; a preview does not move the file.
             When an answer needs arithmetic calculation, plan Navigator calculate. Informational answers that need no action can still be answered directly.
+            When matching filenames in selected files or folders, plan Navigator search_files. Returned names and sizes are current metadata, not file contents.
 
             Every Executor step already receives independent Critic verification before the next step can start. Do not add another Critic step merely to repeat that same postcondition check. Add a separate Critic only when the user's request needs another distinct inspection or assessment.
 
@@ -100,6 +101,7 @@ nonisolated enum AgentRole: String, CaseIterable, Codable, Sendable {
             - search_finder: Search for files through the Finder interface only when explicitly requested.
             - list_files: Inspect contents of authorized directories.
             - read_file: Read current file contents within explicit file grants.
+            - search_files: Search current filename/size metadata in explicitly selected files or folders. It does not read file contents.
             - search_knowledge: Query local indexed knowledge passages.
             - capability_probe: Query macOS system capabilities.
 

@@ -142,7 +142,7 @@ struct CodexWorkspaceTests {
             let wire = String(decoding: try JSONEncoder().encode(input), as: UTF8.self)
                 + String(decoding: try JSONEncoder().encode(definitions), as: UTF8.self)
             #expect(markers.allSatisfy { !wire.contains($0) })
-            #expect(!definitions.map(\.name).contains("read_file"))
+            #expect(definitions.map(\.name).contains("read_file"))
             #expect(store.messages.last?.text.hasPrefix("Hosted fixture answer.") == true)
             #expect(reads == 1 && writes == 1)
             store.stop(); await store.waitForConversationTaskToSettle(); await worker.drain()
@@ -267,13 +267,124 @@ struct CodexWorkspaceTests {
         }
     }
 
+    enum FileReview: CaseIterable { case approve, decline, changeFile }
+
+    @Test(arguments: FileReview.allCases)
+    func hostedPlannerSearchesAndReadsAuthorizedFilesWithSeparateSharingReviews(decision: FileReview) async throws {
+        let folder = try ToolPolicy.canonicalURL(FileManager.default.temporaryDirectory.path)
+            .appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appending(path: "RELAY_PRIVATE_FILENAME.txt")
+        let body = "RELAY_PRIVATE_DOCUMENT_BODY"
+        try Data(body.utf8).write(to: file)
+        let search = ToolCall(id: "file-search", name: "search_files", arguments: ["query": .string("filename")])
+        let read = ToolCall(id: "file-read", name: "read_file", arguments: ["path": .string(file.path)])
+        var received: [[ModelMessage]] = []
+        let store = AssistantStore(persistenceURL: nil, fileReadWorker: FileExtractionWorker(),
+                                   filenameSearchWorker: FilenameSearchWorker(), codexComplete: { input, definitions in
+            received.append(input)
+            #expect(Set(definitions.map(\.name)).isSuperset(of: [search.name, read.name]))
+            switch received.count {
+            case 1: return ModelReply(content: "", toolCalls: [search])
+            case 2: return ModelReply(content: "", toolCalls: [read])
+            default: return ModelReply(content: "Reviewed the fixture.", toolCalls: [])
+            }
+        }, codexCheck: {})
+        defer { if store.isRunning { store.stop() } }
+        store.grants = [ScopeGrant(path: folder.path, writable: false)]
+        await store.selectWorkspaceCodex()
+        store.draft = "Find the fixture file in the selected folder and review it."
+        store.send(useWorkspaceProvider: true)
+
+        await waitUntil { store.pendingReview != nil || !store.isRunning }
+        let matches = try #require(store.pendingReview)
+        #expect(matches.sharesWithOpenAI && matches.call == search)
+        #expect(matches.reason.contains(file.path) && !matches.reason.contains(body))
+        #expect(received.count == 1)
+        #expect(received[0].allSatisfy { !$0.content.contains(file.path) })
+        store.approveReview()
+
+        await waitUntil { store.pendingReview != nil || !store.isRunning }
+        let excerpt = try #require(store.pendingReview)
+        #expect(excerpt.sharesWithOpenAI && excerpt.call == read)
+        #expect(excerpt.reason.contains(body))
+        #expect(received.count == 2)
+        #expect(received.last?.last?.content == matches.reason)
+        #expect(received.flatMap { $0 }.allSatisfy { !$0.content.contains(body) })
+        switch decision {
+        case .approve: store.approveReview()
+        case .decline: store.denyReview()
+        case .changeFile:
+            try Data("New file text.".utf8).write(to: file)
+            store.approveReview()
+        }
+        await settle(store)
+
+        switch decision {
+        case .approve:
+            #expect(received.count == 3)
+            #expect(received.last?.last?.content == excerpt.reason)
+            #expect(store.messages.last?.text.contains("Reviewed the fixture.") == true)
+        case .decline:
+            #expect(received.count == 2)
+            #expect(store.messages.last?.text.contains("kept the file result on this Mac") == true)
+        case .changeFile:
+            #expect(received.count == 2)
+            #expect(store.phase == .failed)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func hostedFileReadRequiresASelectedScope(grantOtherFile: Bool) async throws {
+        let folder = try ToolPolicy.canonicalURL(FileManager.default.temporaryDirectory.path)
+            .appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appending(path: "unselected.txt")
+        let selected = folder.appending(path: "selected.txt")
+        let privateBody = "RELAY_UNSELECTED_DOCUMENT_BODY"
+        try Data(privateBody.utf8).write(to: file)
+        try Data().write(to: selected)
+        let read = ToolCall(id: "unselected-read", name: "read_file", arguments: ["path": .string(file.path)])
+        var received: [[ModelMessage]] = []
+        let store = AssistantStore(persistenceURL: nil, fileReadWorker: FileExtractionWorker(),
+                                   codexComplete: { input, _ in
+            received.append(input)
+            return received.count == 1
+                ? ModelReply(content: "", toolCalls: [read])
+                : ModelReply(content: "Select the requested file in Relay.", toolCalls: [])
+        }, codexCheck: {})
+        defer { if store.isRunning { store.stop() } }
+        if grantOtherFile { store.grants = [ScopeGrant(path: selected.path, writable: false)] }
+        await store.selectWorkspaceCodex()
+        store.draft = "Read the unselected fixture."
+        store.send(useWorkspaceProvider: true)
+        await waitUntil { store.pendingReview != nil || !store.isRunning }
+        #expect(store.pendingReview == nil)
+        if store.isRunning { store.denyReview() }
+        await settle(store)
+
+        #expect(received.count == 2)
+        let feedback = try #require(received.last?.last)
+        #expect(feedback.toolCallID == read.id)
+        #expect(!feedback.content.contains(file.path))
+        #expect(!feedback.content.contains(privateBody))
+        if !grantOtherFile { #expect(feedback.content.contains("No files or folders are authorized")) }
+    }
+
     @Test func hostedPlannerCannotDispatchAnUnadvertisedPrivateTool() async throws {
-        let action = ToolCall(id: "blocked-private-tool", name: "read_file",
-                              arguments: ["path": .string("/synthetic/private-fixture.txt")])
+        let action = ToolCall(id: "blocked-private-tool", name: "search_knowledge",
+                              arguments: ["query": .string("/synthetic/private-fixture.txt")])
         var received: [[ModelMessage]] = []
         var dispatched: [ToolCall] = []
+        var selectedProviderCalls = 0
         let store = AssistantStore(
             persistenceURL: nil,
+            complete: { _, _, _ in
+                selectedProviderCalls += 1
+                return ModelReply(content: "Unexpected selected-provider fallback.", toolCalls: [])
+            },
             execute: { call in
                 dispatched.append(call)
                 return ToolResult(summary: "Unexpected private read", evidence: "Fixture", verified: false)
@@ -288,7 +399,9 @@ struct CodexWorkspaceTests {
             codexCheck: {}
         )
         defer { if store.isRunning { store.stop() } }
+        let selectedConfiguration = store.configuration
         await store.selectWorkspaceCodex()
+        #expect(store.workspaceUsesCodex && store.configuration == selectedConfiguration)
         store.draft = "Read the synthetic fixture."
         store.send(useWorkspaceProvider: true)
         await settle(store)
@@ -299,7 +412,13 @@ struct CodexWorkspaceTests {
         #expect(result.toolCallID == action.id)
         #expect(!result.content.contains("/synthetic/private-fixture.txt"))
         #expect(!result.content.contains("available with the local model only"))
-        #expect(store.activity.contains { $0.name == action.name && $0.detail.contains("local model only") })
+        #expect(store.activity.contains {
+            $0.name == action.name && $0.status == "failed / inspect before retry"
+                && $0.detail == "This tool is available with the configured model route, not Codex."
+        })
+        #expect(result.role == "tool" && result.toolName == action.name)
+        #expect(result.content == "Relay could not verify this action. The error is available locally in Activity. Do not blindly retry a mutation.")
+        #expect(selectedProviderCalls == 0 && store.workspaceUsesCodex && store.configuration == selectedConfiguration)
         #expect(store.phase == .needsInput)
         #expect(store.pendingReview == nil)
     }

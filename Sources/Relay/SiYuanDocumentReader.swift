@@ -23,6 +23,7 @@ nonisolated enum SiYuanDocumentReader {
         let truncated: Bool
         let omittedNodes: Int
         let attributeViewIDs: [String]
+        var updated: String? = nil
     }
 
     enum Failure: Error, Equatable, LocalizedError {
@@ -102,9 +103,11 @@ nonisolated enum SiYuanDocumentReader {
         if renderer.tableSpans > 0 { notes.append("Merged table cells retain stored row order; visual spans were not reconstructed.") }
         if (titleWasTruncated?.utf8.count ?? 0) > 512 { notes.append("The document title was shortened to 512 UTF-8 bytes.") }
         if truncated { notes.append("Text was bounded at \(limits.maximumTextBytes) UTF-8 bytes; omitted text is not searchable.") }
+        let updated = (root["Properties"] as? [String: Any])?["updated"] as? String
         try check()
         return Document(title: title, text: output.text, coverage: notes.joined(separator: " "),
-                        truncated: truncated, omittedNodes: renderer.omitted, attributeViewIDs: decoder.attributeViewIDs.sorted())
+                        truncated: truncated, omittedNodes: renderer.omitted, attributeViewIDs: decoder.attributeViewIDs.sorted(),
+                        updated: updated)
     }
 
     private static func string(_ key: String, in object: [String: Any]) throws -> String? {

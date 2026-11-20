@@ -8,20 +8,64 @@ struct ConversationExportView: View {
     @State private var format = ConversationExport.Format.markdown
     @State private var status: String?
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Export conversation").font(.system(size: 20, weight: .semibold))
-            Text("Export the visible messages as a local file. This includes private text and artifact paths in clear text. Source files are not copied. Hidden model context, model settings and approved memories are excluded.")
-                .font(.system(size: 14)).lineSpacing(4)
-            Picker("Export format", selection: $format) {
-                Text("Markdown").tag(ConversationExport.Format.markdown)
-                Text("JSON").tag(ConversationExport.Format.json)
-            }.pickerStyle(.segmented).font(.system(size: 15))
-            Toggle("Include Activity and action evidence", isOn: $includeActivity).font(.system(size: 15))
-            Text("Activity can include source excerpts, filenames and tool arguments. Keep it off for a smaller messages-only export.").font(.system(size: 14)).lineSpacing(4)
-            Text("Choose a private folder. A folder managed by a cloud provider may sync the exported file through macOS.").font(.system(size: 14)).lineSpacing(4)
-            Button("Export conversation…") { export() }.buttonStyle(RelaySecondaryButtonStyle()).disabled(store.isRunning || store.voice.isBusy)
-            if let status { Text(status).font(.system(size: 14)).textSelection(.enabled) }
-        }.foregroundStyle(.white)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                RelayIconBadge(icon: "square.and.arrow.up.fill", color: RelayColors.accentBlue, size: 38, iconSize: 17)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Export Conversation")
+                        .font(.relayHeadline)
+                        .foregroundStyle(RelayColors.textPrimary)
+                    Text("Export the visible messages as a local file. This includes private text and artifact paths in clear text. Source files are not copied.")
+                        .font(.relayCaption)
+                        .foregroundStyle(RelayColors.textSecondary)
+                        .lineSpacing(2)
+                }
+                Spacer()
+                Button("Export conversation…") { export() }
+                    .buttonStyle(RelaySecondaryButtonStyle())
+                    .disabled(store.isRunning || store.voice.isBusy)
+            }
+
+            HStack(spacing: 16) {
+                HStack(spacing: 8) {
+                    Text("Format")
+                        .font(.relayCaptionStrong)
+                        .foregroundStyle(RelayColors.textSecondary)
+                    Picker("Export format", selection: $format) {
+                        Text("Markdown").tag(ConversationExport.Format.markdown)
+                        Text("JSON").tag(ConversationExport.Format.json)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 150)
+                }
+
+                Toggle("Include Activity & action evidence", isOn: $includeActivity)
+                    .toggleStyle(.switch)
+                    .font(.relayCaptionStrong)
+                    .foregroundStyle(RelayColors.textPrimary)
+
+                Spacer()
+            }
+            .padding(12)
+            .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
+            )
+
+            Text("Activity can include source excerpts, filenames, and tool arguments. Choose a private folder; cloud-managed folders may sync exported files through macOS.")
+                .font(.relayCaption)
+                .foregroundStyle(RelayColors.textMuted)
+
+            if let status {
+                Text(status)
+                    .font(.relayCaption)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .textSelection(.enabled)
+            }
+        }
+        .foregroundStyle(RelayColors.textPrimary)
     }
     private func export() {
         do {

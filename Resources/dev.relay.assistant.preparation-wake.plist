@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.relay.assistant.preparation-wake</string>
+    <key>BundleProgram</key>
+    <string>Contents/MacOS/Relay</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>Contents/MacOS/Relay</string>
+        <string>--managed-preparation-wake</string>
+    </array>
+    <key>MachServices</key>
+    <dict>
+        <key>dev.relay.assistant.preparation-wake</key>
+        <true/>
+    </dict>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+</dict>
+</plist>

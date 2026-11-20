@@ -165,7 +165,7 @@ struct MultiAgentBlackboardTests {
 struct MultiAgentOrchestrationTests {
 
     private func settle(_ store: AssistantStore) async {
-        for _ in 0..<500 where store.isRunning { await Task.yield() }
+        await store.waitForConversationTaskToSettle()
         #expect(!store.isRunning)
     }
 

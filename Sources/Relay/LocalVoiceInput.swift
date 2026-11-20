@@ -273,10 +273,12 @@ final class LocalVoiceInput {
                 status = "Transcript limit reached. Review the retained text; nothing was sent."
                 return
             }
-            transcript = text
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || transcript.isEmpty {
+                transcript = text
+            }
             transcriptIsFinal = false
             if case .final = event {
-                transcriptIsFinal = true
+                transcriptIsFinal = !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 revision += 1
                 endCapture()
                 phase = .stopped
@@ -421,11 +423,16 @@ private final class AppleOnDeviceVoiceBackend: LocalVoiceBackend {
             if let result {
                 let text = result.bestTranscription.formattedString
                 let final = result.isFinal
+                sink.recordTranscript(text)
                 Task { @MainActor in onEvent(final ? .final(text) : .partial(text)) }
             }
             if let error {
-                let message = error.localizedDescription
-                Task { @MainActor in onEvent(.failure(message)) }
+                if let fallbackFinal = sink.consumeFinishingFallbackTranscript() {
+                    Task { @MainActor in onEvent(.final(fallbackFinal)) }
+                } else {
+                    let message = error.localizedDescription
+                    Task { @MainActor in onEvent(.failure(message)) }
+                }
             }
         }
         configurationObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { @Sendable _ in
@@ -439,7 +446,7 @@ private final class AppleOnDeviceVoiceBackend: LocalVoiceBackend {
         if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver); self.configurationObserver = nil }
         engine?.stop()
         if tapInstalled { engine?.inputNode.removeTap(onBus: 0); tapInstalled = false }
-        sink?.endAudio(); sink = nil
+        sink?.endAudio(finishing: false); sink = nil
         recognitionTask?.cancel(); recognitionTask = nil
         engine = nil
         recognizer = nil
@@ -449,7 +456,7 @@ private final class AppleOnDeviceVoiceBackend: LocalVoiceBackend {
         if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver); self.configurationObserver = nil }
         engine?.stop()
         if tapInstalled { engine?.inputNode.removeTap(onBus: 0); tapInstalled = false }
-        sink?.endAudio()
+        sink?.endAudio(finishing: true)
         recognitionTask?.finish()
         engine = nil
     }
@@ -461,12 +468,28 @@ nonisolated private final class VoiceAudioSink: @unchecked Sendable {
     private let lock = NSLock()
     private let request: SFSpeechAudioBufferRecognitionRequest
     private var ended = false
+    private var finishing = false
+    private var latestNonEmptyTranscript = ""
     init(request: SFSpeechAudioBufferRecognitionRequest) { self.request = request }
     func append(_ buffer: AVAudioPCMBuffer) {
         lock.withLock { if !ended { request.append(buffer) } }
     }
-    func endAudio() {
+    func recordTranscript(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        lock.withLock { latestNonEmptyTranscript = text }
+    }
+    func consumeFinishingFallbackTranscript() -> String? {
         lock.withLock {
+            guard finishing, !latestNonEmptyTranscript.isEmpty else { return nil }
+            let captured = latestNonEmptyTranscript
+            latestNonEmptyTranscript = ""
+            return captured
+        }
+    }
+    func endAudio(finishing: Bool) {
+        lock.withLock {
+            if finishing { self.finishing = true }
             guard !ended else { return }
             ended = true
             request.endAudio()

@@ -129,24 +129,42 @@ struct LocalModelLifecycleTests {
             dispatches += 1
             return ToolResult(summary: "Unexpected test dispatch", evidence: "No real action", verified: true)
         }, modelClient: client)
+        await store.waitForConversationTaskToSettle()
         store.configuration = configuration
         store.actionsReady = true
         store.draft = "List installed apps; do not launch anything."
-        store.send()
-        for _ in 0..<2_000 where !latch.waiting { await Task.yield() }
-        #expect(latch.waiting)
-        switch event {
-        case "stop": store.stop()
-        case "forget": store.invalidateDerivedContext(reason: "Synthetic source/memory/calendar invalidation")
-        case "reset": store.clearConversation()
-        default: store.unloadModel()
+        _ = try #require(store.send(), Comment(rawValue: store.errorMessage ?? "No submission ticket"))
+        let settlement = Task { @MainActor in
+            await store.waitForConversationTaskToSettle()
+            latch.markOperationSettled()
         }
-        #expect((runtime.records.first?.cancelled.value ?? 0) > 0)
-        latch.release()
-        for _ in 0..<2_000 where runtime.sessions.contains(where: { $0.value != nil }) || store.isRunning { await Task.yield() }
-        #expect(!store.isRunning)
-        #expect(dispatches == 0)
-        await settleSessions(runtime)
+        do {
+            let arrived = await latch.waitForArrivalOrSettlement()
+            #expect(latch.waiting)
+            try #require(arrived, Comment(rawValue: "Expected native reply boundary; phase=\(store.phase), error=\(store.errorMessage ?? "none"), records=\(runtime.records.count)"))
+            switch event {
+            case "stop": store.stop()
+            case "forget": store.invalidateDerivedContext(reason: "Synthetic source/memory/calendar invalidation")
+            case "reset":
+                store.clearConversation()
+                #expect(store.isClearingConversation)
+            default: store.unloadModel()
+            }
+            #expect((runtime.records.first?.cancelled.value ?? 0) > 0)
+            latch.release()
+            await settlement.value
+            // Await the separately owned reset, including its real model/history drain.
+            await store.waitForConversationTaskToSettle()
+            #expect(!store.isRunning)
+            if event == "reset" {
+                #expect(!store.isClearingConversation && store.phase == .idle)
+                #expect(store.messages.isEmpty && store.activity.isEmpty)
+            }
+            #expect(dispatches == 0)
+            await settleSessions(runtime)
+        } catch {
+            store.stop(); latch.release(); await settlement.value; throw error
+        }
     }
 
     @Test func settingsProbeReleasesItsSessionWhileKeepingModelReady() async throws {
@@ -360,6 +378,26 @@ nonisolated private final class LifecycleCancellationCount: @unchecked Sendable 
 @MainActor private final class LifecycleLatch {
     var waiting = false
     private var continuation: CheckedContinuation<Void, Never>?
-    func wait() async { await withCheckedContinuation { waiting = true; continuation = $0 } }
+    private var arrivalWaiters: [CheckedContinuation<Bool, Never>] = []
+    private var operationSettled = false
+    func wait() async {
+        await withCheckedContinuation {
+            waiting = true; continuation = $0
+            let arrivals = arrivalWaiters; arrivalWaiters.removeAll()
+            for arrival in arrivals { arrival.resume(returning: true) }
+        }
+    }
+    /// Actual session-send arrival or actual Store completion; no yield count
+    /// guesses when an asynchronous SQLite/model setup has reached this latch.
+    func waitForArrivalOrSettlement() async -> Bool {
+        if waiting { return true }
+        if operationSettled { return false }
+        return await withCheckedContinuation { arrivalWaiters.append($0) }
+    }
+    func markOperationSettled() {
+        operationSettled = true
+        let arrivals = arrivalWaiters; arrivalWaiters.removeAll()
+        for arrival in arrivals { arrival.resume(returning: false) }
+    }
     func release() { continuation?.resume(); continuation = nil }
 }

@@ -34,7 +34,13 @@ import RelayJournal
         private let lock = NSLock()
         private var result: Resolution?
         private var continuation: CheckedContinuation<Proof, any Error>?
+        private var kernelDone = false
         var isPending: Bool { lock.withLock { result == nil } }
+        var isKernelDone: Bool { lock.withLock { kernelDone } }
+        @discardableResult func completeFromKernel(_ result: Resolution) -> Bool {
+            lock.withLock { kernelDone = true }
+            return complete(result)
+        }
         func install(_ continuation: CheckedContinuation<Proof, any Error>) {
             let completed: Resolution? = lock.withLock {
                 if let result { return result }
@@ -68,6 +74,7 @@ import RelayJournal
     private nonisolated final class ReadHook: @unchecked Sendable {
         private let lock = NSLock()
         private var callback: (@Sendable () -> Void)?
+        var hasCallback: Bool { lock.withLock { callback != nil } }
         func set(_ callback: @escaping @Sendable () -> Void) { lock.withLock { self.callback = callback } }
         func take() -> (@Sendable () -> Void)? {
             lock.withLock { let value = callback; callback = nil; return value }
@@ -91,7 +98,7 @@ import RelayJournal
     }
 
     func capture(input: String, grants: [ScopeGrant]) async throws -> Proof {
-        try await perform(input: input, expected: nil, grants: grants)
+        return try await perform(input: input, expected: nil, grants: grants)
     }
     func validate(_ proof: Proof, grants: [ScopeGrant]) async throws {
         _ = try await perform(input: proof.input, expected: proof, grants: grants)
@@ -108,35 +115,49 @@ import RelayJournal
         let id = UUID(), delivery = Delivery()
         let deadline = ContinuousClock.now.advanced(by: timeout)
         #if DEBUG
-        let afterRead: @Sendable () -> Void = { [readHook] in readHook.take()?() }
+        let afterRead: @Sendable () async -> Void = { [readHook] in
+            guard let callback = readHook.take() else { return }
+            await withCheckedContinuation { continuation in
+                DispatchQueue.global(qos: .userInteractive).async {
+                    callback()
+                    continuation.resume()
+                }
+            }
+        }
         #else
-        let afterRead: @Sendable () -> Void = {}
+        let afterRead: @Sendable () async -> Void = {}
         #endif
-        let physical = Task { [weak self] in
+        let physical = Task.detached(priority: .userInitiated) { [weak self] in
             let result = await Self.kernel(input: input, expected: expected, grants: grants,
                 deadline: deadline, delivery: delivery, afterRead: afterRead)
-            delivery.complete(result)
-            // This is reached only after LocalStateFile's own defer closed its
-            // descriptor and the entire physical kernel/hook returned.
-            self?.physicalFinished(id)
+            if !delivery.completeFromKernel(result) {
+                await self?.physicalFinished(id)
+            }
         }
-        let expiry = Task {
+        let expiry = Task.detached(priority: .userInitiated) {
             do { try await Task.sleep(until: deadline, clock: .continuous) }
             catch { return }
             if delivery.complete(.failed(.timedOut)) { physical.cancel() }
         }
         active = Active(id: id, task: physical, expiry: expiry)
         return try await withTaskCancellationHandler {
-            let proof = try await withCheckedThrowingContinuation { continuation in delivery.install(continuation) }
+            defer {
+                expiry.cancel()
+                if delivery.isKernelDone { physicalFinished(id) }
+            }
+            let proof = try await Self.awaitDelivery(delivery)
             try Task.checkCancellation()
-            // A positive kernel result may wait for this actor while the
-            // expiry task is also queued. Admission keeps the original deadline.
-            guard ContinuousClock.now < deadline else { throw Failure.timedOut }
             return proof
         } onCancel: {
             delivery.complete(.cancelled)
             physical.cancel()
             expiry.cancel()
+        }
+    }
+    @concurrent
+    private static func awaitDelivery(_ delivery: Delivery) async throws -> Proof {
+        try await withCheckedThrowingContinuation { continuation in
+            delivery.install(continuation)
         }
     }
     private func physicalFinished(_ id: UUID) {
@@ -149,7 +170,7 @@ import RelayJournal
     /// and hashing run on the concurrent executor. No private bytes return to UI.
     @concurrent private static func kernel(input: String, expected: Proof?, grants: [ScopeGrant],
                                           deadline: ContinuousClock.Instant, delivery: Delivery,
-                                          afterRead: @escaping @Sendable () -> Void) async -> Resolution {
+                                          afterRead: @escaping @Sendable () async -> Void) async -> Resolution {
         func check() throws {
             try Task.checkCancellation()
             guard delivery.isPending else { throw CancellationError() }
@@ -176,7 +197,7 @@ import RelayJournal
             let data = try LocalStateFile.read(canonical, maximumBytes: 1_048_576)
             // LocalStateFile owns its descriptor until its synchronous return.
             // Cancellation/timeout never calls close from another task.
-            afterRead()
+            await afterRead()
             try check()
             let digest = Data(SHA256.hash(data: data))
             try check()

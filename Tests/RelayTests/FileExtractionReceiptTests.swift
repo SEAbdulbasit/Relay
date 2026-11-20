@@ -200,6 +200,7 @@ import Testing
         try await withFixture { fixture, worker in
             var combined: ModelInputSourceProof?
             for index in 0...1_024 {
+                if index == 20 { try? await Task.sleep(for: .seconds(8)) }
                 let call = fixture.call("actual-\(index)"), proposal = UUID()
                 let result = try await worker.extract(call: call, grants: fixture.grants, scope: fixture.scope(call, proposal: proposal))
                 combined = try ModelInputSourceProof.merging([combined, consume(result, call: call, fixture: fixture, proposal: proposal)])

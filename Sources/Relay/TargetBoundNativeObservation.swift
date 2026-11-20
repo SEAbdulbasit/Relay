@@ -9,6 +9,7 @@ import ImageIO
 final class TargetBoundNativeObservation {
     nonisolated enum Failure: Error, Equatable {
         case inactiveSession, stopped, busy, staleRequest, ambiguousApplication, unavailableWindow
+        case missingExclusiveApplication, multipleExclusiveApplications, changedExclusiveApplication
         case changedTarget, malformedHeader, wrongApplication, wrongWindow, nativeError, noUsableState
     }
 
@@ -34,6 +35,37 @@ final class TargetBoundNativeObservation {
         }
     }
 
+    /// Sealed only by the genuine saved ACK/anchor's supplied-original producer.
+    /// It qualifies this exact retained process/window for direct AX operations,
+    /// never app-only backend state/image dispatch or discovery of another app.
+    @MainActor fileprivate final class AcknowledgedOriginalBinding {
+        let identity: DesktopApplicationIdentity
+        let application: NSRunningApplication
+        let window: AXUIElement
+        let purpose: NativeExactUnsentPurpose
+        let validateEditor: @MainActor () throws -> Void
+
+        private init(identity: DesktopApplicationIdentity, application: NSRunningApplication,
+                     window: AXUIElement, purpose: NativeExactUnsentPurpose,
+                     validateEditor: @escaping @MainActor () throws -> Void) {
+            self.identity = identity; self.application = application
+            self.window = window; self.purpose = purpose; self.validateEditor = validateEditor
+        }
+
+        /// No raw identity/window/callback constructor is available to a caller.
+        /// The actual purpose spends its anchor's one preparation owner and
+        /// brackets this entire binder with the existing full technical proof.
+        static func withOriginal<Value>(purpose: NativeExactUnsentPurpose,
+            owner: TargetBoundNativeObservation,
+            readAudit: NativeReadAudit? = nil,
+            body: (AcknowledgedOriginalBinding) throws -> Value) throws -> Value {
+            try purpose.withSuppliedOriginal(owner: owner, readAudit: readAudit) { identity, application, window, validateEditor in
+                try body(AcknowledgedOriginalBinding(identity: identity, application: application,
+                    window: window, purpose: purpose, validateEditor: validateEditor))
+            }
+        }
+    }
+
     struct Preparation {
         let application: DesktopApplicationIdentity
         let window: WindowInfo
@@ -44,6 +76,10 @@ final class TargetBoundNativeObservation {
         let validateInput: (@MainActor () throws -> Void)?
         fileprivate let originalAXWindow: AXUIElement?
         fileprivate let originalFocus: NativeOriginalWindowFocus?
+        // Only bind(application:) can attach the real process/window adapter.
+        // The inert Preparation initializer never supplies this capability.
+        fileprivate var metadataSource: MetadataSource?
+        fileprivate var acknowledgedOriginal: AcknowledgedOriginalBinding?
 
         init(application: DesktopApplicationIdentity, window: WindowInfo,
              validate: @escaping @MainActor () throws -> Void,
@@ -84,8 +120,249 @@ final class TargetBoundNativeObservation {
         fileprivate let session: UUID
         fileprivate let preparation: Preparation
         var sourceID: UUID { preparation.sourceID }
+        var application: DesktopApplicationIdentity { preparation.application }
         func validate() throws { try preparation.validate() }
         func validateOriginalSource() throws { try preparation.validateSource() }
+    }
+
+    fileprivate struct MetadataSource {
+        let validateReference: @MainActor () throws -> Void
+        let validateSelectedWindow: @MainActor () throws -> Void
+        let processBinding: DesktopApplicationTarget.MetadataProcessBinding
+        let validateMetadataReference: @MainActor (DesktopApplicationTarget.MetadataProcessLease, DesktopApplicationTarget.MetadataProcessLease.QueryWitness?, NativeReadAudit?) throws -> Void
+        let validateTechnicalReference: @MainActor (DesktopApplicationTarget.MetadataProcessLease, DesktopApplicationTarget.MetadataProcessLease.QueryWitness?, NativeReadAudit?) throws -> Void
+    }
+
+    /// Comparison data only. It cannot bind a live observer, scope or AX target.
+    nonisolated struct MetadataLeaseIdentity: Equatable {
+        let owner: UUID, session: UUID, sourceID: UUID
+        func requireSame(as candidate: Self) throws {
+            guard self == candidate else { throw Failure.staleRequest }
+        }
+    }
+
+    /// The actual retained original binder alone supplies this descriptor.
+    /// Logical task checks are synchronous and bracket one technical query.
+    fileprivate final class DirectMetadataSource {
+        private weak var observer: TargetBoundNativeObservation?
+        private let identity: MetadataLeaseIdentity
+        private let authority: NativeLocalTaskInputAuthority
+        private let purpose: NativeExactUnsentPurpose
+        private let context: AssistantStore.ExactUnsentSavedInvocation.MetadataContext
+
+        fileprivate init(observer: TargetBoundNativeObservation, lease: TargetLease,
+            authority: NativeLocalTaskInputAuthority, purpose: NativeExactUnsentPurpose,
+            context: AssistantStore.ExactUnsentSavedInvocation.MetadataContext) {
+            self.observer = observer
+            identity = .init(owner: lease.owner, session: lease.session, sourceID: lease.sourceID)
+            self.authority = authority; self.purpose = purpose; self.context = context
+        }
+
+        func requireScopeBinding(_ binding: NativeMetadataScopeBinding) throws {
+            try binding.requireSealedMetadataAuthority(authority)
+        }
+
+        func metadataScopeBinding() -> NativeMetadataScopeBinding {
+            authority.metadataScopeBinding(for: purpose.objective.anchor.application)
+        }
+
+        func withQuery(target: NativeOriginalPolicyTarget, authorization: NativeMetadataScopeBinding.Authorization,
+            query: DesktopApplicationTarget.MetadataProcessLease.QueryWitness, readAudit: NativeReadAudit?,
+            body: () throws -> Void) throws {
+            try authorization.requireSealedProcess(authority: authority, purpose: purpose, context: context, currentQuery: query)
+            try context.withMetadataQuery(scope: authority.scope, query: query, readAudit: readAudit, validateBinding: {
+                guard let observer, observer.directMetadataAuthority === authority else { throw Failure.stopped }
+                guard observer.activeSession else { observer.stop(); throw Failure.inactiveSession }
+                guard !observer.stopped else { throw Failure.stopped }
+                try identity.requireSame(as: .init(owner: observer.owner, session: observer.session, sourceID: target.sourceID))
+                try authorization.requireSealedMetadataAuthority(authority)
+                try purpose.validateSealedMetadataPreparation(scope: authority.scope, owner: observer, context: context)
+            }, body: body)
+        }
+
+        func checkAdmittedTechnical(_ authorization: NativeMetadataScopeBinding.Authorization,
+                                    query: DesktopApplicationTarget.MetadataProcessLease.QueryWitness) throws {
+            try authorization.checkSealedTechnical(authority: authority, purpose: purpose, currentQuery: query)
+        }
+    }
+
+    /// Producer-only factory for fresh lexical metadata phases. It retains no
+    /// active phase, survey rows, images, labels or cached source verdict.
+    final class MetadataBinding {
+        private let sourceID: UUID
+        private let application: DesktopApplicationIdentity
+        private let window: AXUIElement
+        private let validateReference: @MainActor () throws -> Void
+        private let validateSelectedWindow: @MainActor () throws -> Void
+        private let validateActualSource: @MainActor () throws -> Void
+        private let processBinding: DesktopApplicationTarget.MetadataProcessBinding
+        private let validateMetadataReference: @MainActor (DesktopApplicationTarget.MetadataProcessLease, DesktopApplicationTarget.MetadataProcessLease.QueryWitness?, NativeReadAudit?) throws -> Void
+        private let validateTechnicalReference: @MainActor (DesktopApplicationTarget.MetadataProcessLease, DesktopApplicationTarget.MetadataProcessLease.QueryWitness?, NativeReadAudit?) throws -> Void
+        private let directSource: DirectMetadataSource?
+
+        /// Names this binder's actual lease validator. Only the original
+        /// direct binder can mint it, with no caller-supplied callback.
+        struct CanonicalDirectPolicySource {
+            let binding: MetadataBinding
+            fileprivate init(binding: MetadataBinding) { self.binding = binding }
+            var sourceID: UUID { binding.sourceID }
+            var application: DesktopApplicationIdentity { binding.application }
+            var window: AXUIElement { binding.window }
+            func validate() throws { try binding.validateActualSource() }
+        }
+
+        private struct ScopePlan {
+            let target: NativeOriginalPolicyTarget
+            let scope: NativeMetadataScopeBinding
+            let usesCanonicalDirectSource: Bool
+        }
+        private let scopePlan: ScopePlan?
+        var usesCanonicalDirectBoundary: Bool { scopePlan?.usesCanonicalDirectSource == true }
+
+        fileprivate init(sourceID: UUID, application: DesktopApplicationIdentity, window: AXUIElement,
+                         validateReference: @escaping @MainActor () throws -> Void,
+                         validateSelectedWindow: @escaping @MainActor () throws -> Void,
+                         validateActualSource: @escaping @MainActor () throws -> Void,
+                         processBinding: DesktopApplicationTarget.MetadataProcessBinding,
+                         validateMetadataReference: @escaping @MainActor (DesktopApplicationTarget.MetadataProcessLease, DesktopApplicationTarget.MetadataProcessLease.QueryWitness?, NativeReadAudit?) throws -> Void,
+                         validateTechnicalReference: @escaping @MainActor (DesktopApplicationTarget.MetadataProcessLease, DesktopApplicationTarget.MetadataProcessLease.QueryWitness?, NativeReadAudit?) throws -> Void,
+                         directSource: DirectMetadataSource?) {
+            self.sourceID = sourceID; self.application = application; self.window = window
+            self.validateReference = validateReference; self.validateSelectedWindow = validateSelectedWindow
+            self.validateActualSource = validateActualSource
+            self.processBinding = processBinding; self.validateMetadataReference = validateMetadataReference
+            self.validateTechnicalReference = validateTechnicalReference; self.directSource = directSource
+            scopePlan = nil
+        }
+
+        private init(copying original: MetadataBinding, plan: ScopePlan) {
+            sourceID = original.sourceID; application = original.application; window = original.window
+            validateReference = original.validateReference; validateSelectedWindow = original.validateSelectedWindow
+            validateActualSource = original.validateActualSource; scopePlan = plan
+            processBinding = original.processBinding; validateMetadataReference = original.validateMetadataReference
+            validateTechnicalReference = original.validateTechnicalReference; directSource = original.directSource
+        }
+
+        func canonicalExactUnsentPolicyTarget(readAudit: NativeReadAudit?) -> NativeOriginalPolicyTarget? {
+            guard directSource != nil, scopePlan == nil else { return nil }
+            return NativeOriginalPolicyTarget(directSource: .init(binding: self), readAudit: readAudit)
+        }
+
+        func canonicalMetadataScope() -> NativeMetadataScopeBinding? {
+            directSource?.metadataScopeBinding()
+        }
+
+        /// Keeps the actual producer fields, never another binding's plan or an
+        /// active authorization. Only the exact retained target may scope it.
+        func scoped(to target: NativeOriginalPolicyTarget, scope: NativeMetadataScopeBinding) throws -> MetadataBinding {
+            guard target.sourceID == sourceID, target.application == application,
+                  scope.application == application, target.matchesMetadataWindow(window) else { throw Failure.changedTarget }
+            try directSource?.requireScopeBinding(scope)
+            let plan = ScopePlan(target: target, scope: scope,
+                usesCanonicalDirectSource: directSource != nil && target.usesCanonicalDirectSource(self))
+            return MetadataBinding(copying: self, plan: plan)
+        }
+
+        func withPhase<Value>(sourceID: UUID, application: DesktopApplicationIdentity, window: AXUIElement,
+                              deadline: ContinuousClock.Instant,
+                              validateSource: @escaping @MainActor () throws -> Void,
+                              authorizeScope: @escaping @MainActor () throws -> Void,
+                              readAudit: NativeReadAudit?,
+                              body: @MainActor (NativeMetadataPhase) throws -> Value) throws -> Value {
+            guard sourceID == self.sourceID, application == self.application, CFEqual(window, self.window) else {
+                throw Failure.changedTarget
+            }
+            func run(validateSource: @escaping @MainActor () throws -> Void,
+                     authorizeScope: @escaping @MainActor () throws -> Void,
+                     sharedQueryScope: (@MainActor (DesktopApplicationTarget.MetadataProcessLease.QueryWitness) throws -> Void)? = nil,
+                     queryAuthorization: NativeMetadataScopeBinding.Authorization? = nil) throws -> Value {
+                let result: Result<Value, any Error> = Result {
+                    try processBinding.withLease { process in
+                        try NativeMetadataPhase.run(deadline: deadline, boundary: {
+                            try self.validateReference(); try authorizeScope(); try self.validateSelectedWindow()
+                            // The canonical direct target's full check is this
+                            // exact binder's producer proof. Keep both producer
+                            // checks around every independent target callback.
+                            if self.scopePlan?.usesCanonicalDirectSource != true {
+                                try self.validateActualSource()
+                            }
+                            try validateSource()
+                            if self.scopePlan?.usesCanonicalDirectSource != true {
+                                try self.validateActualSource()
+                            }
+                            try self.validateSelectedWindow(); try authorizeScope(); try self.validateReference()
+                        }, query: {
+                            try NativeReadAudit.measure(readAudit, .policyMetadataLeaseValidation) {
+                                if let sharedQueryScope {
+                                    // Sharing ends before this aggregate callback returns;
+                                    // the actual survey AX operation remains outside it.
+                                    try process.withCurrentQuery(readAudit: readAudit) { currentQuery in
+                                        if let directSource = self.directSource, let scopePlan = self.scopePlan,
+                                           let queryAuthorization {
+                                            try directSource.withQuery(target: scopePlan.target, authorization: queryAuthorization,
+                                                query: currentQuery, readAudit: readAudit) {
+                                                try NativeReadAudit.measure(readAudit, .policyMetadataReferenceValidation) {
+                                                    try self.validateTechnicalReference(process, currentQuery, readAudit)
+                                                }
+                                                try NativeReadAudit.measure(readAudit, .policyMetadataScopeAuthorization) {
+                                                    try scopePlan.target.validateAdditionalMetadataScope()
+                                                    try directSource.checkAdmittedTechnical(queryAuthorization, query: currentQuery)
+                                                }
+                                                try NativeReadAudit.measure(readAudit, .policyMetadataReferenceValidation) {
+                                                    try self.validateTechnicalReference(process, currentQuery, readAudit)
+                                                }
+                                            }
+                                        } else {
+                                            try NativeReadAudit.measure(readAudit, .policyMetadataReferenceValidation) {
+                                                try self.validateMetadataReference(process, currentQuery, readAudit)
+                                            }
+                                            try NativeReadAudit.measure(readAudit, .policyMetadataScopeAuthorization) {
+                                                try sharedQueryScope(currentQuery)
+                                            }
+                                            try NativeReadAudit.measure(readAudit, .policyMetadataReferenceValidation) {
+                                                try self.validateMetadataReference(process, currentQuery, readAudit)
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    try NativeReadAudit.measure(readAudit, .policyMetadataReferenceValidation) {
+                                        try self.validateMetadataReference(process, nil, readAudit)
+                                    }
+                                    // Opaque task restrictions keep their original full
+                                    // admission callback; no caller verdict is cached.
+                                    try NativeReadAudit.measure(readAudit, .policyMetadataScopeAuthorization) {
+                                        try authorizeScope()
+                                    }
+                                    try NativeReadAudit.measure(readAudit, .policyMetadataReferenceValidation) {
+                                        try self.validateMetadataReference(process, nil, readAudit)
+                                    }
+                                }
+                            }
+                        }, readAudit: readAudit, body: body)
+                    }
+                }
+                return try NativeMetadataPhase.finishLease(result, deadline: deadline, readAudit: readAudit)
+            }
+            guard let scopePlan else { return try run(validateSource: validateSource, authorizeScope: authorizeScope) }
+            let result: Result<Value, any Error> = Result {
+                try scopePlan.scope.withAuthorization(readAudit: readAudit) { authorization in
+                    let sharedQueryScope: (@MainActor (DesktopApplicationTarget.MetadataProcessLease.QueryWitness) throws -> Void)?
+                    if authorization.canShareCurrentProcessQuery {
+                        sharedQueryScope = { currentQuery in
+                            try scopePlan.target.validateAdditionalMetadataScope()
+                            try authorization.check(currentQuery: currentQuery)
+                        }
+                    } else {
+                        guard directSource == nil else { throw Failure.staleRequest }
+                        sharedQueryScope = nil
+                    }
+                    return try run(validateSource: { try scopePlan.target.validateSource() }, authorizeScope: {
+                        try scopePlan.target.validateAdditionalMetadataScope(); try authorization.check()
+                    }, sharedQueryScope: sharedQueryScope, queryAuthorization: authorization)
+                }
+            }
+            return try NativeMetadataPhase.finishLease(result, deadline: deadline, readAudit: readAudit)
+        }
     }
 
     nonisolated struct Image: Sendable {
@@ -122,6 +399,7 @@ final class TargetBoundNativeObservation {
     private var latestPreparation: Preparation?
     private var backend: Backend
     private let sessionIsActive: @MainActor () -> Bool
+    private weak var directMetadataAuthority: NativeLocalTaskInputAuthority?
     private var activeSession = true
     private var stopped = false
     private var captureTask: Task<OwnedNativeComputerUseClient.NativeResult, Error>?
@@ -136,6 +414,12 @@ final class TargetBoundNativeObservation {
         self.sessionIsActive = sessionIsActive
     }
 
+    init(client: OwnedNativeComputerUseClient, directExactUnsentAuthority authority: NativeLocalTaskInputAuthority) {
+        backend = Backend(client: client)
+        sessionIsActive = authority.exactUnsentSessionLiveness()
+        directMetadataAuthority = authority.metadataContext == nil ? nil : authority
+    }
+
     init(backend: Backend, sessionIsActive: @escaping @MainActor () -> Bool) {
         self.backend = backend; self.sessionIsActive = sessionIsActive
     }
@@ -146,6 +430,23 @@ final class TargetBoundNativeObservation {
             guard let self else { throw Failure.stopped }
             try self.requireActive()
         }))
+    }
+
+    /// Initial app-owned supplied-original purpose. This prepares metadata only;
+    /// it neither captures state nor selects/focuses a replacement window/editor.
+    func prepareInitialExactUnsent(_ purpose: NativeExactUnsentPurpose,
+                                   readAudit: NativeReadAudit? = nil) throws -> Request {
+        try requireActive()
+        return try AcknowledgedOriginalBinding.withOriginal(purpose: purpose, owner: self, readAudit: readAudit) { original in
+            try prepare(Self.bind(application: original.application, acknowledgedOriginal: original, readAudit: readAudit,
+                requireCurrent: { [weak self] in
+                    guard let self else { throw Failure.stopped }
+                    try self.requireActive()
+                    // Only the live task/ACK/owner lease, never a full survey,
+                    // is repeated inside each lexical metadata query.
+                    try purpose.validateMetadataOwnerForPreparedSource(owner: self)
+                }))
+        }
     }
 
 
@@ -167,6 +468,9 @@ final class TargetBoundNativeObservation {
         try requireActive()
         guard captureTask == nil else { throw Failure.busy }
         guard request.owner == owner, request.revision == revision else { throw Failure.staleRequest }
+        // This backend selects by app path, not our sealed PID/AX window. A
+        // direct supplied-original lease can never escape into that route.
+        guard request.preparation.acknowledgedOriginal == nil else { throw Failure.unavailableWindow }
         invalidateSnapshot()
         try request.preparation.validate()
         guard generation < UInt64.max else { throw Failure.stopped }
@@ -211,6 +515,17 @@ final class TargetBoundNativeObservation {
               snapshot.id == lastSnapshot else { return false }
         do { try validateLatest?(); return true }
         catch { invalidateSnapshot(); return false }
+    }
+
+    /// Metadata-only retained target before the first control image. General
+    /// read capture is unchanged; a control caller may inspect this exact source
+    /// before admitting provider image/AX state capture.
+    func retainPreparedTarget(_ request: Request) throws -> TargetLease {
+        try requireActive()
+        guard request.owner == owner, request.revision == revision else { throw Failure.staleRequest }
+        try request.preparation.validateSource()
+        try requireActive()
+        return TargetLease(owner: owner, session: session, preparation: request.preparation)
     }
 
     func retainTarget(for snapshot: Snapshot) throws -> TargetLease {
@@ -258,6 +573,63 @@ final class TargetBoundNativeObservation {
         try validateOriginalSource(lease)
         guard let original = lease.preparation.originalAXWindow else { throw Failure.unavailableWindow }
         return original
+    }
+
+    func matchesOriginalAXWindow(_ candidate: AXUIElement, lease: TargetLease) -> Bool {
+        guard lease.owner == owner, lease.session == session,
+              let original = lease.preparation.originalAXWindow else { return false }
+        return CFEqual(candidate, original)
+    }
+
+    func validateAlreadyVerifiedOriginalForInput(_ lease: TargetLease) throws {
+        try requireActive()
+        guard lease.owner == owner, lease.session == session,
+              let original = lease.preparation.originalAXWindow else { throw Failure.staleRequest }
+        let root = AXUIElementCreateApplication(lease.application.processID)
+        AXUIElementSetMessagingTimeout(root, 0.12)
+        guard CFEqual(try Self.selectedWindow(root), original),
+              let app = NSRunningApplication(processIdentifier: lease.application.processID),
+              DesktopApplicationTarget.matches(lease.application, application: app),
+              app.isActive, let front = NSWorkspace.shared.frontmostApplication,
+              DesktopApplicationTarget.matches(lease.application, application: front) else {
+            throw Failure.changedTarget
+        }
+        try requireActive()
+    }
+
+    /// No fallback for an inert/custom Preparation. Production callers must
+    /// obtain this from the same actual binder that retained their AX window.
+    func metadataBinding(_ lease: TargetLease) throws -> MetadataBinding {
+        try requireActive()
+        guard lease.owner == owner, lease.session == session else { throw Failure.staleRequest }
+        guard let source = lease.preparation.metadataSource,
+              let window = lease.preparation.originalAXWindow else { throw Failure.unavailableWindow }
+        let validateLease: @MainActor () throws -> Void = { [weak self] in
+            guard let self else { throw Failure.stopped }
+            try self.requireActive()
+            guard lease.owner == self.owner, lease.session == self.session else { throw Failure.staleRequest }
+        }
+        try validateLease(); try source.validateReference(); try validateLease()
+        let directSource: DirectMetadataSource?
+        if let original = lease.preparation.acknowledgedOriginal, let authority = directMetadataAuthority {
+            guard let context = authority.metadataContext,
+                  case .initialExactUnsent(let purpose) = authority.windowRequirement,
+                  original.purpose === purpose else { throw Failure.staleRequest }
+            directSource = DirectMetadataSource(observer: self, lease: lease, authority: authority, purpose: purpose, context: context)
+        } else { directSource = nil }
+        return MetadataBinding(sourceID: lease.sourceID, application: lease.application, window: window,
+            validateReference: {
+                try validateLease(); try source.validateReference(); try validateLease()
+            }, validateSelectedWindow: {
+                try validateLease(); try source.validateSelectedWindow(); try validateLease()
+            }, validateActualSource: { [weak self] in
+                guard let self else { throw Failure.stopped }
+                try self.validateOriginalSource(lease)
+            }, processBinding: source.processBinding, validateMetadataReference: { process, currentQuery, audit in
+                try NativeReadAudit.measure(audit, .policyMetadataObserverOwnerValidation) { try validateLease() }
+                try source.validateMetadataReference(process, currentQuery, audit)
+                try NativeReadAudit.measure(audit, .policyMetadataObserverOwnerValidation) { try validateLease() }
+            }, validateTechnicalReference: source.validateTechnicalReference, directSource: directSource)
     }
 
     func restoreReviewedOriginalFocus(_ lease: TargetLease, authorization: NativeReviewedFocusAuthorization,
@@ -327,29 +699,47 @@ final class TargetBoundNativeObservation {
     }
 
     private static func bind(application: NSRunningApplication,
+                             acknowledgedOriginal: AcknowledgedOriginalBinding? = nil,
+                             readAudit: NativeReadAudit? = nil,
                              requireCurrent: @escaping @MainActor () throws -> Void) throws -> Preparation {
         try requireCurrent()
         guard AXIsProcessTrusted(), let identity = DesktopApplicationTarget.identity(of: application) else {
             throw Failure.ambiguousApplication
         }
-        try requireExclusive(identity)
+        if let acknowledgedOriginal {
+            guard application === acknowledgedOriginal.application,
+                  identity == acknowledgedOriginal.identity else { throw Failure.changedTarget }
+            // The first closed exact-field purpose covers native standard editors,
+            // not browser document/tab acquisition or new Apple Events admission.
+            if isBrowser(identity) { throw Failure.unavailableWindow }
+        } else {
+            // General app discovery and every app-only backend read keep their
+            // original global ambiguity policy. A raw window cannot opt out.
+            try requireExclusive(identity)
+        }
         let root = AXUIElementCreateApplication(identity.processID)
         AXUIElementSetMessagingTimeout(root, 0.12)
-        let window = try selectedWindow(root)
+        let window: AXUIElement
+        if let acknowledgedOriginal { window = acknowledgedOriginal.window }
+        else { window = try selectedWindow(root) }
         let initial = try windowInfo(window)
         guard valid(initial) else { throw Failure.unavailableWindow }
         let sourceID = UUID()
         let validateOriginalFacts: @MainActor () throws -> Void = {
             try requireCurrent()
-            guard AXIsProcessTrusted(), DesktopApplicationTarget.matches(identity, application: application) else { throw Failure.changedTarget }
-            try requireExclusive(identity)
+            if let acknowledgedOriginal {
+                try acknowledgedOriginal.validateEditor()
+            } else {
+                guard AXIsProcessTrusted(), DesktopApplicationTarget.matches(identity, application: application) else { throw Failure.changedTarget }
+                try requireExclusive(identity)
+            }
             var pid: pid_t = 0
             guard AXUIElementGetPid(window, &pid) == .success, pid == identity.processID,
-                  initial.matchesExactly(try windowInfo(window)) else { throw Failure.changedTarget }
+                  initial.matchesExactly(try windowInfo(window, acknowledgedOriginal: acknowledgedOriginal, readAudit: readAudit)) else { throw Failure.changedTarget }
             try requireCurrent()
         }
-        // Initial binding still selects one original window once; it cannot recover
-        // an unqualified first binding or substitute another current window later.
+        // An ordinary first binding selects once; a supplied binding never
+        // chooses a current replacement. Both require selected-original proof.
         let validateInitiallySelected: @MainActor () throws -> Void = {
             try validateOriginalFacts()
             guard CFEqual(try selectedWindow(root), window) else { throw Failure.changedTarget }
@@ -362,12 +752,14 @@ final class TargetBoundNativeObservation {
         if let browser { try BrowserPageReader.validateCurrentTarget(browser, expectedWindow: window) }
         let validateOriginalDocument: @MainActor () throws -> Void = {
             try validateOriginalFacts()
-            if let browser { try BrowserPageReader.validateCurrentTarget(browser, expectedWindow: window) }
-            try requireCurrent()
+            if let browser {
+                try BrowserPageReader.validateCurrentTarget(browser, expectedWindow: window)
+                try requireCurrent()
+            }
         }
         let validateSource: @MainActor () throws -> Void = {
             try uniqueWindow(window, title: initial.title, root: root, allowSiblingRecovery: true,
-                validateOriginal: validateOriginalDocument, requireCurrent: requireCurrent)
+                validateOriginal: validateOriginalDocument, requireCurrent: requireCurrent, readAudit: readAudit)
         }
         let validateCapture: @MainActor () throws -> Void = {
             try validateSource()
@@ -386,15 +778,63 @@ final class TargetBoundNativeObservation {
             originalWindow: window, validateOriginalSource: validateSource,
             validateForInput: validateInput, sessionIsActive: { (try? requireCurrent()) != nil })
         try requireCurrent()
-        return Preparation(application: identity, window: initial, validate: validateCapture,
+        var preparation = Preparation(application: identity, window: initial, validate: validateCapture,
             sourceID: sourceID, validateSource: validateSource, validateInput: validateInput,
             originalAXWindow: window, originalFocus: focus)
+        preparation.acknowledgedOriginal = acknowledgedOriginal
+        let processBinding = try DesktopApplicationTarget.MetadataProcessBinding.bind(identity: identity, application: application)
+        let validateTechnicalReference: @MainActor (DesktopApplicationTarget.MetadataProcessLease,
+            DesktopApplicationTarget.MetadataProcessLease.QueryWitness?, NativeReadAudit?) throws -> Void = { process, currentQuery, audit in
+            guard NativeReadAudit.measure(audit, .policyMetadataTrustValidation, operation: { AXIsProcessTrusted() }) else {
+                throw Failure.changedTarget
+            }
+            try NativeReadAudit.measure(audit, .policyMetadataProcessFenceValidation) { try process.check(currentQuery: currentQuery) }
+            var windowPID: pid_t = 0, rootPID: pid_t = 0
+            guard NativeReadAudit.measure(audit, .policyMetadataWindowPIDValidation, operation: {
+                AXUIElementGetPid(window, &windowPID) == .success && windowPID == identity.processID
+            }), NativeReadAudit.measure(audit, .policyMetadataRootPIDValidation, operation: {
+                AXUIElementGetPid(root, &rootPID) == .success && rootPID == identity.processID
+            }) else {
+                throw Failure.changedTarget
+            }
+            try NativeReadAudit.measure(audit, .policyMetadataProcessFenceValidation) { try process.check(currentQuery: currentQuery) }
+        }
+        preparation.metadataSource = MetadataSource(validateReference: {
+            try requireCurrent()
+            guard AXIsProcessTrusted(), DesktopApplicationTarget.matches(identity, application: application) else {
+                throw Failure.changedTarget
+            }
+            // Retained AX objects are never reselected here. Their PID plus
+            // each actual query's live result constrain this metadata-only scan;
+            // full window/document/browser proof remains a phase boundary check.
+            var windowPID: pid_t = 0, rootPID: pid_t = 0
+            guard AXUIElementGetPid(window, &windowPID) == .success, windowPID == identity.processID,
+                  AXUIElementGetPid(root, &rootPID) == .success, rootPID == identity.processID else {
+                throw Failure.changedTarget
+            }
+            try requireCurrent()
+        }, validateSelectedWindow: {
+            try requireCurrent()
+            guard CFEqual(try selectedWindow(root), window) else { throw Failure.changedTarget }
+            try requireCurrent()
+        }, processBinding: processBinding, validateMetadataReference: { process, currentQuery, audit in
+            try NativeReadAudit.measure(audit, .policyMetadataCurrentValidation) { try requireCurrent() }
+            try validateTechnicalReference(process, currentQuery, audit)
+            try NativeReadAudit.measure(audit, .policyMetadataCurrentValidation) { try requireCurrent() }
+        }, validateTechnicalReference: validateTechnicalReference)
+        return preparation
     }
 
     private static func requireExclusive(_ identity: DesktopApplicationIdentity) throws {
-        let candidates = NSRunningApplication.runningApplications(withBundleIdentifier: identity.bundleID).filter { !$0.isTerminated }
-        guard candidates.count == 1, let selected = candidates.first,
-              DesktopApplicationTarget.matches(identity, application: selected) else { throw Failure.ambiguousApplication }
+        let registered = NSRunningApplication.runningApplications(withBundleIdentifier: identity.bundleID)
+        let workspace = NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == identity.bundleID }
+        let live = (registered + workspace).filter { !$0.isTerminated }
+        let processIDs = Set(live.map(\.processIdentifier))
+        guard !processIDs.isEmpty else { throw Failure.missingExclusiveApplication }
+        guard processIDs.count == 1 else { throw Failure.multipleExclusiveApplications }
+        guard live.allSatisfy({ DesktopApplicationTarget.matches(identity, application: $0) }) else {
+            throw Failure.changedExclusiveApplication
+        }
     }
 
     private static func isBrowser(_ identity: DesktopApplicationIdentity) -> Bool {
@@ -417,54 +857,168 @@ final class TargetBoundNativeObservation {
     private static func uniqueWindow(_ original: AXUIElement, title: String, root: AXUIElement,
                                      allowSiblingRecovery: Bool,
                                      validateOriginal: @escaping @MainActor () throws -> Void,
-                                     requireCurrent: @escaping @MainActor () throws -> Void) throws {
-        let backend = NativeWindowEnumeration.Backend<AXUIElement>(enumerate: {
-            var value: CFTypeRef?
-            let status = AXUIElementCopyAttributeValue(root, kAXWindowsAttribute as CFString, &value)
-            guard status == .success else { throw NativeWindowEnumeration.ReadFailure(attribute: .windows, status: status) }
-            guard let windows = value as? [AXUIElement] else { throw Failure.unavailableWindow }
-            return windows
-        }, title: { member in
-            AXUIElementSetMessagingTimeout(member, 0.04)
-            var value: CFTypeRef?
-            let status = AXUIElementCopyAttributeValue(member, kAXTitleAttribute as CFString, &value)
-            guard status == .success else { throw NativeWindowEnumeration.ReadFailure(attribute: .title, status: status) }
-            guard let title = value as? String else { throw Failure.unavailableWindow }
-            return title
-        }, same: { CFEqual($0, $1) }, validateOriginal: validateOriginal, requireCurrent: requireCurrent)
-        do {
-            try NativeWindowEnumeration.validate(original: original, title: title,
-                allowSiblingRecovery: allowSiblingRecovery, backend: backend)
-        } catch let error as NativeWindowEnumeration.Failure {
-            switch error {
-            case .unavailableWindow: throw Failure.unavailableWindow
-            case .wrongWindow: throw Failure.wrongWindow
-            case .changedEnumeration: throw Failure.changedTarget
+                                     requireCurrent: @escaping @MainActor () throws -> Void,
+                                     readAudit: NativeReadAudit? = nil) throws {
+        try NativeReadAudit.measure(readAudit, .retainedUniqueWindowValidation) {
+            let backend = NativeWindowEnumeration.Backend<AXUIElement>(enumerate: {
+                var value: CFTypeRef?
+                let status = NativeReadAudit.measure(readAudit, .retainedUniqueWindowListRead) {
+                    AXUIElementCopyAttributeValue(root, kAXWindowsAttribute as CFString, &value)
+                }
+                guard status == .success else { throw NativeWindowEnumeration.ReadFailure(attribute: .windows, status: status) }
+                guard let windows = value as? [AXUIElement] else { throw Failure.unavailableWindow }
+                return windows
+            }, title: { member in
+                AXUIElementSetMessagingTimeout(member, 0.04)
+                var value: CFTypeRef?
+                let status = NativeReadAudit.measure(readAudit, .retainedUniqueWindowTitleRead) {
+                    AXUIElementCopyAttributeValue(member, kAXTitleAttribute as CFString, &value)
+                }
+                guard status == .success else { throw NativeWindowEnumeration.ReadFailure(attribute: .title, status: status) }
+                guard let title = value as? String else { throw Failure.unavailableWindow }
+                return title
+            }, same: { CFEqual($0, $1) }, validateOriginal: validateOriginal, requireCurrent: {
+                try NativeReadAudit.measure(readAudit, .retainedUniqueWindowCurrentValidation) { try requireCurrent() }
+            })
+            do {
+                try NativeWindowEnumeration.validate(original: original, title: title,
+                    allowSiblingRecovery: allowSiblingRecovery, backend: backend)
+            } catch let error as NativeWindowEnumeration.Failure {
+                switch error {
+                case .unavailableWindow: throw Failure.unavailableWindow
+                case .wrongWindow: throw Failure.wrongWindow
+                case .changedEnumeration: throw Failure.changedTarget
+                }
+            } catch is NativeWindowEnumeration.ReadFailure {
+                throw Failure.unavailableWindow
             }
-        } catch is NativeWindowEnumeration.ReadFailure {
-            throw Failure.unavailableWindow
         }
     }
 
-    private static func windowInfo(_ window: AXUIElement) throws -> WindowInfo {
-        AXUIElementSetMessagingTimeout(window, 0.08)
-        guard let role = attribute(window, kAXRoleAttribute) as? String,
-              let title = attribute(window, kAXTitleAttribute) as? String,
-              let minimized = attribute(window, kAXMinimizedAttribute) as? Bool,
-              let position = attribute(window, kAXPositionAttribute), CFGetTypeID(position) == AXValueGetTypeID(),
-              let size = attribute(window, kAXSizeAttribute), CFGetTypeID(size) == AXValueGetTypeID() else { throw Failure.unavailableWindow }
-        var point = CGPoint.zero, dimensions = CGSize.zero
-        guard AXValueGetValue(unsafeBitCast(position, to: AXValue.self), .cgPoint, &point),
-              AXValueGetValue(unsafeBitCast(size, to: AXValue.self), .cgSize, &dimensions) else { throw Failure.unavailableWindow }
-        func text(_ name: String) -> String {
-            let value = attribute(window, name)
+    static let requiredWindowInfoAttributes = [kAXRoleAttribute, kAXTitleAttribute, kAXMinimizedAttribute,
+                                               kAXPositionAttribute, kAXSizeAttribute]
+    static let optionalWindowInfoAttributes = [kAXIdentifierAttribute, kAXDocumentAttribute, kAXURLAttribute,
+                                               "AXHidden", "AXModal"]
+    static let acknowledgedWindowInfoAttributes = requiredWindowInfoAttributes + optionalWindowInfoAttributes
+
+    struct RequiredWindowInfo {
+        let role: String, title: String
+        let minimized: Bool
+        let point: CGPoint, dimensions: CGSize
+    }
+
+    static func decodeRequiredWindowInfo(status: AXError, values: CFTypeRef?) throws -> RequiredWindowInfo {
+        guard status == .success, let values, CFGetTypeID(values) == CFArrayGetTypeID() else { throw Failure.unavailableWindow }
+        let array = unsafeDowncast(values, to: CFArray.self)
+        guard CFArrayGetCount(array) == requiredWindowInfoAttributes.count else { throw Failure.unavailableWindow }
+        return try decodeRequiredWindowInfoPrefix(array)
+    }
+
+    private static func decodeRequiredWindowInfoPrefix(_ array: CFArray) throws -> RequiredWindowInfo {
+        func required(_ index: Int, type: CFTypeID) throws -> CFTypeRef {
+            guard let pointer = CFArrayGetValueAtIndex(array, index) else { throw Failure.unavailableWindow }
+            let value = Unmanaged<AnyObject>.fromOpaque(pointer).takeUnretainedValue() as CFTypeRef
+            guard CFGetTypeID(value) == type else { throw Failure.unavailableWindow }
+            return value
+        }
+        guard let role = try required(0, type: CFStringGetTypeID()) as? String,
+              let title = try required(1, type: CFStringGetTypeID()) as? String else { throw Failure.unavailableWindow }
+        let minimized = CFBooleanGetValue(unsafeDowncast(try required(2, type: CFBooleanGetTypeID()), to: CFBoolean.self))
+        let position = unsafeDowncast(try required(3, type: AXValueGetTypeID()), to: AXValue.self)
+        let size = unsafeDowncast(try required(4, type: AXValueGetTypeID()), to: AXValue.self)
+        guard AXValueGetType(position) == .cgPoint, AXValueGetType(size) == .cgSize else { throw Failure.unavailableWindow }
+        let (point, dimensions) = try windowGeometry(position, size)
+        return .init(role: role, title: title, minimized: minimized, point: point, dimensions: dimensions)
+    }
+
+    static func decodeAcknowledgedWindowInfo(status: AXError, values: CFTypeRef?) throws -> WindowInfo {
+        guard status == .success, let values, CFGetTypeID(values) == CFArrayGetTypeID() else { throw Failure.unavailableWindow }
+        let array = unsafeDowncast(values, to: CFArray.self)
+        guard CFArrayGetCount(array) == acknowledgedWindowInfoAttributes.count else { throw Failure.unavailableWindow }
+        let required = try decodeRequiredWindowInfoPrefix(array)
+        func optionalSlot(_ index: Int) -> CFTypeRef? {
+            guard let pointer = CFArrayGetValueAtIndex(array, index) else { return nil }
+            let value = Unmanaged<AnyObject>.fromOpaque(pointer).takeUnretainedValue() as CFTypeRef
+            if CFGetTypeID(value) == AXValueGetTypeID() {
+                let axValue = unsafeDowncast(value, to: AXValue.self)
+                if AXValueGetType(axValue) == .axError { return nil }
+            }
+            if CFGetTypeID(value) == CFNullGetTypeID() { return nil }
+            return value
+        }
+        func optionalText(_ index: Int) -> String {
+            guard let value = optionalSlot(index) else { return "" }
             if let string = value as? String { return string }
             if let url = value as? URL { return url.absoluteString }
             return ""
         }
-        return WindowInfo(title: title, role: role, identifier: text(kAXIdentifierAttribute), document: text(kAXDocumentAttribute),
-            url: text(kAXURLAttribute), x: point.x, y: point.y, width: dimensions.width, height: dimensions.height,
-            minimized: minimized, hidden: attribute(window, "AXHidden") as? Bool, modal: attribute(window, "AXModal") as? Bool)
+        func optionalBool(_ index: Int) -> Bool? {
+            guard let value = optionalSlot(index), CFGetTypeID(value) == CFBooleanGetTypeID() else { return nil }
+            return CFBooleanGetValue(unsafeDowncast(value, to: CFBoolean.self))
+        }
+        return WindowInfo(
+            title: required.title,
+            role: required.role,
+            identifier: optionalText(5),
+            document: optionalText(6),
+            url: optionalText(7),
+            x: required.point.x,
+            y: required.point.y,
+            width: required.dimensions.width,
+            height: required.dimensions.height,
+            minimized: required.minimized,
+            hidden: optionalBool(8),
+            modal: optionalBool(9)
+        )
+    }
+
+    private static func windowGeometry(_ position: AXValue, _ size: AXValue) throws -> (CGPoint, CGSize) {
+        var point = CGPoint.zero, dimensions = CGSize.zero
+        guard AXValueGetValue(position, .cgPoint, &point), AXValueGetValue(size, .cgSize, &dimensions) else { throw Failure.unavailableWindow }
+        return (point, dimensions)
+    }
+
+    private static func windowInfo(_ window: AXUIElement,
+                                   acknowledgedOriginal: AcknowledgedOriginalBinding? = nil,
+                                   readAudit: NativeReadAudit? = nil) throws -> WindowInfo {
+        try NativeReadAudit.measure(readAudit, .retainedWindowInfoValidation) {
+            AXUIElementSetMessagingTimeout(window, 0.08)
+            if let acknowledgedOriginal {
+                // Only the genuine acknowledged original's full source proof uses
+                // this fixed batch. Any incomplete required slot refuses without fallback.
+                guard CFEqual(window, acknowledgedOriginal.window) else { throw Failure.changedTarget }
+                var values: CFArray?
+                let status = NativeReadAudit.measure(readAudit, .retainedWindowInfoRequiredBatchRead) {
+                    AXUIElementCopyMultipleAttributeValues(acknowledgedOriginal.window,
+                        acknowledgedWindowInfoAttributes as CFArray, [], &values)
+                }
+                return try decodeAcknowledgedWindowInfo(status: status, values: values)
+            }
+            guard let role = attribute(window, kAXRoleAttribute) as? String,
+                  let title = attribute(window, kAXTitleAttribute) as? String,
+                  let minimized = attribute(window, kAXMinimizedAttribute) as? Bool,
+                  let position = attribute(window, kAXPositionAttribute), CFGetTypeID(position) == AXValueGetTypeID(),
+                  let size = attribute(window, kAXSizeAttribute), CFGetTypeID(size) == AXValueGetTypeID() else { throw Failure.unavailableWindow }
+            let (point, dimensions) = try windowGeometry(unsafeBitCast(position, to: AXValue.self), unsafeBitCast(size, to: AXValue.self))
+            let required = RequiredWindowInfo(role: role, title: title, minimized: minimized, point: point, dimensions: dimensions)
+            @MainActor func text(_ name: String) -> String {
+                let value = attribute(window, name)
+                if let string = value as? String { return string }
+                if let url = value as? URL { return url.absoluteString }
+                return ""
+            }
+            let optional = NativeReadAudit.measure(readAudit, .retainedWindowInfoOptionalAttributesRead) {
+                (identifier: text(kAXIdentifierAttribute),
+                 document: text(kAXDocumentAttribute),
+                 url: text(kAXURLAttribute),
+                 hidden: attribute(window, "AXHidden") as? Bool,
+                 modal: attribute(window, "AXModal") as? Bool)
+            }
+            return WindowInfo(title: required.title, role: required.role, identifier: optional.identifier, document: optional.document,
+                url: optional.url, x: required.point.x, y: required.point.y,
+                width: required.dimensions.width, height: required.dimensions.height,
+                minimized: required.minimized, hidden: optional.hidden, modal: optional.modal)
+        }
     }
 
     private static func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {

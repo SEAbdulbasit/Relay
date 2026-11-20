@@ -196,8 +196,16 @@ import Testing
     }
 
     private func until(_ condition: @MainActor () -> Bool) async {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-        while !condition(), ContinuousClock.now < deadline { await Task.yield() }
-        #expect(condition(), "Synthetic native summary did not settle.")
+        let start = ContinuousClock.now, deadline = start.advanced(by: .seconds(3))
+        var polls = 0
+        // Yielding alone immediately re-enqueues this MainActor poll and can
+        // starve the capture's cross-executor handoff under the full suite.
+        // Suspend between observations; keep the same three-second deadline
+        // and every source/queue/result assertion.
+        while !condition(), ContinuousClock.now < deadline {
+            polls += 1
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(condition(), "Synthetic native summary bounded wait expired: elapsed_ms=\(WorkerSettlementDiagnostics.milliseconds(start.duration(to: .now))), polls=\(polls).")
     }
 }

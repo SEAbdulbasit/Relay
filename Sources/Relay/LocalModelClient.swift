@@ -42,7 +42,7 @@ final class LocalModelClient {
 
     static func validatedModelURL(_ configuration: ModelConfiguration) throws -> URL {
         guard configuration.backend == .liteRTLM else {
-            throw RelayError.message("The selected provider is LM Studio. Use its local connection instead of opening an embedded model package.")
+            throw RelayError.message("The selected provider is \(configuration.localProviderName). Use its connection instead of opening an embedded model package.")
         }
         guard !configuration.modelPath.isEmpty, configuration.modelPath.hasPrefix("/"),
               !configuration.modelPath.contains("\0"),
@@ -73,8 +73,12 @@ final class LocalModelClient {
     private func load(configuration: ModelConfiguration, mode: RuntimeMode) async throws {
         try Task.checkCancellation()
         let url = try Self.validatedModelURL(configuration)
-        let identity = "\(url.path)|\(configuration.computeBackend)" + (mode == .vision ? "|native-vision" : "")
-        if let loadedIdentity, LMStudioProtocolID.same(loadedIdentity, identity), runtime != nil { return }
+        let baseIdentity = "\(url.path)|\(configuration.computeBackend)"
+        let visionIdentity = "\(baseIdentity)|native-vision"
+        let identity = mode == .vision ? visionIdentity : baseIdentity
+        if let loadedIdentity, runtime != nil {
+            if LMStudioProtocolID.same(loadedIdentity, identity) { return }
+        }
         guard !generating else { throw RelayError.message("Stop the current inference before replacing its model.") }
         guard !loading else { throw RelayError.message("A local model is already loading. Wait for initialization to finish.") }
         loading = true
@@ -142,14 +146,18 @@ final class LocalModelClient {
         try Task.checkCancellation()
         var visionContext: (systemPrompt: String, messages: [ModelMessage])?
         var visionTools: [any LiteRTLM.Tool]?
+        var textContext: NativeTextContext?
         if let visionInput {
             try visionInput.validate()
             let context = try Self.prepareContext(messages: messages, tools: tools)
-            let nativeTools = try LiteRTLM.RelayNativeTools.makeTools(named: tools.map(\.name))
-            let schemas = LiteRTLM.ToolManager(tools: nativeTools).toolsJsonDescription
+            let (nativeTools, _, actualBytes, _) = try Self.schemaInfo(for: tools)
             try NativeVisionPlanningBudget.validate(messages: context.messages, systemPrompt: context.systemPrompt,
-                tools: tools, actualNativeSchemaBytes: schemas.utf8.count, annotation: visionInput.frame.annotation)
+                tools: tools, actualNativeSchemaBytes: actualBytes, annotation: visionInput.frame.annotation)
             visionContext = context; visionTools = nativeTools
+        } else {
+            // Budget the exact schema JSON the embedded runtime will receive,
+            // including the actual native protocol prompt, before model IO.
+            textContext = try Self.prepareNativeTextContext(messages: messages, tools: tools)
         }
         try await load(configuration: configuration, mode: visionInput == nil ? .text : .vision)
         let loadedGeneration = generation
@@ -162,7 +170,8 @@ final class LocalModelClient {
         guard let runtime else { throw RelayError.message("Load a local model first.") }
         let context: (systemPrompt: String, messages: [ModelMessage])
         if let visionContext { context = visionContext }
-        else { context = try Self.prepareContext(messages: messages, tools: tools) }
+        else if let textContext { context = (textContext.systemPrompt, textContext.messages) }
+        else { throw RelayError.message("The embedded text context was not prepared.") }
         let nativeHistory = try context.messages.map(Self.nativeMessage)
         guard let textLast = nativeHistory.last else { throw RelayError.message("The conversation is empty.") }
         let last: LiteRTLM.Message
@@ -173,7 +182,8 @@ final class LocalModelClient {
         } else { last = textLast; initialMessages = Array(nativeHistory.dropLast()) }
         let nativeTools: [any LiteRTLM.Tool]
         if let visionTools { nativeTools = visionTools }
-        else { nativeTools = try LiteRTLM.RelayNativeTools.makeTools(named: tools.map(\.name)) }
+        else if let textContext { nativeTools = textContext.tools }
+        else { throw RelayError.message("The embedded action schemas were not prepared.") }
         let config = LiteRTLM.ConversationConfig(
             systemMessage: LiteRTLM.Message(context.systemPrompt, role: .system),
             initialMessages: initialMessages,
@@ -237,31 +247,107 @@ final class LocalModelClient {
         return try Self.parseReply(reply, availableTools: Set(tools.map(\.name)))
     }
 
+    struct NativeTextHeader {
+        let systemPrompt: String
+        let tools: [any LiteRTLM.Tool]
+        let advertisedSchemaBytes: Int
+        let actualNativeSchemaBytes: Int
+        var schemaBytes: Int { max(advertisedSchemaBytes, actualNativeSchemaBytes) }
+        var availableHistoryBytes: Int { LocalModelClient.maximumContextBytes - systemPrompt.utf8.count - schemaBytes }
+    }
+    struct NativeTextContext {
+        let systemPrompt: String
+        let messages: [ModelMessage]
+        let tools: [any LiteRTLM.Tool]
+        let advertisedSchemaBytes: Int
+        let actualNativeSchemaBytes: Int
+        var schemaBytes: Int { max(advertisedSchemaBytes, actualNativeSchemaBytes) }
+        var availableHistoryBytes: Int { LocalModelClient.maximumContextBytes - systemPrompt.utf8.count - schemaBytes }
+        var countedBytes: Int { systemPrompt.utf8.count + ContextWindow.bytes(messages) + schemaBytes }
+    }
+    /// Pure schema/header sizing for both actual Store projection and the
+    /// embedded preflight. No engine, source read, model or tool execution.
+    private struct ToolSchemaCache {
+        let tools: [ToolDefinition]
+        let nativeTools: [any LiteRTLM.Tool]
+        let advertisedSchemaBytes: Int
+        let actualNativeSchemaBytes: Int
+        let toolProtocolPrompt: String
+    }
+    @MainActor private static var cachedSchemas: [ToolSchemaCache] = []
+
+    @MainActor static func schemaInfo(for tools: [ToolDefinition]) throws -> (nativeTools: [any LiteRTLM.Tool], advertisedSchemaBytes: Int, actualNativeSchemaBytes: Int, toolProtocolPrompt: String) {
+        if let cached = cachedSchemas.first(where: { $0.tools == tools }) {
+            return (cached.nativeTools, cached.advertisedSchemaBytes, cached.actualNativeSchemaBytes, cached.toolProtocolPrompt)
+        }
+        guard tools.count <= 64,
+              tools.allSatisfy({ validToolName($0.name) && $0.parameters.object != nil }),
+              Set(tools.map(\.name)).count == tools.count else { throw RelayError.message("Invalid or duplicated action schemas.") }
+        let nativeTools = try LiteRTLM.RelayNativeTools.makeTools(named: tools.map(\.name))
+        let schema = LiteRTLM.ToolManager(tools: nativeTools).toolsJsonDescription
+        guard let list = try JSONSerialization.jsonObject(with: Data(schema.utf8)) as? [[String: Any]],
+              list.count == nativeTools.count else { throw RelayError.message("The embedded action schemas are unavailable.") }
+        let advertised = try JSONEncoder().encode(tools).count
+        let proto = toolProtocol(for: tools)
+        let info = ToolSchemaCache(tools: tools, nativeTools: nativeTools, advertisedSchemaBytes: advertised, actualNativeSchemaBytes: schema.utf8.count, toolProtocolPrompt: proto)
+        if cachedSchemas.count >= 16 { cachedSchemas.removeFirst() }
+        cachedSchemas.append(info)
+        return (nativeTools, advertised, schema.utf8.count, proto)
+    }
+
+    @MainActor static func advertisedSchemaBytes(for tools: [ToolDefinition]) throws -> Int {
+        try schemaInfo(for: tools).advertisedSchemaBytes
+    }
+
+    static func nativeTextHeader(systemPrompt: String, tools: [ToolDefinition]) throws -> NativeTextHeader {
+        let (nativeTools, advertisedBytes, actualBytes, proto) = try schemaInfo(for: tools)
+        let header = NativeTextHeader(systemPrompt: systemPrompt + proto,
+            tools: nativeTools, advertisedSchemaBytes: advertisedBytes,
+            actualNativeSchemaBytes: actualBytes)
+        guard header.availableHistoryBytes >= 0 else { throw nativeTextBudgetFailure() }
+        return header
+    }
+    /// The same actual registry and exact protocol-inclusive header are passed
+    /// to runtime after this check. No current request/tool pair is truncated.
+    static func prepareNativeTextContext(messages: [ModelMessage], tools: [ToolDefinition]) throws -> NativeTextContext {
+        let context = try prepareContext(messages: messages, tools: tools)
+        let system = messages.filter { $0.role == "system" }.map(\.content).joined(separator: "\n\n")
+        let header = try nativeTextHeader(systemPrompt: system, tools: tools)
+        let prepared = NativeTextContext(systemPrompt: header.systemPrompt, messages: context.messages,
+            tools: header.tools, advertisedSchemaBytes: header.advertisedSchemaBytes,
+            actualNativeSchemaBytes: header.actualNativeSchemaBytes)
+        guard prepared.countedBytes <= maximumContextBytes else { throw nativeTextBudgetFailure() }
+        return prepared
+    }
+    private static func nativeTextBudgetFailure() -> RelayError {
+        .message("This conversation exceeds the 24 KB embedded context budget with its native action schemas. Nothing was silently discarded; reduce attached context or start a new conversation.")
+    }
+
     static func prepareContext(messages: [ModelMessage], tools: [ToolDefinition]) throws -> (systemPrompt: String, messages: [ModelMessage]) {
-        guard !messages.isEmpty, messages.count <= 160, tools.count <= 64 else {
+        guard !messages.isEmpty, messages.count <= 160 else {
             throw RelayError.message("The local conversation budget was exceeded. Start a new conversation or reduce selected context.")
         }
-        let toolsJSON = try JSONEncoder().encode(tools)
-        let bytes = messages.reduce(0) { $0 + $1.content.utf8.count + $1.toolCalls.reduce(0) { $0 + JSONValue.object($1.arguments).pretty.utf8.count } } + toolsJSON.count
+        let schema = try schemaInfo(for: tools)
+        let bytes = messages.reduce(0) { $0 + $1.content.utf8.count + $1.toolCalls.reduce(0) { $0 + JSONValue.object($1.arguments).pretty.utf8.count } } + schema.advertisedSchemaBytes
         guard bytes <= maximumContextBytes else {
             throw RelayError.message("This conversation exceeds the 24 KB local context budget. Nothing was silently discarded; start a new conversation or reduce attached context.")
-        }
-        guard tools.allSatisfy({ validToolName($0.name) && $0.parameters.object != nil }), Set(tools.map(\.name)).count == tools.count else {
-            throw RelayError.message("Invalid or duplicated action schemas.")
         }
         let system = messages.filter { $0.role == "system" }.map(\.content).joined(separator: "\n\n")
         let history = messages.filter { $0.role != "system" }
         guard !history.isEmpty, history.allSatisfy({ ["user", "assistant", "tool"].contains($0.role) }) else {
             throw RelayError.message("Invalid or empty conversation history.")
         }
-        let toolInstructions = tools.isEmpty ? "" : """
+        return (system + schema.toolProtocolPrompt, history)
+    }
+
+    private static func toolProtocol(for tools: [ToolDefinition]) -> String {
+        return tools.isEmpty ? "" : """
 
         TOOL PROTOCOL: Call the native function with exactly the available action name and a structured JSON argument object matching its schema.
         Do not wrap actions in another function or encode the argument object as a string. Do not invent tools.
         The application validates scope, approval and results. It alone executes requested actions.
-        Native action names: \(tools.map(\.name).joined(separator: ", ")). Their argument schemas are supplied once through the native tool registry.
+        Names and argument schemas are supplied once through the native registry.
         """
-        return (system + toolInstructions, history)
     }
 
     private static func nativeMessage(_ message: ModelMessage) throws -> LiteRTLM.Message {
@@ -281,8 +367,7 @@ final class LocalModelClient {
         }
         let calls = try message.toolCalls.map { call -> LiteRTLM.ToolCall in
             guard validToolName(call.name) else { throw RelayError.message("Invalid historical tool call.") }
-            let data = try JSONEncoder().encode(JSONValue.object(call.arguments))
-            guard let arguments = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw RelayError.message("Invalid historical action arguments.") }
+            let arguments = call.arguments.mapValues { $0.foundationValue }
             return LiteRTLM.ToolCall(name: call.name, id: call.id, arguments: arguments)
         }
         return LiteRTLM.Message(contents: [.text(message.content)], role: role, toolCalls: calls)

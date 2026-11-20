@@ -44,7 +44,7 @@ nonisolated struct AgentDesktopEnvelope: Sendable {
 }
 
 nonisolated enum AgentDesktopBridge {
-    static let expectedFfiAbiMajor: Int32 = 6
+    static let expectedFfiAbiMajor: Int32 = 7
 
     /// Locates the bundled or vendored `agent-desktop` executable.
     static func resolveExecutableURL() -> URL? {
@@ -101,22 +101,26 @@ nonisolated enum AgentDesktopBridge {
         return nil
     }
 
-    /// Verifies that `libagent_desktop_ffi.dylib` loads cleanly in-process and matches `AD_ABI_VERSION_MAJOR` (6).
+    /// Checks the loaded library against the vendored header's ABI major.
+    /// Reading the version and checking ad_init do not initialize an adapter or request access.
     static func verifyFfiLibrary() -> (loaded: Bool, abiMajor: Int32) {
-        guard let dylibURL = resolveFfiLibraryURL() else {
-            return (false, 0)
-        }
-        guard let handle = dlopen(dylibURL.path, RTLD_NOW | RTLD_LOCAL) else {
-            return (false, 0)
-        }
+        guard let dylibURL = resolveFfiLibraryURL() else { return (false, 0) }
+        return verifyFfiLibrary(at: dylibURL, expectedAbiMajor: expectedFfiAbiMajor)
+    }
+
+    static func verifyFfiLibrary(at dylibURL: URL, expectedAbiMajor: Int32) -> (loaded: Bool, abiMajor: Int32) {
+        guard let handle = dlopen(dylibURL.path, RTLD_NOW | RTLD_LOCAL) else { return (false, 0) }
         defer { dlclose(handle) }
-        guard let sym = dlsym(handle, "ad_init") else {
-            return (false, 0)
-        }
+        guard let versionSymbol = dlsym(handle, "ad_abi_version") else { return (false, 0) }
+        typealias AdVersionFunc = @convention(c) () -> UInt32
+        let version = unsafeBitCast(versionSymbol, to: AdVersionFunc.self)
+        guard let observedMajor = Int32(exactly: version()) else { return (false, 0) }
+        // A mismatch is reported truthfully and fails closed before other FFI calls.
+        guard observedMajor == expectedAbiMajor,
+              let initSymbol = dlsym(handle, "ad_init") else { return (false, observedMajor) }
         typealias AdInitFunc = @convention(c) (UInt32) -> Int32
-        let adInit = unsafeBitCast(sym, to: AdInitFunc.self)
-        let rc = adInit(UInt32(expectedFfiAbiMajor))
-        return (rc == 0, expectedFfiAbiMajor)
+        let adInit = unsafeBitCast(initSymbol, to: AdInitFunc.self)
+        return (adInit(UInt32(observedMajor)) == 0, observedMajor)
     }
 
     /// Dedicated state directory (`AGENT_DESKTOP_HOME`) with mode `0700` so snapshot refmaps stay private to Relay.
@@ -294,31 +298,19 @@ nonisolated enum AgentDesktopBridge {
         guard fm.isExecutableFile(atPath: scriptURL.path) else {
             throw RelayError.message("Update script not found at \(scriptURL.path).")
         }
-        return try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/bash")
-            process.arguments = [scriptURL.path, "latest"]
-            process.currentDirectoryURL = repoRoot
-            let outPipe = Pipe()
-            let errPipe = Pipe()
-            process.standardOutput = outPipe
-            process.standardError = errPipe
-            process.terminationHandler = { proc in
-                let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-                let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-                let outStr = String(data: outData, encoding: .utf8) ?? ""
-                let errStr = String(data: errData, encoding: .utf8) ?? ""
-                if proc.terminationStatus == 0 {
-                    continuation.resume(returning: outStr.trimmingCharacters(in: .whitespacesAndNewlines))
-                } else {
-                    continuation.resume(throwing: RelayError.message("agent-desktop update failed: \(errStr.isEmpty ? outStr : errStr)"))
-                }
-            }
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: error)
-            }
+        let output = try await AgentDesktopProcessRunner.run(
+            executable: URL(fileURLWithPath: "/bin/bash"),
+            arguments: [scriptURL.path, "latest"],
+            currentDirectory: repoRoot,
+            timeoutSeconds: 120,
+            outputLimit: 524_288
+        )
+        let outStr = String(decoding: output.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        let errStr = String(decoding: output.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        if output.exitStatus == 0 {
+            return outStr
+        } else {
+            throw RelayError.message("agent-desktop update failed: \(errStr.isEmpty ? outStr : errStr)")
         }
     }
 

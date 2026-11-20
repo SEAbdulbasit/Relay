@@ -22,6 +22,41 @@ public enum JournalOrigin: String, Codable, Sendable { case user, assistant, sou
 public enum JournalOmission: String, Codable, Sendable {
     case credentialField, requestHeader, imageBody, audioBody, nativeSnapshot, legacyActivity, legacyModelContext, legacyArtifactPath
 }
+/// An exact historical reply target. This is saved DATA, never a source/input grant.
+public struct JournalReplyReference: Codable, Sendable, Equatable {
+    public let scope: JournalScope
+    public let sequence: Int64
+    public let eventID: JournalOpaqueID
+    public let bodyDigest: Data
+    public let selectedText: String?
+    public let utf16Location: Int?
+    public let utf16Length: Int?
+    public init(scope: JournalScope, sequence: Int64, eventID: JournalOpaqueID, bodyDigest: Data,
+                selectedText: String? = nil, utf16Location: Int? = nil, utf16Length: Int? = nil) throws {
+        guard sequence > 0, bodyDigest.count == 32 else { throw JournalError.invalidEvent }
+        if let selectedText {
+            guard !selectedText.isEmpty, selectedText.utf8.count <= 16_000,
+                  let utf16Location, let utf16Length, utf16Location >= 0, utf16Length > 0,
+                  utf16Location <= 240 * 1024, utf16Length <= 240 * 1024,
+                  selectedText.utf16.count == utf16Length else { throw JournalError.invalidEvent }
+        } else if utf16Location != nil || utf16Length != nil { throw JournalError.invalidEvent }
+        self.scope = scope; self.sequence = sequence; self.eventID = eventID; self.bodyDigest = bodyDigest
+        self.selectedText = selectedText; self.utf16Location = utf16Location; self.utf16Length = utf16Length
+    }
+    private enum CodingKeys: String, CodingKey { case scope, sequence, eventID, bodyDigest, selectedText, utf16Location, utf16Length }
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(scope: c.decode(JournalScope.self, forKey: .scope), sequence: c.decode(Int64.self, forKey: .sequence),
+            eventID: c.decode(JournalOpaqueID.self, forKey: .eventID), bodyDigest: c.decode(Data.self, forKey: .bodyDigest),
+            selectedText: c.decodeIfPresent(String.self, forKey: .selectedText),
+            utf16Location: c.decodeIfPresent(Int.self, forKey: .utf16Location), utf16Length: c.decodeIfPresent(Int.self, forKey: .utf16Length))
+    }
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.scope == rhs.scope && lhs.sequence == rhs.sequence && lhs.eventID == rhs.eventID
+            && lhs.bodyDigest == rhs.bodyDigest && lhs.selectedText.map { Data($0.utf8) } == rhs.selectedText.map { Data($0.utf8) }
+            && lhs.utf16Location == rhs.utf16Location && lhs.utf16Length == rhs.utf16Length
+    }
+}
 /// Local display metadata only. A saved path or receipt never grants access.
 public struct JournalArtifactReference: Codable, Sendable, Equatable {
     public let visiblePath: String
@@ -45,24 +80,28 @@ public struct JournalVisibleText: Codable, Sendable, Equatable {
     public let omissions: [JournalOmission]
     public let sourceRequirements: [JournalSourceRequirement]
     public let artifacts: [JournalArtifactReference]
-    public init(_ text: String, origin: JournalOrigin, omissions: [JournalOmission] = [], sourceRequirements: [JournalSourceRequirement] = [], artifacts: [JournalArtifactReference] = []) throws {
+    public let reply: JournalReplyReference?
+    public init(_ text: String, origin: JournalOrigin, omissions: [JournalOmission] = [], sourceRequirements: [JournalSourceRequirement] = [], artifacts: [JournalArtifactReference] = [], reply: JournalReplyReference? = nil) throws {
         guard text.utf8.count <= 240 * 1024, omissions.count <= 16, sourceRequirements.count <= 32, artifacts.count <= 32 else { throw JournalError.tooLarge }
         self.text = text; self.origin = origin; self.omissions = omissions; self.sourceRequirements = sourceRequirements; self.artifacts = artifacts
+        self.reply = reply
     }
-    public var automaticallyEligibleForInference: Bool { origin != .legacyUnknown && origin != .source && sourceRequirements.isEmpty && artifacts.isEmpty }
-    private enum CodingKeys: String, CodingKey { case text, origin, omissions, sourceRequirements, artifacts }
+    public var automaticallyEligibleForInference: Bool { origin != .legacyUnknown && origin != .source && sourceRequirements.isEmpty && artifacts.isEmpty && reply == nil }
+    private enum CodingKeys: String, CodingKey { case text, origin, omissions, sourceRequirements, artifacts, reply }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(values.decode(String.self, forKey: .text), origin: values.decode(JournalOrigin.self, forKey: .origin),
             omissions: values.decode([JournalOmission].self, forKey: .omissions),
             sourceRequirements: values.decode([JournalSourceRequirement].self, forKey: .sourceRequirements),
-            artifacts: values.decodeIfPresent([JournalArtifactReference].self, forKey: .artifacts) ?? [])
+            artifacts: values.decodeIfPresent([JournalArtifactReference].self, forKey: .artifacts) ?? [],
+            reply: values.decodeIfPresent(JournalReplyReference.self, forKey: .reply))
     }
     public func encode(to encoder: any Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
         try values.encode(text, forKey: .text); try values.encode(origin, forKey: .origin)
         try values.encode(omissions, forKey: .omissions); try values.encode(sourceRequirements, forKey: .sourceRequirements)
         if !artifacts.isEmpty { try values.encode(artifacts, forKey: .artifacts) }
+        try values.encodeIfPresent(reply, forKey: .reply)
     }
 }
 public struct JournalSourceRequirement: Codable, Sendable, Equatable {

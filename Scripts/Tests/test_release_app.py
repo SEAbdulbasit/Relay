@@ -13,12 +13,10 @@ SPEC.loader.exec_module(release)
 class ReleaseGateTests(unittest.TestCase):
     def fixture(self, folder):
         app = Path(folder) / 'Relay.app'
-        for relative in ['Contents/MacOS/Relay', 'Contents/Resources/ThirdPartyNotices.txt',
-                         'Contents/Resources/LiteRT-LM-LICENSE.txt',
-                         'Contents/Resources/RelayAccessibilityFixture.app/Contents/MacOS/RelayAccessibilityFixture']:
+        for relative in release.REQUIRED_MACHO + release.REQUIRED_RESOURCES:
             path = app / relative
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(b'\xcf\xfa\xed\xfe' if '/MacOS/' in relative else b'license')
+            path.write_bytes(b'\xcf\xfa\xed\xfe' if relative in release.REQUIRED_MACHO else b'license')
         (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({
             'CFBundleIdentifier': 'dev.relay.assistant', 'CFBundleExecutable': 'Relay',
             'CFBundleShortVersionString': '0.1.0', 'CFBundleVersion': '1'}))
@@ -51,6 +49,17 @@ class ReleaseGateTests(unittest.TestCase):
                 item.unlink()
             (app / 'Contents/Resources/escape').symlink_to(Path(temp).parent)
             with self.assertRaises(ValueError):
+                release.validate_bundle(app)
+
+    def test_bundle_rejects_incomplete_or_invalid_desktop_runtime(self):
+        with tempfile.TemporaryDirectory() as temp:
+            app = self.fixture(temp)
+            helper = app / 'Contents/MacOS/agent-desktop'
+            helper.unlink()
+            with self.assertRaisesRegex(ValueError, 'Missing required runtime'):
+                release.validate_bundle(app)
+            helper.write_bytes(b'not a binary')
+            with self.assertRaisesRegex(ValueError, 'Required runtime is not Mach-O'):
                 release.validate_bundle(app)
 
     def test_nested_code_is_signed_before_containing_bundle(self):

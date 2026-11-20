@@ -42,10 +42,13 @@ import Foundation
         } else { admission = try resolve(requestedBundleID) }
         guard admission.application.bundleID == requestedBundleID else { throw NativeWindowTaskAdapter.Failure.unadmittedApplication }
         try admission.validate()
-        return .init(application: admission.application, validate: { [weak self] in
-            guard let self, self.taskIsCurrent() else { throw NativeWindowTaskAdapter.Failure.inactiveTask }
-            try admission.validate()
-        })
+        return admission.restricted(to: self)
+    }
+    /// Exact original task predicate, also retained by sealed metadata leases.
+    /// This grants no application/source/input permission on its own.
+    func validateMetadataTask() throws {
+        try Task.checkCancellation()
+        guard taskIsCurrent() else { throw NativeWindowTaskAdapter.Failure.inactiveTask }
     }
 
     private static func resolveActualApplication(_ bundleID: String) throws -> NativeWindowTaskAdapter.ApplicationAdmission {

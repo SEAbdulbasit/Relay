@@ -39,24 +39,24 @@ nonisolated struct PreparationWakeSetup: Equatable, Sendable {
         guard lastHandledDay.map({ $0 <= today }) ?? true else {
             return Self(status: "This Mac’s date is before the last handled day. Wake planning is paused.")
         }
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        let earliest = now.addingTimeInterval(5 * 60)
-        guard let todayTime = DailyPreparationPolicy.scheduledTime(on: now, hour: hour, minute: minute, calendar: calendar) else {
-            return Self(status: "Relay couldn’t determine the next local preparation time.")
-        }
-        let date: Date?
-        if todayTime >= earliest, lastHandledDay != today {
-            date = todayTime
-        } else {
-            date = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)).flatMap {
-                DailyPreparationPolicy.scheduledTime(on: $0, hour: hour, minute: minute, calendar: calendar)
-            }
-        }
-        guard let date, let request = command(for: date, timeZone: timeZone, cancel: false) else {
+        guard let date = nextWake(now: now, timeZone: timeZone, hour: hour, minute: minute, lastHandledDay: lastHandledDay),
+              let request = command(for: date, timeZone: timeZone, cancel: false) else {
             return Self(status: "The next preparation time can’t be represented as an exact macOS wake request. Choose a different time.")
         }
         return Self(status: "No Relay wake is scheduled. Review the next time before applying the command.", request: request)
+    }
+
+    static func nextWake(now: Date, timeZone: TimeZone, hour: Int, minute: Int, lastHandledDay: String?, minimumLead: TimeInterval = 5 * 60) -> Date? {
+        guard now.timeIntervalSinceReferenceDate.isFinite, now >= .distantPast, now <= .distantFuture else { return nil }
+        let today = DailyPreparationPolicy.dayKey(now, timeZone: timeZone)
+        guard lastHandledDay.map({ $0 <= today }) ?? true else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        guard let todayTime = DailyPreparationPolicy.scheduledTime(on: now, hour: hour, minute: minute, calendar: calendar) else { return nil }
+        if todayTime > now, todayTime >= now.addingTimeInterval(minimumLead), lastHandledDay != today { return todayTime }
+        return calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)).flatMap {
+            DailyPreparationPolicy.scheduledTime(on: $0, hour: hour, minute: minute, calendar: calendar)
+        }
     }
 
     private static func command(for date: Date, timeZone: TimeZone, cancel: Bool) -> PreparationWakeCommand? {
@@ -79,9 +79,22 @@ nonisolated struct PreparationWakeSetup: Equatable, Sendable {
     }
 }
 
-/// Reads the documented system queue. The reviewed Terminal command is the only write path.
+/// Reads the documented system queue for the manually reviewed wake commands.
 nonisolated enum PreparationWakeSystem {
     static let owner = "dev.relay.assistant.preparation.\(getuid())"
+
+    /// A process-owned assertion expires even if Relay's executor stalls, and macOS
+    /// removes it on exit. It does not override lid sleep or change power settings.
+    static func holdIdleSleep(for seconds: TimeInterval) -> (() -> Void)? {
+        var assertion = IOPMAssertionID(0)
+        let result = IOPMAssertionCreateWithDescription(
+            kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
+            "Relay Morning Brief" as CFString, nil, nil, nil,
+            seconds, kIOPMAssertionTimeoutActionRelease as CFString, &assertion
+        )
+        guard result == kIOReturnSuccess else { return nil }
+        return { _ = IOPMAssertionRelease(assertion) }
+    }
 
     static func scheduledDates() -> [Date]? {
         guard let events = IOPMCopyScheduledPowerEvents()?.takeRetainedValue() else { return [] }
@@ -104,6 +117,22 @@ nonisolated enum PreparationWakeSystem {
         guard let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
               let source = IOPSGetProvidingPowerSourceType(snapshot)?.takeUnretainedValue() else { return false }
         return source as String == kIOPSACPowerValue
+    }
+
+    static func batteryChargePercent() -> Int? {
+        guard let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let sources = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() as? [CFTypeRef] else {
+            return nil
+        }
+        for source in sources {
+            guard let info = IOPSGetPowerSourceDescription(snapshot, source)?.takeUnretainedValue() as? [String: Any],
+                  info[kIOPSTypeKey] as? String == kIOPSInternalBatteryType else { continue }
+            guard let current = info[kIOPSCurrentCapacityKey] as? Int,
+                  let maximum = info[kIOPSMaxCapacityKey] as? Int,
+                  (1...Int.max / 100).contains(maximum), (0...maximum).contains(current) else { return nil }
+            return current * 100 / maximum
+        }
+        return nil
     }
 
     static func isThermallyLimited() -> Bool {

@@ -41,6 +41,8 @@ nonisolated enum DiagnosticsIssueCode: String, Codable, Sendable {
 /// source text, selected text, arbitrary errors, paths, model filenames or machine/user IDs.
 /// Version strings are the sole free-text inputs and are restricted to numeric dotted versions.
 nonisolated struct DiagnosticsInput: Sendable {
+    var runtime: String = "LiteRT-LM"
+    var inferenceMode: String = "localOnly"
     var appVersion: String? = nil
     var appBuild: String? = nil
     var runtimeVersion: String? = nil
@@ -98,12 +100,21 @@ nonisolated struct DiagnosticsReport: Codable, Sendable {
 /// Constructs an inspectable local export. No system inspection, filesystem access, network,
 /// telemetry or implicit collection occurs. A caller chooses if and where to save the bytes.
 nonisolated enum LocalDiagnostics {
+    private static let allowedRuntimes: Set<String> = [
+        "LiteRT-LM", "LMStudio", "ClaudeCLI", "CodexCLI", "OpenRouter", "CustomResponses"
+    ]
+    private static let allowedInferenceModes: Set<String> = [
+        "localOnly", "localServer", "cli", "cloudAPI", "responsesAPI"
+    ]
+
     static func makeReport(_ input: DiagnosticsInput, generatedAt: Date = Date()) -> DiagnosticsReport {
         var seen = Set<DiagnosticsIssueCode>()
         let issues = input.issues.prefix(100).filter { seen.insert($0).inserted }.prefix(20).map {
             DiagnosticsIssue(code: $0, recovery: $0.recovery)
         }
-        return DiagnosticsReport(schemaVersion: 1, generatedAt: generatedAt, app: "Relay", runtime: "LiteRT-LM", inferenceMode: "localOnly",
+        let runtime = allowedRuntimes.contains(input.runtime) ? input.runtime : "LiteRT-LM"
+        let inferenceMode = allowedInferenceModes.contains(input.inferenceMode) ? input.inferenceMode : "localOnly"
+        return DiagnosticsReport(schemaVersion: 1, generatedAt: generatedAt, app: "Relay", runtime: runtime, inferenceMode: inferenceMode,
                                  appVersion: safeVersion(input.appVersion), appBuild: safeVersion(input.appBuild),
                                  runtimeVersion: safeVersion(input.runtimeVersion), osVersion: safeVersion(input.osVersion),
                                  architecture: input.architecture, computeBackend: input.computeBackend,

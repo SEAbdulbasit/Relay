@@ -2,6 +2,7 @@ import AppKit
 @preconcurrency import ApplicationServices
 import CoreGraphics
 import Foundation
+import SQLite3
 
 /// Invocation-bound reading only: no activation, scrolling, editing, clipboard,
 /// screenshot, file/database access, hosted request, persistence or text logging.
@@ -44,13 +45,62 @@ import Foundation
         fileprivate let isActive: @MainActor () -> Bool
         fileprivate let limits: Limits
         fileprivate let preparedCaptureTime: Date?
+        fileprivate var retainedSource: RetainedSource? = nil
     }
+    /// Minted only by actual application preparation. This handle retains AX
+    /// identity/inspectors and a live document reader, never a frozen tree.
+    struct RetainedSource {
+        fileprivate let application: DesktopApplicationIdentity
+        fileprivate let window: AXUIElement
+        fileprivate let document: String
+        fileprivate let title: String, applicationName: String
+        fileprivate let frame: CGRect
+        fileprivate let mode: Mode
+        fileprivate let conversation: SummaryConversationCaptureBoundary.Boundary?
+        let validate: @MainActor @Sendable () throws -> Void
+        fileprivate let freshRead: (@MainActor @Sendable () async throws -> Snapshot)?
+
+        var supportsFreshRead: Bool { freshRead != nil }
+        func captureFresh() async throws -> Snapshot? {
+            try validate()
+            guard let freshRead else { return nil }
+            do {
+                let result = try await freshRead()
+                try validate()
+                return result
+            } catch {
+                try validate() // A revoked source takes precedence over a private read error.
+                throw error
+            }
+        }
+        func sharesOriginalSource(with other: Self) -> Bool {
+            guard application == other.application, mode == other.mode,
+                  CFEqual(window, other.window), document.utf8.elementsEqual(other.document.utf8),
+                  title.utf8.elementsEqual(other.title.utf8), applicationName.utf8.elementsEqual(other.applicationName.utf8),
+                  frame == other.frame else { return false }
+            switch (conversation, other.conversation) {
+            case (nil, nil): return true
+            case (let first?, let second?): return first.matches(second)
+            default: return false
+            }
+        }
+    }
+    /// Generic/frozen providers have no production retained-source capability.
+    static func retainedSource(for request: Request) -> RetainedSource? { request.retainedSource }
     nonisolated struct Limits: Sendable {
         var maximumNodes = 8_000
         var maximumInputBytes = 400_000
         var maximumTextBytes = 8_000
         var maximumDepth = 80
         var maximumSeconds: TimeInterval = 5
+
+        static let extended = Limits(
+            maximumNodes: 16_000,
+            maximumInputBytes: 800_000,
+            maximumTextBytes: DocumentSummarySource.maximumTextBytes,
+            maximumDepth: 96,
+            maximumSeconds: 5
+        )
     }
     /// Ephemeral data, deliberately not Codable. A PDF URL is metadata only;
     /// no file was opened or authorized by this capture.
@@ -82,8 +132,25 @@ import Foundation
         }
     }
 
+    private static let supportedNativeDocumentBundles: Set<String> = [
+        "com.apple.TextEdit",
+        "com.apple.Preview",
+        "com.apple.Notes",
+        "com.apple.mail",
+        "com.apple.iWork.Pages",
+        "com.apple.iWork.Keynote",
+        "com.apple.iWork.Numbers",
+        "com.apple.ScriptEditor2",
+        "com.apple.dt.Xcode",
+        "md.obsidian",
+        "notion.id",
+        "com.microsoft.Word",
+        "com.microsoft.VSCode",
+        "com.todesktop.230313mzl4w4u92",
+    ]
+
     static func prepare(application: NSRunningApplication, isActive: @escaping @MainActor () -> Bool,
-                        limits: Limits = .init()) throws -> Request {
+                        limits: Limits = .extended) throws -> Request {
         let preparationBegan = ProcessInfo.processInfo.systemUptime
         guard isActive() else { throw Failure.inactive }
         // An unregistered test/agent host can expose an incomplete PID through
@@ -94,7 +161,7 @@ import Foundation
         guard let identity = DesktopApplicationTarget.identity(of: application) else { throw Failure.changedOrigin }
         let mode: Mode
         if let profile = SummaryConversationSnapshot.profile(bundleID: identity.bundleID) { mode = .conversation(profile) }
-        else if ["com.apple.TextEdit", "com.apple.Preview"].contains(identity.bundleID) { mode = .document }
+        else if supportedNativeDocumentBundles.contains(identity.bundleID) { mode = .document }
         else { throw Failure.unsupportedProfile }
         let app = AXUIElementCreateApplication(identity.processID)
         AXUIElementSetMessagingTimeout(app, 0.005)
@@ -115,6 +182,7 @@ import Foundation
         var sourceInspector: @MainActor () throws -> Binding = inspect
         let read: @Sendable () async throws -> Tree
         let capturedAt: Date?
+        var capturedConversation: SummaryConversationCaptureBoundary.Boundary?
         if case .conversation(let profile) = mode {
             // MainActor does not freeze the external app. A generic window
             // title is insufficient: retain and compare the exact transcript
@@ -123,7 +191,9 @@ import Foundation
             let frozen = try SummaryConversationCaptureBoundary.freeze(profile: profile, isActive: isActive,
                 maximumSeconds: fast.maximumSeconds, inspect: {
                     guard original.matches(try inspect()) else { throw Failure.changedOrigin }
-                    return try SummaryConversationAXIdentity.inspect(window: window, profile: profile)
+                    let current = try SummaryConversationAXIdentity.inspect(window: window, profile: profile)
+                    if capturedConversation == nil { capturedConversation = current }
+                    return current
                 }, read: {
                     try scanSynchronously(AXTarget(window: window, limits: fast, profile: profile, timeout: 0.005))
                 })
@@ -139,9 +209,28 @@ import Foundation
             let target = AXTarget(window: window, limits: bounded(limits), profile: nil, timeout: 0.03)
             read = { try await scan(target) }; capturedAt = nil
         }
-        let request = try prepare(mode: mode, binding: original, provider: Provider(inspect: sourceInspector, read: read),
+        var request = try prepare(mode: mode, binding: original, provider: Provider(inspect: sourceInspector, read: read),
                                   isActive: isActive, limits: limits, preparedCaptureTime: capturedAt)
         if capturedAt != nil, ProcessInfo.processInfo.systemUptime - preparationBegan > 0.25 { throw Failure.limit }
+        let inspectSource = sourceInspector
+        let validateSource: @MainActor @Sendable () throws -> Void = {
+            try Task.checkCancellation()
+            guard isActive(), original.matches(try inspectSource()) else { throw Failure.changedOrigin }
+        }
+        let freshRead: (@MainActor @Sendable () async throws -> Snapshot)?
+        if case .document = mode {
+            // Only this actual AXTarget reader is reusable. A generic Provider
+            // or frozen document-mode request cannot mint this capability.
+            let target = AXTarget(window: window, limits: bounded(limits), profile: nil, timeout: 0.03)
+            let liveProvider = Provider(inspect: inspectSource, read: { try await scan(target) })
+            let liveRequest = Request(mode: mode, binding: original, provider: liveProvider,
+                isActive: isActive, limits: bounded(limits), preparedCaptureTime: nil)
+            freshRead = { try await capture(liveRequest) }
+        } else { freshRead = nil }
+        request.retainedSource = RetainedSource(application: identity, window: window,
+            document: original.window.document, title: original.window.title, applicationName: original.applicationName,
+            frame: original.window.frame, mode: mode, conversation: capturedConversation,
+            validate: validateSource, freshRead: freshRead)
         return request
     }
 
@@ -200,10 +289,10 @@ import Foundation
     }
     private static func bounded(_ requested: Limits) -> Limits {
         var result = requested
-        result.maximumNodes = max(0, min(8_000, requested.maximumNodes))
-        result.maximumInputBytes = max(0, min(400_000, requested.maximumInputBytes))
+        result.maximumNodes = max(0, min(16_000, requested.maximumNodes))
+        result.maximumInputBytes = max(0, min(800_000, requested.maximumInputBytes))
         result.maximumTextBytes = max(0, min(DocumentSummarySource.maximumTextBytes, requested.maximumTextBytes))
-        result.maximumDepth = max(0, min(80, requested.maximumDepth))
+        result.maximumDepth = max(0, min(96, requested.maximumDepth))
         result.maximumSeconds = requested.maximumSeconds.isFinite ? max(0, min(5, requested.maximumSeconds)) : 5
         return result
     }
@@ -214,8 +303,30 @@ import Foundation
             guard !tree.limited else { throw Failure.limit } // A cut tree can end mid-message.
             var bound = SummaryConversationSnapshot.Limits()
             bound.maximumNodes = limits.maximumNodes; bound.maximumInputBytes = limits.maximumInputBytes
-            bound.maximumTextBytes = limits.maximumTextBytes; bound.maximumDepth = limits.maximumDepth
+            bound.maximumTextBytes = min(limits.maximumTextBytes, DocumentSummarySource.localModelExcerptBytes)
+            bound.maximumDepth = limits.maximumDepth
             let selected = try SummaryConversationSnapshot.select(tree.nodes, profile: profile, limits: bound)
+            if !origin.application.bundleURL.path.hasPrefix("/SYNTHETIC/"),
+               let continued = SummaryConversationLocalContinuation.extendIfUniquelyMatched(
+                   profile: profile,
+                   visibleItems: selected.items,
+                   visibleText: selected.text,
+                   maximumBytes: limits.maximumTextBytes
+               ) {
+                return Snapshot(
+                    mode: mode,
+                    origin: origin,
+                    text: continued.text,
+                    title: selected.title,
+                    application: origin.applicationName,
+                    documentURL: nil,
+                    coverage: selected.coverage + " Verified read-only local thread continuation added \(continued.addedCount) earlier messages from this exact conversation.",
+                    truncated: selected.truncated || continued.truncated,
+                    capturedAt: capturedAt,
+                    offscreenMessages: selected.offscreenMessages + continued.addedCount,
+                    messages: selected.items
+                )
+            }
             return Snapshot(mode: mode, origin: origin, text: selected.text, title: selected.title,
                 application: origin.applicationName, documentURL: nil, coverage: selected.coverage,
                 truncated: selected.truncated, capturedAt: capturedAt, offscreenMessages: selected.offscreenMessages, messages: selected.items)
@@ -371,7 +482,14 @@ import Foundation
             if seen[key]?.contains(where: { CFEqual($0, item) }) == true { continue }
             seen[key, default: []].append(item); AXUIElementSetMessagingTimeout(item, target.timeout)
             guard let entry = readElement(parent: parent, inside: inside, profile: target.profile,
-                attribute: { readableAttribute(item, $0) }, isValueSettable: {
+                attribute: { name in
+                    if name == "AXValue" {
+                        if let sampled = sampleLargeTextValueIfNeeded(element: item, readableAttribute: readableAttribute) {
+                            return sampled as CFString
+                        }
+                    }
+                    return readableAttribute(item, name)
+                }, isValueSettable: {
                     var editable: DarwinBoolean = false
                     let status = AXUIElementIsAttributeSettable(item, "AXValue" as CFString, &editable)
                     if ![AXError.success, .attributeUnsupported, .noValue].contains(status) { limited = true }
@@ -430,7 +548,211 @@ import Foundation
               AXValueGetValue(unsafeDowncast(size, to: AXValue.self), .cgSize, &dimensions) else { return nil }
         return CGRect(origin: point, size: dimensions)
     }
+    nonisolated private static func sampleLargeTextValueIfNeeded(
+        element: AXUIElement,
+        readableAttribute: (AXUIElement, String) -> CFTypeRef?
+    ) -> String? {
+        guard let countNum = readableAttribute(element, kAXNumberOfCharactersAttribute as String) as? Int,
+              countNum > 32_000 else {
+            return nil
+        }
+        func slice(location: Int, length: Int) -> String? {
+            var range = CFRange(location: max(0, location), length: max(0, length))
+            guard let axRange = AXValueCreate(.cfRange, &range) else { return nil }
+            var out: CFTypeRef?
+            guard AXUIElementCopyParameterizedAttributeValue(
+                element,
+                kAXStringForRangeParameterizedAttribute as CFString,
+                axRange,
+                &out
+            ) == .success else { return nil }
+            return out as? String
+        }
+        let chunk = 20_000
+        guard let head = slice(location: 0, length: min(chunk, countNum)),
+              let mid = slice(location: max(0, countNum / 2 - chunk / 2), length: min(chunk, countNum)),
+              let tail = slice(location: max(0, countNum - chunk), length: min(chunk, countNum)) else {
+            return nil
+        }
+        return head + "\n[Source excerpt gap]\n" + mid + "\n[Source excerpt gap]\n" + tail
+    }
+
     nonisolated private static func valid(_ frame: CGRect) -> Bool {
         [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite) && frame.width > 1 && frame.height > 1
+    }
+}
+
+/// Read-only local SQLite thread continuation (`SUM-11..13`) for Apple Messages (`chat.db`)
+/// and WhatsApp (`ChatStorage.sqlite`) when >= 2 visible anchor messages uniquely identify one chat.
+nonisolated enum SummaryConversationLocalContinuation {
+    struct Result: Sendable {
+        let text: String
+        let addedCount: Int
+        let truncated: Bool
+    }
+
+    static func extendIfUniquelyMatched(
+        profile: SummaryConversationSnapshot.Profile,
+        visibleItems: [SummaryConversationSnapshot.Item],
+        visibleText: String,
+        maximumBytes: Int
+    ) -> Result? {
+        let anchors = visibleItems
+            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.count >= 12 }
+        guard anchors.count >= 2 else { return nil }
+        let firstAnchor = anchors[0]
+        let lastAnchor = anchors[anchors.count - 1]
+        guard firstAnchor != lastAnchor else { return nil }
+
+        let earlierLines: [String]?
+        switch profile {
+        case .messages:
+            earlierLines = queryMessagesContinuation(firstAnchor: firstAnchor, lastAnchor: lastAnchor)
+        case .whatsApp:
+            earlierLines = queryWhatsAppContinuation(firstAnchor: firstAnchor, lastAnchor: lastAnchor)
+        default:
+            earlierLines = nil
+        }
+
+        guard let earlier = earlierLines, !earlier.isEmpty else { return nil }
+        let combined = (earlier + [visibleText]).joined(separator: "\n")
+        let bounded = DocumentSummarySource.excerpt(combined, maximumBytes: maximumBytes)
+        return Result(
+            text: bounded,
+            addedCount: earlier.count,
+            truncated: bounded.utf8.count < combined.utf8.count
+        )
+    }
+
+    private static func queryMessagesContinuation(firstAnchor: String, lastAnchor: String) -> [String]? {
+        let dbURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Messages/chat.db")
+        guard FileManager.default.isReadableFile(atPath: dbURL.path) else { return nil }
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(dbURL.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK,
+              let db else {
+            if let db { sqlite3_close(db) }
+            return nil
+        }
+        defer { sqlite3_close(db) }
+        sqlite3_busy_timeout(db, 200)
+
+        let findChatSQL = """
+            SELECT DISTINCT cmj.chat_id, m.ROWID
+            FROM message m
+            JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+            WHERE m.text IS NOT NULL AND instr(?, m.text) > 0 AND length(m.text) >= 8
+            ORDER BY m.ROWID DESC LIMIT 4;
+            """
+        guard let candidates = queryChatCandidates(db: db, sql: findChatSQL, anchor: lastAnchor),
+              let secondCandidates = queryChatCandidates(db: db, sql: findChatSQL, anchor: firstAnchor) else {
+            return nil
+        }
+        let matchingChats = Set(candidates.map(\.chatID)).intersection(Set(secondCandidates.map(\.chatID)))
+        guard matchingChats.count == 1, let chatID = matchingChats.first,
+              let earliestVisibleRowID = secondCandidates.first(where: { $0.chatID == chatID })?.rowID else {
+            return nil
+        }
+
+        let historySQL = """
+            SELECT m.is_from_me, COALESCE(h.id, 'Contact'), m.text
+            FROM message m
+            JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+            LEFT JOIN handle h ON h.ROWID = m.handle_id
+            WHERE cmj.chat_id = ? AND m.ROWID < ? AND m.text IS NOT NULL AND length(trim(m.text)) > 0
+            ORDER BY m.ROWID DESC LIMIT 60;
+            """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, historySQL, -1, &stmt, nil) == SQLITE_OK, let stmt else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int64(stmt, 1, chatID)
+        sqlite3_bind_int64(stmt, 2, earliestVisibleRowID)
+
+        var rows: [String] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let fromMe = sqlite3_column_int(stmt, 0) != 0
+            let sender = sqliteColumnString(stmt, index: 1) ?? "Contact"
+            guard let body = sqliteColumnString(stmt, index: 2)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !body.isEmpty else { continue }
+            rows.append("\(fromMe ? "You" : sender): \(body)")
+        }
+        return rows.reversed()
+    }
+
+    private static func queryWhatsAppContinuation(firstAnchor: String, lastAnchor: String) -> [String]? {
+        let groupContainer = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite")
+        guard FileManager.default.isReadableFile(atPath: groupContainer.path) else { return nil }
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(groupContainer.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK,
+              let db else {
+            if let db { sqlite3_close(db) }
+            return nil
+        }
+        defer { sqlite3_close(db) }
+        sqlite3_busy_timeout(db, 200)
+
+        let findSessionSQL = """
+            SELECT DISTINCT ZCHATSESSION, Z_PK
+            FROM ZWAMESSAGE
+            WHERE ZTEXT IS NOT NULL AND instr(?, ZTEXT) > 0 AND length(ZTEXT) >= 8
+            ORDER BY Z_PK DESC LIMIT 4;
+            """
+        guard let candidates = queryChatCandidates(db: db, sql: findSessionSQL, anchor: lastAnchor),
+              let secondCandidates = queryChatCandidates(db: db, sql: findSessionSQL, anchor: firstAnchor) else {
+            return nil
+        }
+        let matchingSessions = Set(candidates.map(\.chatID)).intersection(Set(secondCandidates.map(\.chatID)))
+        guard matchingSessions.count == 1, let sessionID = matchingSessions.first,
+              let earliestPK = secondCandidates.first(where: { $0.chatID == sessionID })?.rowID else {
+            return nil
+        }
+
+        let historySQL = """
+            SELECT ZISFROMME, COALESCE(ZPUSHNAME, 'Contact'), ZTEXT
+            FROM ZWAMESSAGE
+            WHERE ZCHATSESSION = ? AND Z_PK < ? AND ZTEXT IS NOT NULL AND length(trim(ZTEXT)) > 0
+            ORDER BY Z_PK DESC LIMIT 60;
+            """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, historySQL, -1, &stmt, nil) == SQLITE_OK, let stmt else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int64(stmt, 1, sessionID)
+        sqlite3_bind_int64(stmt, 2, earliestPK)
+
+        var rows: [String] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let fromMe = sqlite3_column_int(stmt, 0) != 0
+            let sender = sqliteColumnString(stmt, index: 1) ?? "Contact"
+            guard let body = sqliteColumnString(stmt, index: 2)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !body.isEmpty else { continue }
+            rows.append("\(fromMe ? "You" : sender): \(body)")
+        }
+        return rows.reversed()
+    }
+
+    private static func queryChatCandidates(
+        db: OpaquePointer,
+        sql: String,
+        anchor: String
+    ) -> [(chatID: Int64, rowID: Int64)]? {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        _ = anchor.withCString { cStr in
+            sqlite3_bind_text(stmt, 1, cStr, -1, transient)
+        }
+        var out: [(Int64, Int64)] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            out.append((sqlite3_column_int64(stmt, 0), sqlite3_column_int64(stmt, 1)))
+        }
+        return out.isEmpty ? nil : out
+    }
+
+    private static func sqliteColumnString(_ stmt: OpaquePointer, index: Int32) -> String? {
+        guard let ptr = sqlite3_column_text(stmt, index) else { return nil }
+        return String(cString: ptr)
     }
 }

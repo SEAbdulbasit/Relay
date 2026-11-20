@@ -69,6 +69,7 @@ struct LocalOCRTests {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("relay-ocr-\(UUID().uuidString).png")
         defer { try? FileManager.default.removeItem(at: url) }
         try data.write(to: url)
+        try await prepareOwnedOCRReadinessRecordingFailure()
         let recognized = try await LocalOCR.recognizeImage(at: url).uppercased()
         #expect(recognized.contains("HELLO"))
         #expect(recognized.contains("RELAY"))

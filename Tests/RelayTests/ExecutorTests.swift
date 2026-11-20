@@ -23,12 +23,13 @@ struct ExecutorTests {
         })
         store.draft = "Calculate both synthetic expressions once."
         store.send()
-        for _ in 0..<500 where release == nil { await Task.yield() }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while release == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(1)) }
         let pending = try #require(release)
         store.stop()
         store.resume()
         pending.resume()
-        for _ in 0..<1000 where resumedInput.isEmpty || store.isRunning { await Task.yield() }
+        await store.waitForConversationTaskToSettle()
         #expect(dispatches == 1)
         #expect(!resumedInput.isEmpty && ContextWindow.isWellFormed(resumedInput))
         let settled = resumedInput.filter { $0.role == "tool" && $0.toolCallID?.utf8.elementsEqual(first.id.utf8) == true }
@@ -69,7 +70,8 @@ struct ExecutorTests {
         }, execute: { _ in ToolResult(summary: "Verified marker: fixture-only", evidence: "Synthetic partial-outcome oracle", verified: true) })
         store.draft = "Inspect a fixture"
         store.send()
-        for _ in 0..<100 where store.isRunning { await Task.yield() }
+        await store.waitForConversationTaskToSettle()
+        #expect(turn == 2 && !store.isRunning)
         #expect(store.phase == .failed)
         #expect(store.messages.last?.text.contains("Verified marker: fixture-only") == true)
         #expect(store.messages.last?.text.contains("does not certify the whole task") == true)
@@ -86,11 +88,11 @@ struct ExecutorTests {
         })
         store.draft = "First request"
         store.send()
-        for _ in 0..<100 where store.isRunning { await Task.yield() }
+        await store.waitForConversationTaskToSettle()
         store.calendarSource.clear()
         store.draft = "A fresh request"
         store.send()
-        for _ in 0..<100 where store.isRunning { await Task.yield() }
+        await store.waitForConversationTaskToSettle()
         #expect(!secondInput.contains("Synthetic private calendar context"))
         #expect(secondInput.contains("A fresh request"))
         #expect(store.messages.contains { $0.text.contains("Synthetic private calendar context") })
@@ -133,7 +135,8 @@ struct ExecutorTests {
         })
         store.draft = "OLD_RESET_REQUEST"
         store.send()
-        for _ in 0..<200 where release == nil { await Task.yield() }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while release == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(1)) }
         #expect(release != nil)
         store.clearConversation()
         #expect(store.isClearingConversation)
@@ -147,14 +150,16 @@ struct ExecutorTests {
         #expect(turns == 1)
         #expect(!store.messages.contains { $0.role == "user" && $0.text == "New draft typed during reset" })
         release?.resume()
-        for _ in 0..<300 where store.isClearingConversation { await Task.yield() }
+        await store.waitForConversationTaskToSettle()
+        let clearDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while store.isClearingConversation, ContinuousClock.now < clearDeadline { try await Task.sleep(for: .milliseconds(1)) }
         #expect(!store.isClearingConversation)
         #expect(!store.isRunning)
         #expect(store.messages.isEmpty)
         #expect(store.activity.isEmpty)
         #expect(store.draft == "New draft typed during reset")
         store.send()
-        for _ in 0..<200 where store.isRunning { await Task.yield() }
+        await store.waitForConversationTaskToSettle()
         #expect(turns == 2)
         #expect(nextInput.contains("New draft typed during reset"))
         #expect(!nextInput.contains("OLD_LATE_COMPLETION"))
@@ -190,8 +195,11 @@ struct ExecutorTests {
         })
         store.draft = "Inspect applications"
         store.send()
-        for _ in 0..<100 where dispatched == 0 { await Task.yield() }
-        for _ in 0..<10 { await Task.yield() }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while dispatched == 0, ContinuousClock.now < deadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        await store.waitForConversationTaskToSettle()
         #expect(dispatched == 1)
         #expect(store.phase == .stopped)
         #expect(store.pendingReview == nil)
@@ -203,7 +211,7 @@ struct ExecutorTests {
         })
         store.draft = "Open player"
         store.send()
-        for _ in 0..<100 where store.isRunning { await Task.yield() }
+        await store.waitForConversationTaskToSettle()
         #expect(store.phase != .completed)
         #expect(store.activity.contains { $0.detail.contains("No computer actions were executed") })
         #expect(!store.activity.contains { $0.status == "verified" })
@@ -217,7 +225,7 @@ struct ExecutorTests {
         }, execute: { _ in throw RelayError.message("Observation failed") })
         store.draft = "Inspect apps"
         store.send()
-        for _ in 0..<100 where store.isRunning { await Task.yield() }
+        await store.waitForConversationTaskToSettle()
         #expect(store.phase == .needsInput)
         #expect(store.messages.last?.text.contains("No action outcome was independently verified") == true)
     }
@@ -254,7 +262,7 @@ struct ExecutorTests {
         })
         store.draft = "Prepare an output"
         store.send()
-        for _ in 0..<150 where store.isRunning { await Task.yield() }
+        await store.waitForConversationTaskToSettle()
         #expect(attempts == 3)
         #expect(dispatches == 0)
         #expect(store.phase == .failed)
@@ -270,7 +278,7 @@ struct ExecutorTests {
         }, execute: { _ in ToolResult(summary: "Listed apps", evidence: "Observation only", verified: true) })
         store.draft = "Fill the form"
         store.send()
-        for _ in 0..<150 where store.isRunning { await Task.yield() }
+        await store.waitForConversationTaskToSettle()
         #expect(store.phase != .completed)
         #expect(store.messages.last?.text.contains("Listed apps") == true)
     }

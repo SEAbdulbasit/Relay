@@ -7,6 +7,19 @@ import Foundation
 /// https://raw.githubusercontent.com/chromium/chromium/refs/tags/156.0.8078.80/chrome/browser/chrome_browser_application_mac.mm
 @MainActor
 final class BrowserAccessibility {
+    nonisolated static let chromiumBundleIdentifiers: Set<String> = [
+        "com.google.Chrome",
+        "company.thebrowser.Browser",
+        "com.brave.Browser",
+        "com.microsoft.edgemac",
+        "company.thebrowser.dia",
+    ]
+
+    nonisolated static func supportsEnhancedAccessibility(bundleIdentifier: String?) -> Bool {
+        guard let bundleIdentifier else { return false }
+        return chromiumBundleIdentifiers.contains { $0.caseInsensitiveCompare(bundleIdentifier) == .orderedSame }
+    }
+
     struct Identity: Equatable {
         let processID: pid_t
         let launchedAt: Date
@@ -51,7 +64,7 @@ final class BrowserAccessibility {
     }
 
     static func prepareContent(for application: NSRunningApplication) async throws {
-        guard application.bundleIdentifier == "com.google.Chrome" else { return }
+        guard supportsEnhancedAccessibility(bundleIdentifier: application.bundleIdentifier) else { return }
         guard AXIsProcessTrusted() else { throw Failure.accessibilityRequired }
         guard !application.isTerminated, let launchedAt = application.launchDate, let bundleURL = application.bundleURL else {
             throw Failure.applicationChanged
@@ -90,7 +103,7 @@ final class BrowserAccessibility {
 
     private static func isCurrent(_ identity: Identity) -> Bool {
         guard let application = NSRunningApplication(processIdentifier: identity.processID), !application.isTerminated,
-              application.bundleIdentifier == "com.google.Chrome", application.launchDate == identity.launchedAt,
+              supportsEnhancedAccessibility(bundleIdentifier: application.bundleIdentifier), application.launchDate == identity.launchedAt,
               let bundleURL = application.bundleURL else { return false }
         return bundleURL.resolvingSymlinksInPath().standardizedFileURL == identity.bundleURL
     }
@@ -126,9 +139,25 @@ final class BrowserAccessibility {
             guard isCurrent(identity) else { throw Failure.applicationChanged }
             var role: CFTypeRef?
             var window: CFTypeRef?
+            let hasWindow = (AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &window) == .success && window != nil)
+                || (AXUIElementCopyAttributeValue(application, kAXMainWindowAttribute as CFString, &window) == .success && window != nil)
+                || {
+                    var allWindows: CFTypeRef?
+                    guard AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &allWindows) == .success,
+                          let candidates = allWindows as? [AXUIElement] else { return false }
+                    for candidate in candidates {
+                        var minVal: CFTypeRef?
+                        _ = AXUIElementCopyAttributeValue(candidate, kAXMinimizedAttribute as CFString, &minVal)
+                        if (minVal as? Bool) != true {
+                            window = candidate
+                            return true
+                        }
+                    }
+                    return false
+                }()
             if AXUIElementCopyAttributeValue(application, kAXRoleAttribute as CFString, &role) == .success,
                role as? String == kAXApplicationRole,
-               AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &window) == .success,
+               hasWindow,
                let window, CFGetTypeID(window) == AXUIElementGetTypeID() {
                 let element = unsafeDowncast(window, to: AXUIElement.self)
                 var owner: pid_t = 0

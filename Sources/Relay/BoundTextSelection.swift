@@ -64,43 +64,101 @@ final class BoundTextSelection {
         case uncertain(reason: String)
     }
 
-    nonisolated static let maximumSelectionBytes = 8_000
+    nonisolated static let maximumSelectionBytes = 12_000
     nonisolated static let maximumFieldBytes = 16_000
     nonisolated static let maximumReplacementBytes = 16_000
 
     private var captured: State?
     private var readCurrent: (() throws -> State)?
     private var writeSelection: ((String) throws -> Void)?
+    private(set) var browserReplacer: BrowserSelectionReplacer.Target?
     private var attemptedReplacement = false
 
     var selectedText: String { captured?.selectedText ?? "" }
     var sourceAppName: String { captured?.sourceAppName ?? "" }
     var windowTitle: String { captured?.windowTitle ?? "" }
-    var canReplace: Bool { !attemptedReplacement && captured?.replacementRange != nil }
+    var canReplace: Bool {
+        !attemptedReplacement && (captured?.replacementRange != nil || browserReplacer?.canReplace == true)
+    }
 
     /// Tests inject a synthetic editor; production callers use capture(application:).
-    init(state: State, readCurrent: @escaping () throws -> State, writeSelection: @escaping (String) throws -> Void) throws {
+    init(state: State, readCurrent: @escaping () throws -> State, writeSelection: @escaping (String) throws -> Void,
+         browserReplacer: BrowserSelectionReplacer.Target? = nil) throws {
         guard !state.secure, state.enabled, !state.bundleID.isEmpty,
               state.processID > 0, state.launchedAt.timeIntervalSinceReferenceDate.isFinite,
               Self.usableText(state.selectedText, maximumBytes: Self.maximumSelectionBytes),
               !state.selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw RelayError.message("Select readable plain text of up to 8,000 UTF-8 bytes in an ordinary app field.")
+            throw RelayError.message("Select readable plain text of up to 12,000 UTF-8 bytes in an ordinary app field.")
         }
         captured = state
         self.readCurrent = readCurrent
         self.writeSelection = writeSelection
+        self.browserReplacer = browserReplacer
     }
 
     /// Explicit invocation only. A supplied original app is inspected without
     /// activating it, scanning other windows, or reading the clipboard.
     static func capture(application: NSRunningApplication? = nil) throws -> BoundTextSelection {
         try Task.checkCancellation()
+        let resolvedApp = application ?? NSWorkspace.shared.frontmostApplication
+        if let app = resolvedApp, let bundleID = app.bundleIdentifier,
+           BrowserSelectionReplacer.browserBundleIdentifiers.contains(bundleID) {
+            let root = AXUIElementCreateApplication(app.processIdentifier)
+            BrowserSelectionReplacer.warmBrowserAccessibility(appElement: root, bundleID: bundleID)
+        }
         let target = try NativeTarget.capture(application: application)
         let first = try target.read()
         let second = try target.read()
         guard first.matches(second) else { throw RelayError.message("The selected text changed during capture. Select it again.") }
-        return try BoundTextSelection(state: second, readCurrent: { try target.read(requireForeground: true) },
-                                      writeSelection: { try target.replace($0, expected: second) })
+        let replacer: BrowserSelectionReplacer.Target?
+        if second.replacementRange == nil {
+            replacer = BrowserSelectionReplacer.captureSelectionSynchronously(
+                in: target.application,
+                fallbackSelectedText: second.selectedText
+            )
+        } else {
+            replacer = nil
+        }
+        return try BoundTextSelection(
+            state: second,
+            readCurrent: { try target.read(requireForeground: true) },
+            writeSelection: { try target.replace($0, expected: second) },
+            browserReplacer: replacer
+        )
+    }
+
+    /// Async browser-capable capture that falls back to guarded clipboard-preserving `Cmd+C`
+    /// when a web editor (`contenteditable`) does not expose `AXSelectedText` directly.
+    static func captureWithBrowserFallback(application: NSRunningApplication? = nil) async throws -> BoundTextSelection {
+        if let direct = try? capture(application: application) {
+            return direct
+        }
+        guard let target = await BrowserSelectionReplacer.captureSelection(in: application, allowCopyFallback: true) else {
+            throw RelayError.message("Select readable text of up to 12,000 UTF-8 bytes in an ordinary application first.")
+        }
+        let state = State(
+            processID: target.processID,
+            launchedAt: target.launchedAt ?? Date(timeIntervalSince1970: 1),
+            bundleID: target.bundleIdentifier ?? "unknown.bundle",
+            sourceAppName: target.sourceAppName,
+            windowTitle: "",
+            windowIdentity: "browser-window",
+            editorIdentity: "browser-editor",
+            fullValue: target.existingFieldText.isEmpty ? nil : target.existingFieldText,
+            range: nil,
+            selectedText: target.selectedText,
+            enabled: true,
+            writable: target.canReplace,
+            formattingSafe: false,
+            secure: false,
+            webContent: target.isWebContent
+        )
+        return try BoundTextSelection(
+            state: state,
+            readCurrent: { state },
+            writeSelection: { _ in throw RelayError.message("Direct AX write is unavailable in this web editor.") },
+            browserReplacer: target
+        )
     }
 
     /// Called only after the exact correction has been displayed and approved.
@@ -110,8 +168,24 @@ final class BoundTextSelection {
         guard !attemptedReplacement, let captured, let readCurrent, let writeSelection else {
             return .copyOnly(reason: "This selection is no longer available for replacement. Copy the correction instead.")
         }
-        guard Self.usableText(replacement, maximumBytes: Self.maximumReplacementBytes),
-              let fullValue = captured.fullValue, let range = captured.replacementRange else {
+        guard Self.usableText(replacement, maximumBytes: Self.maximumReplacementBytes) else {
+            return .copyOnly(reason: "This editor cannot safely replace the captured selection. Copy the correction instead.")
+        }
+        if captured.replacementRange == nil, let browserReplacer, browserReplacer.canReplace {
+            if replacement.utf16.elementsEqual(captured.selectedText.utf16) { return .unchanged }
+            try Task.checkCancellation()
+            attemptedReplacement = true
+            if let syncOutcome = browserReplacer.replaceIfFrontmost(with: replacement) {
+                switch syncOutcome {
+                case .replaced:
+                    return .replaced
+                case .copyOnly(let reason):
+                    return .copyOnly(reason: reason)
+                }
+            }
+            return .copyOnly(reason: "Bring \(captured.sourceAppName) to the front, or copy the correction instead.")
+        }
+        guard let fullValue = captured.fullValue, let range = captured.replacementRange else {
             return .copyOnly(reason: "This editor cannot safely replace the captured selection. Copy the correction instead.")
         }
         let current: State
@@ -143,10 +217,32 @@ final class BoundTextSelection {
         } catch { return .uncertain(reason: "The edited field could not be read back. Inspect it before another edit.") }
     }
 
+    /// Async browser-aware replacement that can restore focus to the bookmarked
+    /// browser window/editor before posting undo-safe clipboard-restoring `Cmd+V`.
+    func replaceReviewedAsync(with replacement: String) async throws -> ReplacementOutcome {
+        try Task.checkCancellation()
+        if captured?.replacementRange == nil, !attemptedReplacement, let captured, let browserReplacer, browserReplacer.canReplace {
+            guard Self.usableText(replacement, maximumBytes: Self.maximumReplacementBytes) else {
+                return .copyOnly(reason: "This editor cannot safely replace the captured selection. Copy the correction instead.")
+            }
+            if replacement.utf16.elementsEqual(captured.selectedText.utf16) { return .unchanged }
+            attemptedReplacement = true
+            let outcome = await browserReplacer.replace(with: replacement)
+            switch outcome {
+            case .replaced:
+                return .replaced
+            case .copyOnly(let reason):
+                return .copyOnly(reason: reason)
+            }
+        }
+        return try replaceReviewed(with: replacement)
+    }
+
     func clear() {
         captured = nil
         readCurrent = nil
         writeSelection = nil
+        browserReplacer = nil
         attemptedReplacement = true
     }
 

@@ -50,88 +50,16 @@ enum ScopedFileOperations {
     }
     nonisolated private static let maximumMoveBytes: Int64 = 67_108_864
 
-    static func search(query: String, grants: [ScopeGrant]) async throws -> SearchResult {
-        let query = try validatedQuery(query)
-        guard !grants.isEmpty, grants.count <= 20 else { throw RelayError.message("Filename search needs between 1 and 20 explicitly selected files or folders.") }
-        var matches: [SearchMatch] = []
-        var visited = 0, skipped = 0, outputBytes = 0
-        var truncated = false
-        var warnings: [String] = []
-        var seenPaths = Set<String>()
-        let deadline = Date().addingTimeInterval(10)
-        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .isHiddenKey, .fileSizeKey, .volumeIsLocalKey]
-        func inspect(_ candidate: URL, enumerator: FileManager.DirectoryEnumerator?) throws -> Bool {
-            try Task.checkCancellation()
-            guard Date() < deadline, visited < 5000, matches.count < 100 else { truncated = true; return false }
-            visited += 1
-            let values = try candidate.resourceValues(forKeys: keys)
-            if values.isSymbolicLink == true || (try? FileManager.default.destinationOfSymbolicLink(atPath: candidate.path)) != nil {
-                // DirectoryEnumerator does not follow symlinks; skipDescendants on a leaf
-                // would incorrectly apply to the next real directory on this Foundation build.
-                skipped += 1; return true
-            }
-            if values.isHidden == true || candidate.lastPathComponent.hasPrefix(".") || ["node_modules", "DerivedData", "Pods"].contains(candidate.lastPathComponent) {
-                if values.isDirectory == true { enumerator?.skipDescendants() }
-                return true
-            }
-            let isLocal = try values.volumeIsLocal ?? URL(fileURLWithPath: candidate.path).resourceValues(forKeys: [.volumeIsLocalKey]).volumeIsLocal
-            guard isLocal == true else {
-                if values.isDirectory == true { enumerator?.skipDescendants() }
-                if warnings.count < 5 { warnings.append("A nonlocal or unqualified filesystem entry was excluded; results may be incomplete.") }
-                return true
-            }
-            if let enumerator, enumerator.level > 8 {
-                if values.isDirectory == true { enumerator.skipDescendants() }
-                truncated = true; return true
-            }
-            guard values.isRegularFile == true else { return true }
-            let resolved = try ToolPolicy.scopedURL(candidate.path, grants: grants)
-            guard Self.filenameMatches(resolved.lastPathComponent, query: query),
-                  seenPaths.insert(resolved.path).inserted else { return true }
-            let cost = resolved.path.utf8.count + resolved.lastPathComponent.utf8.count + 96
-            guard outputBytes + cost <= 9000 else { truncated = true; return false }
-            outputBytes += cost
-            matches.append(SearchMatch(path: resolved.path, name: resolved.lastPathComponent, bytes: values.fileSize ?? 0))
-            return true
-        }
-        for grant in grants {
-            try Task.checkCancellation()
-            guard Date() < deadline, visited < 5000, matches.count < 100 else { truncated = true; break }
-            do {
-                if (try? FileManager.default.destinationOfSymbolicLink(atPath: grant.path)) != nil { skipped += 1; continue }
-                let root = try ToolPolicy.scopedURL(grant.path, grants: grants)
-                let values = try root.resourceValues(forKeys: keys)
-                guard values.isHidden != true, !root.lastPathComponent.hasPrefix(".") else { continue }
-                guard values.volumeIsLocal == true else {
-                    if warnings.count < 5 { warnings.append("A selected nonlocal or unqualified filesystem root was excluded.") }
-                    continue
-                }
-                if values.isRegularFile == true { if try !inspect(root, enumerator: nil) { break }; continue }
-                guard values.isDirectory == true else { continue }
-                if let topChildren = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles]), topChildren.count > 50 {
-                    for child in topChildren {
-                        if let cv = try? child.resourceValues(forKeys: keys), cv.isRegularFile == true, cv.isSymbolicLink != true {
-                            _ = try? inspect(child, enumerator: nil)
-                        }
-                    }
-                }
-                var enumerationFailed = false
-                guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: Array(keys), options: [.skipsPackageDescendants], errorHandler: { _, _ in enumerationFailed = true; return false }) else { continue }
-                while let file = enumerator.nextObject() as? URL {
-                    do { if try !inspect(file, enumerator: enumerator) { break } }
-                    catch is CancellationError { throw CancellationError() }
-                    catch { if warnings.count < 5 { warnings.append("A selected entry could not be inspected; results may be incomplete.") } }
-                    if visited % 32 == 0 { await Task.yield() }
-                }
-                if enumerationFailed, warnings.count < 5 { warnings.append("A selected directory enumeration stopped on an access error; results are incomplete.") }
-            } catch is CancellationError { throw CancellationError() }
-            catch { if warnings.count < 5 { warnings.append("A selected search root could not be inspected; results may be incomplete.") } }
-        }
-        try Task.checkCancellation()
-        return SearchResult(matches: matches, visitedEntries: visited, truncated: truncated || !warnings.isEmpty, skippedSymlinks: skipped, warnings: warnings)
+    /// Shared actual metadata producer; lacking a live accepted-proposal scope
+    /// preserves the ordinary result API but cannot mint a source receipt.
+    static func search(query: String, grants: [ScopeGrant], worker: FilenameSearchWorker? = nil) async throws -> SearchResult {
+        let value = try await (worker ?? .shared).capture(query: query, grants: grants)
+        return SearchResult(matches: value.matches.map { SearchMatch(path: $0.path, name: $0.name, bytes: $0.bytes) },
+            visitedEntries: value.visitedEntries, truncated: value.truncated, skippedSymlinks: value.skippedSymlinks,
+            warnings: value.limits.map { "Filename traversal limit: " + $0.rawValue + "; more matches may exist." })
     }
 
-    static func validatedQuery(_ raw: String) throws -> String {
+    nonisolated static func validatedQuery(_ raw: String) throws -> String {
         guard !raw.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }), !raw.contains("/") else {
             throw RelayError.message("Filename search accepts literal single-line filename text, not a path or keyboard control.")
         }
@@ -349,7 +277,7 @@ enum ScopedFileOperations {
         return digest.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
-    static func filenameMatches(_ filename: String, query: String) -> Bool {
+    nonisolated static func filenameMatches(_ filename: String, query: String) -> Bool {
         let normFile = filename
             .replacingOccurrences(of: "\u{202F}", with: " ")
             .replacingOccurrences(of: "\u{00A0}", with: " ")

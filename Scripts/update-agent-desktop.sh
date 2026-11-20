@@ -3,7 +3,6 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 VENDOR_DIR="$PWD/Vendor/agent-desktop"
-mkdir -p "$VENDOR_DIR/bin" "$VENDOR_DIR/lib" "$VENDOR_DIR/include"
 
 REQUESTED_TAG="${1:-latest}"
 ARCH="$(uname -m)"
@@ -19,12 +18,17 @@ if [ "$REQUESTED_TAG" = "latest" ]; then
 else
     TAG="$REQUESTED_TAG"
 fi
+if [[ ! "$TAG" =~ ^[vV]?[0-9][A-Za-z0-9._+-]*$ ]]; then
+    echo "ERROR: Invalid agent-desktop release tag." >&2
+    exit 1
+fi
 
 CLI_ARCHIVE="agent-desktop-${TAG}-${TARGET}.tar.gz"
 FFI_ARCHIVE="agent-desktop-ffi-${TAG}-${TARGET}.tar.gz"
 BASE_URL="https://github.com/vercel-labs/agent-desktop/releases/download/${TAG}"
 
-TMP_DIR="$(mktemp -d)"
+mkdir -p "$PWD/Vendor"
+TMP_DIR="$(mktemp -d "$PWD/Vendor/.agent-desktop-update.XXXXXXXX")"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 echo "→ Downloading $CLI_ARCHIVE, $FFI_ARCHIVE, and checksums.txt..."
@@ -35,14 +39,14 @@ curl -fsSL "$BASE_URL/checksums.txt" -o "$TMP_DIR/checksums.txt"
 echo "→ Verifying SHA-256 checksums..."
 (
     cd "$TMP_DIR"
-    EXPECTED_CLI="$(grep "  $CLI_ARCHIVE" checksums.txt | awk '{print $1}' | tr -d '\r')"
+    EXPECTED_CLI="$(awk -v archive="$CLI_ARCHIVE" '{sub(/\r$/, ""); if (NF == 2 && $2 == archive) print $1}' checksums.txt)"
     ACTUAL_CLI="$(shasum -a 256 "$CLI_ARCHIVE" | awk '{print $1}')"
     if [ "$EXPECTED_CLI" != "$ACTUAL_CLI" ]; then
         echo "ERROR: SHA-256 mismatch for $CLI_ARCHIVE (expected $EXPECTED_CLI, got $ACTUAL_CLI)" >&2
         exit 1
     fi
 
-    EXPECTED_FFI="$(grep "  $FFI_ARCHIVE" checksums.txt | awk '{print $1}' | tr -d '\r')"
+    EXPECTED_FFI="$(awk -v archive="$FFI_ARCHIVE" '{sub(/\r$/, ""); if (NF == 2 && $2 == archive) print $1}' checksums.txt)"
     ACTUAL_FFI="$(shasum -a 256 "$FFI_ARCHIVE" | awk '{print $1}')"
     if [ "$EXPECTED_FFI" != "$ACTUAL_FFI" ]; then
         echo "ERROR: SHA-256 mismatch for $FFI_ARCHIVE (expected $EXPECTED_FFI, got $ACTUAL_FFI)" >&2
@@ -55,18 +59,25 @@ tar -xzf "$TMP_DIR/$CLI_ARCHIVE" -C "$TMP_DIR"
 tar -xzf "$TMP_DIR/$FFI_ARCHIVE" -C "$TMP_DIR"
 
 FFI_EXTRACTED="$TMP_DIR/agent-desktop-ffi-${TAG}-${TARGET}"
+STAGED_DIR="$TMP_DIR/staged"
+mkdir -p "$STAGED_DIR/bin" "$STAGED_DIR/lib" "$STAGED_DIR/include"
 
-cp "$TMP_DIR/agent-desktop" "$VENDOR_DIR/bin/agent-desktop"
-cp "$TMP_DIR/agent-desktop-macos-helper" "$VENDOR_DIR/bin/agent-desktop-macos-helper"
-chmod +x "$VENDOR_DIR/bin/agent-desktop" "$VENDOR_DIR/bin/agent-desktop-macos-helper"
+install -m 755 "$TMP_DIR/agent-desktop" "$STAGED_DIR/bin/agent-desktop"
+install -m 755 "$TMP_DIR/agent-desktop-macos-helper" "$STAGED_DIR/bin/agent-desktop-macos-helper"
 
-cp "$FFI_EXTRACTED/lib/libagent_desktop_ffi.dylib" "$VENDOR_DIR/lib/libagent_desktop_ffi.dylib"
-cp "$FFI_EXTRACTED/lib/agent-desktop-macos-helper" "$VENDOR_DIR/lib/agent-desktop-macos-helper"
-cp "$FFI_EXTRACTED/include/agent_desktop.h" "$VENDOR_DIR/include/agent_desktop.h"
-cp "$FFI_EXTRACTED/LICENSE" "$VENDOR_DIR/LICENSE"
-chmod +x "$VENDOR_DIR/lib/libagent_desktop_ffi.dylib" "$VENDOR_DIR/lib/agent-desktop-macos-helper"
+install -m 755 "$FFI_EXTRACTED/lib/libagent_desktop_ffi.dylib" "$STAGED_DIR/lib/libagent_desktop_ffi.dylib"
+install -m 755 "$FFI_EXTRACTED/lib/agent-desktop-macos-helper" "$STAGED_DIR/lib/agent-desktop-macos-helper"
+install -m 644 "$FFI_EXTRACTED/include/agent_desktop.h" "$STAGED_DIR/include/agent_desktop.h"
+install -m 644 "$FFI_EXTRACTED/LICENSE" "$STAGED_DIR/LICENSE"
 
-printf '%s\n' "${TAG#v}" > "$VENDOR_DIR/VERSION"
+VERSION="${TAG#[vV]}"
+"$STAGED_DIR/bin/agent-desktop" version | python3 -c '
+import json, sys
+result = json.load(sys.stdin)
+if result.get("ok") is not True or result.get("data", {}).get("version") != sys.argv[1]:
+    sys.exit("ERROR: The staged CLI did not report the expected release version.")
+' "$VERSION"
+printf '%s\n' "$VERSION" > "$STAGED_DIR/VERSION"
 
+python3 Scripts/agent-desktop-vendor.py promote "$VENDOR_DIR" "$STAGED_DIR"
 echo "✓ Installed vercel-labs/agent-desktop $TAG into $VENDOR_DIR"
-"$VENDOR_DIR/bin/agent-desktop" version

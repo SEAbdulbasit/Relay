@@ -52,6 +52,16 @@ import Testing
         await #expect(throws: (any Error).self) { try await check() }
     }
 
+    @Test func missingControlProducerRefusesBeforeCaptureWhileGeneralReadStillWorks() async throws {
+        let rig = try Rig(), connection = try await rig.factory.open(policy: rig.policy)
+        await #expect(throws: (any Error).self) { try await connection.observeForControl(rig.admission) }
+        #expect(rig.observations == 0 && rig.canvas.captureCount == 0)
+        let read = try await connection.observeRead(rig.admission)
+        try read.validateOriginalSource()
+        #expect(rig.observations == 1 && rig.canvas.captureCount == 1)
+        connection.stop(); await connection.drain(); #expect(rig.closes == 1)
+    }
+
     @Test func foreignAdmissionRefusesBeforePlatformCaptureWithoutRetargeting() async throws {
         let rig = try Rig(), connection = try await rig.factory.open(policy: rig.policy)
         let other = DesktopApplicationIdentity(processID: 99, launchedAt: Date(timeIntervalSince1970: 1),

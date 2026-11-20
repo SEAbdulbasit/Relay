@@ -26,6 +26,7 @@ import Foundation
         let hidden: Bool?
         let enabled: Bool?
         let selectionWritable: Bool
+        var standardEditor: NativeStandardControlSurvey.Editor? = nil
     }
     struct Contents {
         let value: String
@@ -225,8 +226,16 @@ import Foundation
               !metadata.subrole.localizedCaseInsensitiveContains("secure"),
               !metadata.subrole.localizedCaseInsensitiveContains("password"),
               !metadata.subrole.localizedCaseInsensitiveContains("search"),
-              metadata.protected == false, metadata.hidden == false,
-              metadata.enabled == true, metadata.selectionWritable else { throw Failure.unavailableEditor }
+              metadata.protected != true, metadata.hidden != true,
+              metadata.selectionWritable else { throw Failure.unavailableEditor }
+        if let standard = metadata.standardEditor {
+            if !standard.usesCanonicalDirectBoundary {
+                try standard.validate(role: metadata.role, subrole: metadata.subrole, protected: metadata.protected,
+                    hidden: metadata.hidden, enabled: metadata.enabled)
+            }
+        } else {
+            guard metadata.protected == false, metadata.hidden == false, metadata.enabled == true else { throw Failure.unavailableEditor }
+        }
         // Metadata/ancestry queries can yield to another process. A close or Stop
         // delivered during them must not start a new private field-content read.
         try requireActive(); try access.validateOriginalTarget(); try requireActive()
@@ -289,16 +298,51 @@ import Foundation
                         validateOriginalSource: @escaping @MainActor () throws -> Void,
                         validateForInput: @escaping @MainActor () throws -> Void,
                         sessionIsActive: @escaping @MainActor () -> Bool,
-                        admissionGate: NativeInputRevocation? = nil) throws -> NativeFocusedAXInsertion {
+                        admissionGate: NativeInputRevocation? = nil,
+                        policyTarget: NativeOriginalPolicyTarget? = nil,
+                        authorizePrivateQuery: @escaping @MainActor () throws -> Void = {}) throws -> NativeFocusedAXInsertion {
         guard sessionIsActive(), !Task.isCancelled, AXIsProcessTrusted(),
               !protectedBundles.contains(identity.bundleID.lowercased()),
               let app = NSRunningApplication(processIdentifier: identity.processID),
               DesktopApplicationTarget.matches(identity, application: app) else { throw Failure.unavailableEditor }
         try validateOriginalSource()
+        let readAudit = policyTarget?.readAudit
+        func read(_ node: AXUIElement, _ name: String, stage: NativeReadAudit.Stage = .focusedIdentityMetadata) -> CFTypeRef? {
+            attribute(node, name, readAudit: readAudit, stage: stage)
+        }
         let root = AXUIElementCreateApplication(identity.processID)
         AXUIElementSetMessagingTimeout(root, 0.05)
         guard let editor = element(root, kAXFocusedUIElementAttribute),
               let window = element(root, kAXFocusedWindowAttribute), CFEqual(window, originalWindow) else { throw Failure.changedSource }
+        let standard = try policyTarget.map { target -> NativeStandardControlSurvey.Editor in
+            try authorizePrivateQuery()
+            guard target.application == identity else { throw Failure.changedSource }
+            let survey = try target.standardSurvey(authorizeMetadata: validateOriginalSource)
+            do { return try survey.editor(editor) }
+            catch NativeOrdinaryWindowPolicySource.Failure.incomplete { throw Failure.unavailableEditor }
+        }
+        let privateCheck: @MainActor () throws -> Void = {
+            try validateOriginalSource(); try authorizePrivateQuery()
+            if let standard {
+                if !standard.usesCanonicalDirectBoundary {
+                    try standard.validate(role: standard.role, subrole: standard.subrole, protected: standard.protected,
+                        hidden: standard.hidden, enabled: standard.enabled)
+                }
+            } else {
+                // Compatibility capture has no standard-source capability. Its
+                // original explicit-positive privacy contract remains strict,
+                // including before hierarchy labels, not just before values.
+                let role = read(editor, kAXRoleAttribute) as? String ?? ""
+                let subrole = read(editor, kAXSubroleAttribute) as? String ?? ""
+                guard ["AXTextField", "AXTextArea"].contains(role),
+                      !subrole.localizedCaseInsensitiveContains("secure"), !subrole.localizedCaseInsensitiveContains("password"),
+                      NativeControlFocus.protectedValue([read(editor, "AXProtectedContent") as? Bool,
+                          read(editor, "AXContainsProtectedContent") as? Bool]) == false,
+                      read(editor, "AXHidden") as? Bool == false,
+                      read(editor, kAXEnabledAttribute) as? Bool == true else { throw Failure.unavailableEditor }
+            }
+            try validateOriginalSource()
+        }
         let validate: @MainActor () throws -> Void = {
             try validateOriginalSource()
             guard sessionIsActive(), !Task.isCancelled, AXIsProcessTrusted(),
@@ -308,7 +352,9 @@ import Foundation
                   let editorWindow = element(editor, kAXWindowAttribute), CFEqual(editorWindow, originalWindow) else { throw Failure.changedSource }
             var pid: pid_t = 0
             guard AXUIElementGetPid(editor, &pid) == .success, pid == identity.processID else { throw Failure.changedSource }
-            try validateSourceHierarchy(editor: editor, window: originalWindow, pid: identity.processID)
+            if standard?.usesCanonicalDirectBoundary != true {
+                try validateSourceHierarchy(editor: editor, window: originalWindow, pid: identity.processID, authorizePrivateQuery: privateCheck, readAudit: readAudit)
+            }
         }
         let validateInput: @MainActor () throws -> Void = {
             try validate()
@@ -318,24 +364,50 @@ import Foundation
             try validate()
         }
         let access = Access(validateOriginalTarget: validate, validateInputTarget: validateInput, metadata: {
+            if let standard {
+                if standard.usesCanonicalDirectBoundary {
+                    try standard.validateEditorMetadataOnly(role: standard.role, subrole: standard.subrole,
+                        protected: standard.protected, hidden: standard.hidden, enabled: standard.enabled)
+                } else {
+                    try standard.validate(role: standard.role, subrole: standard.subrole, protected: standard.protected,
+                        hidden: standard.hidden, enabled: standard.enabled)
+                }
+                var metadata = Metadata(role: standard.role, subrole: standard.subrole, protected: standard.protected,
+                    hidden: standard.hidden, enabled: standard.enabled, selectionWritable: standard.selectedTextWritable)
+                metadata.standardEditor = standard
+                return metadata
+            }
             AXUIElementSetMessagingTimeout(editor, 0.05)
             var writable = DarwinBoolean(false)
-            let settable = AXUIElementIsAttributeSettable(editor, kAXSelectedTextAttribute as CFString, &writable) == .success && writable.boolValue
-            return Metadata(role: attribute(editor, kAXRoleAttribute) as? String ?? "", subrole: attribute(editor, kAXSubroleAttribute) as? String ?? "",
-                protected: NativeControlFocus.protectedValue([attribute(editor, "AXProtectedContent") as? Bool, attribute(editor, "AXContainsProtectedContent") as? Bool]),
-                hidden: attribute(editor, "AXHidden") as? Bool, enabled: attribute(editor, kAXEnabledAttribute) as? Bool, selectionWritable: settable)
+            let status = NativeReadAudit.measure(readAudit, .focusedCapabilityMetadata) {
+                AXUIElementIsAttributeSettable(editor, kAXSelectedTextAttribute as CFString, &writable)
+            }
+            let settable = status == .success && writable.boolValue
+            return Metadata(role: read(editor, kAXRoleAttribute) as? String ?? "", subrole: read(editor, kAXSubroleAttribute) as? String ?? "",
+                protected: NativeControlFocus.protectedValue([read(editor, "AXProtectedContent") as? Bool, read(editor, "AXContainsProtectedContent") as? Bool]),
+                hidden: read(editor, "AXHidden") as? Bool, enabled: read(editor, kAXEnabledAttribute) as? Bool, selectionWritable: settable)
         }, qualifiedLabels: {
             // readCurrent has already admitted privacy/plain-editor metadata.
             try validate()
-            let label = [kAXDescriptionAttribute, kAXTitleAttribute, kAXPlaceholderValueAttribute]
-                .compactMap { attribute(editor, $0) as? String }.first { !$0.isEmpty }
-            let identifier = (attribute(editor, kAXIdentifierAttribute) as? String).flatMap { $0.isEmpty ? nil : $0 }
+            if standard?.usesCanonicalDirectBoundary == true {
+                try validateSourceHierarchy(editor: editor, window: originalWindow, pid: identity.processID, authorizePrivateQuery: privateCheck, readAudit: readAudit)
+            }
+            let label = try [kAXDescriptionAttribute, kAXTitleAttribute, kAXPlaceholderValueAttribute]
+                .compactMap { name -> String? in try privateCheck(); return read(editor, name, stage: .editorLabel) as? String }.first { !$0.isEmpty }
+            try privateCheck()
+            let identifier = (read(editor, kAXIdentifierAttribute, stage: .editorLabel) as? String).flatMap { $0.isEmpty ? nil : $0 }
             return .init(label: label, identifier: identifier)
         }, contents: {
-            guard let value = attribute(editor, kAXValueAttribute) as? String, value.utf8.count <= maximumFieldBytes,
-                  let range = selectedRange(editor), let selected = attribute(editor, kAXSelectedTextAttribute) as? String else { throw Failure.unavailableEditor }
+            try privateCheck()
+            guard let value = read(editor, kAXValueAttribute, stage: .editorValue) as? String, value.utf8.count <= maximumFieldBytes else { throw Failure.unavailableEditor }
+            try privateCheck()
+            guard let range = selectedRange(editor, readAudit: readAudit) else { throw Failure.unavailableEditor }
+            try privateCheck()
+            guard let selected = read(editor, kAXSelectedTextAttribute, stage: .editorSelectedText) as? String else { throw Failure.unavailableEditor }
             try validateSelection(value: value, range: range, selectedText: selected)
-            let attributed = try attributedValue(editor: editor, value: value)
+            try privateCheck()
+            let attributed = try attributedValue(editor: editor, value: value, readAudit: readAudit)
+            try privateCheck()
             return Contents(value: value, selection: range, selectedText: selected, attributedValue: attributed)
         }, writeSelectedText: { literal in
             AXUIElementSetMessagingTimeout(editor, 0.3)
@@ -344,7 +416,8 @@ import Foundation
         return try NativeFocusedAXInsertion(access: access, sessionIsActive: sessionIsActive, admissionGate: admissionGate)
     }
 
-    static func validateSourceHierarchy(editor: AXUIElement, window: AXUIElement, pid: pid_t) throws {
+    static func validateSourceHierarchy(editor: AXUIElement, window: AXUIElement, pid: pid_t,
+                                        authorizePrivateQuery: () throws -> Void = {}, readAudit: NativeReadAudit? = nil) throws {
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(500))
         var node: AXUIElement? = editor, visited: [AXUIElement] = []
         for _ in 0..<20 {
@@ -352,17 +425,17 @@ import Foundation
             visited.append(current); AXUIElementSetMessagingTimeout(current, 0.05)
             var currentPID: pid_t = 0
             guard AXUIElementGetPid(current, &currentPID) == .success, currentPID == pid else { break }
-            let role = attribute(current, kAXRoleAttribute) as? String ?? ""
-            let subrole = attribute(current, kAXSubroleAttribute) as? String ?? ""
-            let protected = NativeControlFocus.protectedValue([attribute(current, "AXProtectedContent") as? Bool,
-                attribute(current, "AXContainsProtectedContent") as? Bool])
+            let role = attribute(current, kAXRoleAttribute, readAudit: readAudit) as? String ?? ""
+            let subrole = attribute(current, kAXSubroleAttribute, readAudit: readAudit) as? String ?? ""
+            let protected = NativeControlFocus.protectedValue([attribute(current, "AXProtectedContent", readAudit: readAudit) as? Bool,
+                attribute(current, "AXContainsProtectedContent", readAudit: readAudit) as? Bool])
             let label = try hierarchyLabel(role: role, subrole: subrole, protected: protected,
-                hidden: attribute(current, "AXHidden") as? Bool, readLabel: {
-                    [kAXDescriptionAttribute, kAXTitleAttribute, kAXIdentifierAttribute, kAXPlaceholderValueAttribute]
-                        .map { attribute(current, $0) as? String ?? "" }.joined(separator: " ").lowercased()
+                hidden: attribute(current, "AXHidden", readAudit: readAudit) as? Bool, readLabel: {
+                    try [kAXDescriptionAttribute, kAXTitleAttribute, kAXIdentifierAttribute, kAXPlaceholderValueAttribute]
+                        .map { name in try authorizePrivateQuery(); return attribute(current, name, readAudit: readAudit, stage: .editorLabel) as? String ?? "" }.joined(separator: " ").lowercased()
                 })
             try QuickSelectionCapture.validateControl(role: role, subrole: subrole, label: label,
-                isModal: attribute(current, kAXModalAttribute) as? Bool == true)
+                isModal: attribute(current, kAXModalAttribute, readAudit: readAudit) as? Bool == true)
             if CFEqual(current, window) { return }
             node = element(current, kAXParentAttribute)
         }
@@ -379,23 +452,38 @@ import Foundation
         guard !["passcode", "one-time code", "security code", "credit card", "secret key", "recovery phrase", "address bar", "address and search"].contains(where: label.lowercased().contains) else { throw Failure.unavailableEditor }
         return label
     }
-    private static func attributedValue(editor: AXUIElement, value: String) throws -> NSAttributedString {
+    private static func attributedValue(editor: AXUIElement, value: String, readAudit: NativeReadAudit? = nil) throws -> NSAttributedString {
         var range = CFRange(location: 0, length: value.utf16.count)
         guard let parameter = AXValueCreate(.cfRange, &range) else { throw Failure.unavailableEditor }
         var raw: CFTypeRef?
-        guard AXUIElementCopyParameterizedAttributeValue(editor, kAXAttributedStringForRangeParameterizedAttribute as CFString, parameter, &raw) == .success,
+        let status = NativeReadAudit.measure(readAudit, .editorStyle) {
+            AXUIElementCopyParameterizedAttributeValue(editor, kAXAttributedStringForRangeParameterizedAttribute as CFString, parameter, &raw)
+        }
+        if value.isEmpty, status == .noValue {
+            var names: CFArray?
+            guard AXUIElementCopyParameterizedAttributeNames(editor, &names) == .success,
+                  let list = names as? [String],
+                  list.contains(kAXAttributedStringForRangeParameterizedAttribute as String) else {
+                throw Failure.unavailableEditor
+            }
+            return NSAttributedString(string: "")
+        }
+        guard status == .success,
               let attributed = raw as? NSAttributedString, attributed.string.utf16.elementsEqual(value.utf16) else { throw Failure.unavailableEditor }
         return attributed
     }
-    private static func selectedRange(_ editor: AXUIElement) -> NSRange? {
-        guard let raw = attribute(editor, kAXSelectedTextRangeAttribute), CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
+    private static func selectedRange(_ editor: AXUIElement, readAudit: NativeReadAudit? = nil) -> NSRange? {
+        guard let raw = attribute(editor, kAXSelectedTextRangeAttribute, readAudit: readAudit, stage: .editorSelection), CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
         var range = CFRange()
         guard AXValueGetValue(unsafeDowncast(raw, to: AXValue.self), .cfRange, &range), range.location >= 0, range.length >= 0 else { return nil }
         return NSRange(location: range.location, length: range.length)
     }
-    private static func attribute(_ node: AXUIElement, _ name: String) -> CFTypeRef? {
+    private static func attribute(_ node: AXUIElement, _ name: String,
+                                  readAudit: NativeReadAudit? = nil,
+                                  stage: NativeReadAudit.Stage = .focusedIdentityMetadata) -> CFTypeRef? {
         var raw: CFTypeRef?
-        return AXUIElementCopyAttributeValue(node, name as CFString, &raw) == .success ? raw : nil
+        let status = NativeReadAudit.measure(readAudit, stage) { AXUIElementCopyAttributeValue(node, name as CFString, &raw) }
+        return status == .success ? raw : nil
     }
     private static func element(_ node: AXUIElement, _ name: String) -> AXUIElement? {
         guard let raw = attribute(node, name), CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }

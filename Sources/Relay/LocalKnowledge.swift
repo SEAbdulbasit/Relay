@@ -116,8 +116,9 @@ final class LocalKnowledge {
 
     private func scan(grants: [ScopeGrant], refreshing: Bool) async -> Bool {
         guard !isIndexing, !Task.isCancelled else { return false }
+        let canonicalGrants = grants.compactMap { try? ToolPolicy.canonicalURL($0.path) }
         let roots = Array(Set(grants.compactMap { grant -> URL? in
-            guard let url = try? ToolPolicy.scopedURL(grant.path, grants: grants), Self.allowedSource(url),
+            guard let url = try? ToolPolicy.scopedURL(grant.path, grants: grants, canonicalGrants: canonicalGrants), Self.allowedSource(url),
                   !refreshing || (Self.refreshPathMatches(grant.path, url: url) && Self.isLocalRefreshSource(url)) else { return nil }
             return url
         })).sorted { $0.path < $1.path }
@@ -158,9 +159,15 @@ final class LocalKnowledge {
                     let snapshot = try await SiYuanWorkspaceReader.snapshot(root: root, grants: grants, limits: bound,
                         isCurrent: { self.generation == run })
                     guard run == generation, !Task.isCancelled else { finishCancellation(run); return false }
-                    var dependencyCache: [KnowledgeDependency: Bool] = [:]
-                    for record in snapshot.records where seen.insert(record.sourcePath).inserted {
-                        guard isFresh(record, grants: grants, dependencyCache: &dependencyCache) else { skipped += 1; continue }
+                    let (freshRecords, freshSkipped) = await Self.filterFreshRecords(
+                        records: snapshot.records,
+                        grants: grants,
+                        canonicalGrants: canonicalGrants,
+                        maxFileBytes: limits.maxFileBytes
+                    )
+                    guard run == generation, !Task.isCancelled else { finishCancellation(run); return false }
+                    skipped += freshSkipped
+                    for record in freshRecords where seen.insert(record.sourcePath).inserted {
                         next.append(record)
                     }
                     workspaceBytes += snapshot.sourceBytes
@@ -203,7 +210,7 @@ final class LocalKnowledge {
                 let inspected = try? candidate.resourceValues(forKeys: Set(keys))
                 guard Self.allowedSource(candidate), let values = inspected,
                       values.isSymbolicLink != true, values.isPackage != true,
-                      let url = try? ToolPolicy.scopedURL(candidate.path, grants: grants),
+                      let url = try? ToolPolicy.scopedURL(candidate.path, grants: grants, canonicalGrants: canonicalGrants),
                       !refreshing || (Self.refreshPathMatches(candidate.path, url: url) && Self.isLocalRefreshSource(url)) else {
                     // Foundation may apply skipDescendants to the following real folder if
                     // called on a symlink/file leaf. Prune only an actual rejected directory.
@@ -219,18 +226,21 @@ final class LocalKnowledge {
                 }
                 guard values.isRegularFile == true, Self.supportedExtensions.contains(url.pathExtension.lowercased()), seen.insert(url.path).inserted else { skipped += 1; continue }
                 let size = values.fileSize ?? Int.max
-                guard size >= 0, size <= limits.maxFileBytes, size <= limits.maxTotalBytes - totalBytes else { skipped += 1; capped = true; continue }
-                guard let data = Self.boundedData(url, maximum: limits.maxFileBytes), data.count == size,
-                      data.count <= limits.maxTotalBytes - totalBytes,
-                      let extracted = extract(data, source: url, explicitlySelected: explicitlySelected.contains(url)), !extracted.text.isEmpty,
-                      let currentURL = try? ToolPolicy.scopedURL(candidate.path, grants: grants), currentURL == url,
-                      let after = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
-                      after.contentModificationDate == values.contentModificationDate, after.fileSize == size else { skipped += 1; continue }
-                totalBytes += data.count
+                guard let record = await Self.readGenericFile(
+                    url: url,
+                    candidatePath: candidate.path,
+                    grants: grants,
+                    canonicalGrants: canonicalGrants,
+                    size: size,
+                    expectedDate: values.contentModificationDate,
+                    explicitlySelected: explicitlySelected.contains(url),
+                    limits: limits
+                ) else { skipped += 1; continue }
+                guard run == generation, !Task.isCancelled else { finishCancellation(run); return false }
+                guard record.byteCount <= limits.maxTotalBytes - totalBytes else { skipped += 1; capped = true; continue }
+                totalBytes += record.byteCount
                 genericCount += 1
-                next.append(KnowledgeRecord(sourcePath: url.path, title: extracted.title ?? url.lastPathComponent, text: extracted.text,
-                                            modifiedAt: values.contentModificationDate ?? .distantPast,
-                                            contentHash: Self.hash(data), byteCount: data.count, coverageNote: extracted.coverageNote))
+                next.append(record)
             }
             // A generic cap must not prevent a later explicitly selected workspace.
         }
@@ -242,6 +252,7 @@ final class LocalKnowledge {
         let sorted = next.filter { !kept.contains($0.sourcePath) || current.contains($0.sourcePath) }
             .sorted { $0.sourcePath < $1.sourcePath }
         isIndexing = false
+        await Task.yield()
         guard persist(records: sorted) else { return false }
         records = sorted
         let count = records.count
@@ -292,9 +303,11 @@ final class LocalKnowledge {
 
     /// Call on grant changes as well as search; this only removes records, never adds sources.
     func purgeStale(grants: [ScopeGrant]) {
+        guard !records.isEmpty else { return }
         let before = records.count
+        let canonicalGrants = grants.compactMap { try? ToolPolicy.canonicalURL($0.path) }
         var cache: [KnowledgeDependency: Bool] = [:]
-        records.removeAll { !isFresh($0, grants: grants, dependencyCache: &cache) }
+        records.removeAll { !isFresh($0, grants: grants, canonicalGrants: canonicalGrants, dependencyCache: &cache) }
         if records.count != before {
             status = "Forgot \(before - records.count) changed, deleted or no-longer-authorized sources. Reindex explicitly to refresh."
             persist()
@@ -306,7 +319,8 @@ final class LocalKnowledge {
     func revalidate(_ record: KnowledgeRecord, grants: [ScopeGrant]) -> Bool {
         guard let index = records.firstIndex(where: { $0.sourcePath == record.sourcePath }),
               records[index] == record else { return false }
-        guard isFresh(record, grants: grants) else {
+        let canonicalGrants = grants.compactMap { try? ToolPolicy.canonicalURL($0.path) }
+        guard isFresh(record, grants: grants, canonicalGrants: canonicalGrants) else {
             records.remove(at: index)
             status = "Forgot a changed, deleted or no-longer-authorized source. Reindex explicitly to refresh."
             persist()
@@ -315,30 +329,54 @@ final class LocalKnowledge {
         return true
     }
 
-    private func isFresh(_ record: KnowledgeRecord, grants: [ScopeGrant]) -> Bool {
+    private func isFresh(_ record: KnowledgeRecord, grants: [ScopeGrant], canonicalGrants: [URL]? = nil) -> Bool {
         var cache: [KnowledgeDependency: Bool] = [:]
-        return isFresh(record, grants: grants, dependencyCache: &cache)
+        return isFresh(record, grants: grants, canonicalGrants: canonicalGrants, dependencyCache: &cache)
     }
-    private func isFresh(_ record: KnowledgeRecord, grants: [ScopeGrant], dependencyCache: inout [KnowledgeDependency: Bool]) -> Bool {
+    private func isFresh(_ record: KnowledgeRecord, grants: [ScopeGrant], canonicalGrants: [URL]? = nil, dependencyCache: inout [KnowledgeDependency: Bool]) -> Bool {
+        Self.isFreshRecord(record, grants: grants, canonicalGrants: canonicalGrants, maxFileBytes: limits.maxFileBytes, dependencyCache: &dependencyCache)
+    }
+
+    nonisolated static func isFreshRecord(_ record: KnowledgeRecord, grants: [ScopeGrant], canonicalGrants: [URL]? = nil, maxFileBytes: Int, dependencyCache: inout [KnowledgeDependency: Bool]) -> Bool {
+        let roots = canonicalGrants ?? grants.compactMap { try? ToolPolicy.canonicalURL($0.path) }
         if record.workspaceRoot == nil, URL(fileURLWithPath: record.sourcePath).pathExtension.lowercased() == "sy",
-           !Self.standaloneSiYuanScope(record.sourcePath, grants: grants) { return false }
+           !Self.standaloneSiYuanScope(record.sourcePath, canonicalGrants: roots) { return false }
         guard Self.allowedSource(URL(fileURLWithPath: record.sourcePath)), Self.hasCurrentExtraction(record),
-              let url = try? ToolPolicy.scopedURL(record.sourcePath, grants: grants), url.path == record.sourcePath,
+              let url = try? ToolPolicy.scopedURL(record.sourcePath, grants: grants, canonicalGrants: roots), url.path == record.sourcePath,
               let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]),
               values.isRegularFile == true, values.fileSize == record.byteCount,
               values.contentModificationDate == record.modifiedAt,
-              let data = Self.boundedData(url, maximum: limits.maxFileBytes) else { return false }
+              let data = Self.boundedData(url, maximum: maxFileBytes) else { return false }
         guard Self.hash(data) == record.contentHash else { return false }
         if record.workspaceRoot != nil {
-            return SiYuanWorkspaceReader.dependenciesAreCurrent(record, grants: grants, cache: &dependencyCache)
+            return SiYuanWorkspaceReader.dependenciesAreCurrent(record, grants: grants, canonicalGrants: roots, cache: &dependencyCache)
         }
         return record.sourceDependencies?.isEmpty != false && record.sourceIdentity == nil
     }
 
+    @concurrent private static func filterFreshRecords(
+        records: [KnowledgeRecord],
+        grants: [ScopeGrant],
+        canonicalGrants: [URL],
+        maxFileBytes: Int
+    ) async -> (records: [KnowledgeRecord], skipped: Int) {
+        var dependencyCache: [KnowledgeDependency: Bool] = [:]
+        var fresh: [KnowledgeRecord] = []
+        var skipped = 0
+        for record in records {
+            if isFreshRecord(record, grants: grants, canonicalGrants: canonicalGrants, maxFileBytes: maxFileBytes, dependencyCache: &dependencyCache) {
+                fresh.append(record)
+            } else {
+                skipped += 1
+            }
+        }
+        return (fresh, skipped)
+    }
+
     /// Old flat .sy caches must not bypass newly enforced workspace notebook
     /// filters. Directly selecting one file remains an intentional standalone read.
-    private static func standaloneSiYuanScope(_ path: String, grants: [ScopeGrant]) -> Bool {
-        let roots = grants.compactMap { try? ToolPolicy.canonicalURL($0.path) }
+    nonisolated private static func standaloneSiYuanScope(_ path: String, canonicalGrants: [URL]? = nil, grants: [ScopeGrant] = []) -> Bool {
+        let roots = canonicalGrants ?? grants.compactMap { try? ToolPolicy.canonicalURL($0.path) }
         if roots.contains(where: { $0.path == path }) { return true }
         for root in roots where path.hasPrefix(root.path + "/") {
             var parent = URL(fileURLWithPath: path).deletingLastPathComponent()
@@ -361,8 +399,8 @@ final class LocalKnowledge {
         }.joined(separator: "\n")
     }
 
-    private static let supportedExtensions: Set<String> = ["txt", "md", "csv", "json", "pdf", "eml", "sy"]
-    private static func hasCurrentExtraction(_ record: KnowledgeRecord) -> Bool {
+    nonisolated private static let supportedExtensions: Set<String> = ["txt", "md", "csv", "json", "pdf", "eml", "sy"]
+    nonisolated private static func hasCurrentExtraction(_ record: KnowledgeRecord) -> Bool {
         URL(fileURLWithPath: record.sourcePath).pathExtension.lowercased() != "sy"
             || record.coverageNote?.hasPrefix(SiYuanDocumentReader.coveragePrefix) == true
     }
@@ -374,7 +412,7 @@ final class LocalKnowledge {
         }
         return bytes.values.reduce(0, +)
     }
-    private static func allowedSource(_ url: URL) -> Bool {
+    nonisolated private static func allowedSource(_ url: URL) -> Bool {
         let path = url.standardizedFileURL.path
         let blocked = ["/", "/Users", NSHomeDirectory(), "/System", "/Library", NSHomeDirectory() + "/Library"]
         if blocked.contains(path) { return false }
@@ -391,11 +429,11 @@ final class LocalKnowledge {
         // selected path anew on this side of the comparison.
         url.path == selectedPath || url.resolvingSymlinksInPath().standardizedFileURL.path == selectedPath
     }
-    private static func boundedData(_ url: URL, maximum: Int) -> Data? {
+    nonisolated private static func boundedData(_ url: URL, maximum: Int) -> Data? {
         guard maximum > 0 else { return nil }
         return try? LocalStateFile.read(url, maximumBytes: maximum)
     }
-    private static func hash(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+    nonisolated private static func hash(_ data: Data) -> String { SiYuanWorkspaceReader.digest(data) }
     private static func tokens(_ text: String) -> [String] {
         Array(Set(text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current).split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init))).sorted()
     }
@@ -405,7 +443,28 @@ final class LocalKnowledge {
         let upper = text.index(lower, offsetBy: 500, limitedBy: text.endIndex) ?? text.endIndex
         return (lower > text.startIndex ? "…" : "") + String(text[lower..<upper]) + (upper < text.endIndex ? "…" : "")
     }
-    private func extract(_ data: Data, source: URL, explicitlySelected: Bool) -> (text: String, title: String?, coverageNote: String?)? {
+
+    @concurrent private static func readGenericFile(
+        url: URL,
+        candidatePath: String,
+        grants: [ScopeGrant],
+        canonicalGrants: [URL],
+        size: Int,
+        expectedDate: Date?,
+        explicitlySelected: Bool,
+        limits: KnowledgeLimits
+    ) async -> KnowledgeRecord? {
+        guard let data = boundedData(url, maximum: limits.maxFileBytes), data.count == size,
+              let extracted = extract(data, source: url, explicitlySelected: explicitlySelected, limits: limits), !extracted.text.isEmpty,
+              let currentURL = try? ToolPolicy.scopedURL(candidatePath, grants: grants, canonicalGrants: canonicalGrants), currentURL == url,
+              let after = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+              after.contentModificationDate == expectedDate, after.fileSize == size else { return nil }
+        return KnowledgeRecord(sourcePath: url.path, title: extracted.title ?? url.lastPathComponent, text: extracted.text,
+                               modifiedAt: expectedDate ?? .distantPast,
+                               contentHash: hash(data), byteCount: data.count, coverageNote: extracted.coverageNote)
+    }
+
+    nonisolated private static func extract(_ data: Data, source: URL, explicitlySelected: Bool, limits: KnowledgeLimits) -> (text: String, title: String?, coverageNote: String?)? {
         let raw: String
         var notes: [String] = []
         let ext = source.pathExtension.lowercased()

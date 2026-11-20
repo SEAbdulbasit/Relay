@@ -7,6 +7,50 @@ import Foundation
 /// The controller must first bind the authorization to this exact proposal's
 /// retained source/context. Calling this helper is itself an effect phase.
 @MainActor final class NativeOriginalWindowFocus {
+    nonisolated enum ExactDisposition: Sendable, Equatable { case alreadyFocused, restored, refused, uncertain }
+    nonisolated enum ExactStep: String, Sendable, Hashable { case activateOriginal, raiseOriginal, selectOriginal }
+    nonisolated enum ExactStepState: Sendable, Equatable { case admitted, returned }
+    nonisolated struct ExactStepFact: Sendable, Equatable {
+        let step: ExactStep
+        let state: ExactStepState
+    }
+    /// Produced only around the actual gate-admitted operations below. No
+    /// callback/report from a caller can manufacture this composite fact.
+    nonisolated struct ExactReport: Sendable, Equatable {
+        let disposition: ExactDisposition
+        let steps: [ExactStepFact]
+        fileprivate init(disposition: ExactDisposition, steps: [ExactStepFact]) {
+            self.disposition = disposition; self.steps = steps
+        }
+        var verified: Bool {
+            NativeOriginalWindowFocus.exactCoverageIsComplete(disposition: disposition, steps: steps)
+        }
+    }
+    /// Data-only completeness predicate, not a report/source/permission maker.
+    nonisolated static func exactCoverageIsComplete(disposition: ExactDisposition, steps: [ExactStepFact]) -> Bool {
+        guard steps.allSatisfy({ $0.state == .returned }) else { return false }
+        switch disposition {
+        case .alreadyFocused: return steps.isEmpty
+        case .restored:
+            let actual = steps.map(\.step)
+            return actual == [.raiseOriginal] || actual == [.activateOriginal, .raiseOriginal]
+                || actual == [.raiseOriginal, .selectOriginal]
+                || actual == [.activateOriginal, .raiseOriginal, .selectOriginal]
+        case .refused, .uncertain: return false
+        }
+    }
+    @MainActor private final class ExactRecorder {
+        var steps: [ExactStepFact] = []
+        func perform(_ step: ExactStep, deadline: ContinuousClock.Instant,
+                     operation: @MainActor (ContinuousClock.Instant) throws -> Void) throws {
+            // The finite core invokes this wrapper only AFTER its actual gate
+            // admitted the operation. Even a thrown operation remains a fact.
+            let index = steps.count
+            steps.append(.init(step: step, state: .admitted))
+            try operation(deadline)
+            steps[index] = .init(step: step, state: .returned)
+        }
+    }
     struct IO {
         let validateOriginalSource: @MainActor () throws -> Void
         let validateForInput: @MainActor () throws -> Void
@@ -93,6 +137,42 @@ import Foundation
                  notAfter: ContinuousClock.Instant) async -> NativeReviewedFocusOutcome {
         await restore(review: Review(sourceID: authorization.sourceID, validateOriginalScope: { try authorization.validateOriginalScope() },
             admitOriginalFocusOnce: { try authorization.admitOriginalFocusOnce() }), gate: gate, notAfter: notAfter)
+    }
+
+    /// The direct permit is Controller-minted from the actual acknowledged
+    /// literal/original anchor, never an invented ordinary PolicyContext.
+    /// Reuse the exact finite restoration core, including its admission gates.
+    func restoreExactUnsent(authorization: NativeControlSession.ExactUnsentFocusPermit,
+                            gate: NativeInputRevocation,
+                            notAfter: ContinuousClock.Instant) async -> ExactReport {
+        guard authorization.sourceID == sourceID else { return .init(disposition: .refused, steps: []) }
+        let recorder = ExactRecorder()
+        let select: (@MainActor (ContinuousClock.Instant) throws -> Void)?
+        if let original = io.selectOriginal {
+            select = { deadline in try recorder.perform(.selectOriginal, deadline: deadline, operation: original) }
+        } else { select = nil }
+        let actual = NativeOriginalWindowFocus(sourceID: sourceID, io: IO(
+            validateOriginalSource: io.validateOriginalSource, validateForInput: io.validateForInput,
+            sessionIsActive: io.sessionIsActive,
+            isOriginalApplicationForeground: io.isOriginalApplicationForeground,
+            isOriginalInputFocused: io.isOriginalInputFocused,
+            qualifyFocusOperations: io.qualifyFocusOperations,
+            activateOriginal: { deadline in
+                try recorder.perform(.activateOriginal, deadline: deadline, operation: self.io.activateOriginal)
+            }, raiseOriginal: { deadline in
+                try recorder.perform(.raiseOriginal, deadline: deadline, operation: self.io.raiseOriginal)
+            }, selectOriginal: select, now: io.now, pause: io.pause))
+        let result = await actual.restore(review: Review(sourceID: sourceID,
+            validateOriginalScope: { try authorization.validate() },
+            admitOriginalFocusOnce: { try authorization.consume() }), gate: gate, notAfter: notAfter)
+        let disposition: ExactDisposition
+        switch result {
+        case .alreadyFocused: disposition = .alreadyFocused
+        case .restored: disposition = .restored
+        case .notRequested, .refused: disposition = recorder.steps.isEmpty ? .refused : .uncertain
+        case .uncertain: disposition = .uncertain
+        }
+        return .init(disposition: disposition, steps: recorder.steps)
     }
 
     func restore(review: Review, gate: NativeInputRevocation,

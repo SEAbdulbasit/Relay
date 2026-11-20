@@ -32,6 +32,9 @@ import Foundation
     }
     enum Coverage: Equatable {
         case complete
+        /// Actual reader-minted supported-role disclosure, with optional flags
+        /// retained as unreported rather than fabricated false values.
+        case standardRoleSurvey
         case incomplete(Set<MissingEvidence>)
     }
     struct Facts: Equatable {
@@ -44,9 +47,19 @@ import Foundation
         let visibleDedicatedControls: Set<Dedicated>
         let visitedNodes: Int
         let digest: Data
+        var standardSurvey: NativeStandardControlSurvey? = nil
 
-        func admitPrivateEditorPlanning() throws {
-            guard coverage == .complete else { throw Failure.incomplete }
+        /// Current ordinary-window metadata only; no focused editor, input
+        /// grant or old field-value fingerprint is required by this read gate.
+        func admitControlReadCapture() throws {
+            switch coverage {
+            case .complete: break // legacy explicit-positive metadata path
+            case .standardRoleSurvey:
+                guard let standardSurvey, standardSurvey.sourceID == sourceID,
+                      standardSurvey.application == application else { throw Failure.incomplete }
+                try standardSurvey.validate()
+            case .incomplete: throw Failure.incomplete
+            }
             switch context {
             case .ordinary: return
             case .protected: throw Failure.protectedContext
@@ -54,6 +67,7 @@ import Foundation
             case .modalReviewRequired: throw Failure.unavailable
             }
         }
+        func admitPrivateEditorPlanning() throws { try admitControlReadCapture() }
     }
     struct Metadata: Equatable {
         let role: String
@@ -88,9 +102,10 @@ import Foundation
 
     static func inspect<Node>(sourceID: UUID, application: DesktopApplicationIdentity,
                               access: Access<Node>, maximumNodes: Int = 512,
+                              budget: Duration = .milliseconds(750),
                               now: @escaping @MainActor () -> ContinuousClock.Instant = { .now }) throws -> Facts {
-        let limit = min(max(maximumNodes, 1), 512)
-        let deadline = now().advanced(by: .milliseconds(750))
+        let limit = min(max(maximumNodes, 1), 2_048)
+        let deadline = now().advanced(by: budget)
         func check() throws {
             try Task.checkCancellation()
             guard now() < deadline else { throw Failure.incomplete }
@@ -193,6 +208,7 @@ import Foundation
     private static func coverageDescription(_ coverage: Coverage) -> String {
         switch coverage {
         case .complete: "complete"
+        case .standardRoleSurvey: "supported-standard-role-survey"
         case .incomplete(let missing): "incomplete:" + missing.map(\.rawValue).sorted().joined(separator: ",")
         }
     }
@@ -205,7 +221,7 @@ import Foundation
         if status == .attributeUnsupported, leaves.contains(role) { return .knownLeaf }
         return .unavailable
     }
-    private static func applicationBoundary(_ bundle: String) -> Context? {
+    static func applicationBoundary(_ bundle: String) -> Context? {
         // Existing protected workflows, not an ordinary-app allowlist.
         let security: Set<String> = ["com.apple.systempreferences", "com.apple.securityagent", "com.apple.tccui",
             "com.apple.loginwindow", "com.apple.coreservicesuiagent", "com.apple.passwords", "com.apple.keychainaccess",
@@ -222,12 +238,12 @@ import Foundation
         metadata.modal == true || metadata.role == "AXSheet" || metadata.role == "AXDialog"
             || metadata.subrole == "AXDialog" || metadata.subrole == "AXSystemDialog"
     }
-    private static func isSensitive(_ label: String) -> Bool {
+    static func isSensitive(_ label: String) -> Bool {
         let lower = label.lowercased()
         return ["grant access", "revoke access", "privacy & security", "permission", "authenticate", "password",
                 "passcode", "security code", "recovery phrase", "secret key", "two-factor", "2-factor"].contains(where: lower.contains)
     }
-    private static func dedicated(_ label: String) -> Dedicated? {
+    static func dedicated(_ label: String) -> Dedicated? {
         let words = Set(label.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init))
         if !words.isDisjoint(with: ["send", "submit"]) { return .submission }
         if !words.isDisjoint(with: ["publish", "post"]) { return .publishing }
@@ -245,70 +261,139 @@ import Foundation
     let application: DesktopApplicationIdentity
     private let originalWindow: AXUIElement
     private let validateOriginalSource: @MainActor () throws -> Void
+    private let metadataBinding: TargetBoundNativeObservation.MetadataBinding?
+    private let canonicalDirectBinding: TargetBoundNativeObservation.MetadataBinding?
+    private var additionalMetadataScopeValidation: (@MainActor () throws -> Void)?
+    let readAudit: NativeReadAudit?
 
     init(sourceID: UUID, application: DesktopApplicationIdentity, originalWindow: AXUIElement,
-         validateOriginalSource: @escaping @MainActor () throws -> Void) {
+         validateOriginalSource: @escaping @MainActor () throws -> Void, readAudit: NativeReadAudit? = nil,
+         metadataBinding: TargetBoundNativeObservation.MetadataBinding? = nil) {
         self.sourceID = sourceID; self.application = application; self.originalWindow = originalWindow
-        self.validateOriginalSource = validateOriginalSource
-    }
-    func validateSource() throws { try Task.checkCancellation(); try validateOriginalSource(); try Task.checkCancellation() }
-
-    func addingSourceValidation(_ check: @escaping @MainActor () throws -> Void) -> NativeOriginalPolicyTarget {
-        NativeOriginalPolicyTarget(sourceID: sourceID, application: application, originalWindow: originalWindow,
-            validateOriginalSource: { try check(); try self.validateSource(); try check() })
+        self.validateOriginalSource = validateOriginalSource; self.readAudit = readAudit
+        self.metadataBinding = metadataBinding
+        canonicalDirectBinding = nil
     }
 
-    func inspectMetadata(authorizeMetadata: @escaping @MainActor () throws -> Void) throws -> NativeOrdinaryWindowPolicySource.Facts {
-        let validate: @MainActor () throws -> Void = {
-            try self.validateSource(); try authorizeMetadata(); try self.validateSource()
+    init(directSource: TargetBoundNativeObservation.MetadataBinding.CanonicalDirectPolicySource,
+         readAudit: NativeReadAudit?) {
+        sourceID = directSource.sourceID
+        application = directSource.application
+        originalWindow = directSource.window
+        validateOriginalSource = { try directSource.validate() }
+        metadataBinding = directSource.binding
+        canonicalDirectBinding = directSource.binding
+        self.readAudit = readAudit
+    }
+
+    func usesCanonicalDirectSource(_ binding: TargetBoundNativeObservation.MetadataBinding) -> Bool {
+        canonicalDirectBinding === binding
+    }
+
+    func validateSource() throws {
+        try Task.checkCancellation()
+        try NativeReadAudit.measure(readAudit, .policySourceValidation) { try validateOriginalSource() }
+        try Task.checkCancellation()
+    }
+
+    func addingSourceValidation(_ check: @escaping @MainActor () throws -> Void,
+                                metadataLeaseValidation: (@MainActor () throws -> Void)? = nil) -> NativeOriginalPolicyTarget {
+        let target = NativeOriginalPolicyTarget(sourceID: sourceID, application: application, originalWindow: originalWindow,
+            validateOriginalSource: { try check(); try self.validateSource(); try check() }, readAudit: readAudit,
+            metadataBinding: metadataBinding)
+        target.additionalMetadataScopeValidation = {
+            try self.additionalMetadataScopeValidation?()
+            // Existing callers without a separate cheap ownership fence keep
+            // their full original check at every metadata query.
+            try (metadataLeaseValidation ?? check)()
         }
-        func read(_ node: AXUIElement, _ name: String, optional: Bool = false) throws -> CFTypeRef? {
-            try validate()
-            var pid: pid_t = 0
-            guard AXUIElementGetPid(node, &pid) == .success, pid == application.processID else { throw NativeOrdinaryWindowPolicySource.Failure.unavailable }
-            try validate()
-            AXUIElementSetMessagingTimeout(node, 0.04)
-            var value: CFTypeRef?
-            let result = AXUIElementCopyAttributeValue(node, name as CFString, &value)
-            try validate()
-            if optional, result == .attributeUnsupported || result == .noValue { return nil }
-            guard result == .success, let value else { throw NativeOrdinaryWindowPolicySource.Failure.incomplete }
-            return value
+        return target
+    }
+
+    func inspectMetadata(authorizeMetadata: @escaping @MainActor () throws -> Void,
+                         metadataScope: NativeMetadataScopeBinding? = nil) throws -> NativeOrdinaryWindowPolicySource.Facts {
+        try NativeReadAudit.inspectPolicy(readAudit) {
+            try makeStandardSurvey(authorizeMetadata: authorizeMetadata, useBoundMetadataPhase: true,
+                metadataScope: metadataScope).policyFacts()
         }
-        func bool(_ node: AXUIElement, _ name: String) throws -> Bool? {
-            guard let raw = try read(node, name, optional: true) else { return nil }
-            guard CFGetTypeID(raw) == CFBooleanGetTypeID() else { throw NativeOrdinaryWindowPolicySource.Failure.incomplete }
-            return CFBooleanGetValue(unsafeDowncast(raw, to: CFBoolean.self))
+    }
+
+    /// Used only to bind the actual observer's scoped copy before any phase.
+    /// This performs no SDK read and transfers no private-query authority.
+    func matchesMetadataWindow(_ window: AXUIElement) -> Bool { CFEqual(originalWindow, window) }
+    func validateAdditionalMetadataScope() throws { try additionalMetadataScopeValidation?() }
+
+    /// Actual-window identity only, for the task's one-use acquisition owner.
+    /// It transfers no old survey, input permission or private field preview.
+    func sharesOriginalWindow(with other: NativeOriginalPolicyTarget) -> Bool {
+        application == other.application && CFEqual(originalWindow, other.originalWindow)
+    }
+
+    /// First control metadata admission only. Existing standardSurvey, strict
+    /// inspectMetadata and every later private/capture/input fence are unchanged.
+    func inspectInitialMetadata(using acquisition: NativeInitialMetadataAcquisition,
+        validateInitialOwnership: @escaping @MainActor () throws -> Void,
+        authorizeMetadata: @escaping @MainActor () throws -> Void,
+        metadataScope: NativeMetadataScopeBinding? = nil) throws -> NativeOrdinaryWindowPolicySource.Facts {
+        try NativeReadAudit.inspectPolicy(readAudit) {
+            let strong = metadataValidation(authorizeScope: authorizeMetadata)
+            let survey: NativeStandardControlSurvey
+            do {
+                survey = try acquisition.acquire(validate: {
+                    try validateInitialOwnership(); try strong(); try validateInitialOwnership()
+                }, capture: {
+                    try self.makeStandardSurvey(authorizeMetadata: authorizeMetadata, useBoundMetadataPhase: true,
+                        metadataScope: metadataScope)
+                }, compare: { try $0.initialComparison(to: $1) })
+            } catch is NativeInitialMetadataAcquisition.Failure {
+                throw NativeOrdinaryWindowPolicySource.Failure.changedContext
+            }
+            metadataScope?.markInitialMetadataSettled()
+            // The acquisition is already spent. These existing strict checks
+            // and each private query can refuse; none can start another loop.
+            return try survey.policyFacts()
         }
-        func string(_ node: AXUIElement, _ name: String, optional: Bool = false) throws -> String? {
-            guard let raw = try read(node, name, optional: optional) else { return nil }
-            guard let value = raw as? String else { throw NativeOrdinaryWindowPolicySource.Failure.incomplete }
-            return value
+    }
+
+    /// Strong source authorization. Legacy metadata readers and ALL private
+    /// disclosure paths retain this fence; it is not replaced by a phase lease.
+    func metadataValidation(authorizeScope: @escaping @MainActor () throws -> Void) -> @MainActor () throws -> Void {
+        { try self.validateSource(); try authorizeScope(); try self.validateSource() }
+    }
+
+    /// A metadata-only actual-reader capability. No model fields or diagnostic
+    /// flags can manufacture the supported-standard disclosure basis.
+    func standardSurvey(authorizeMetadata: @escaping @MainActor () throws -> Void,
+                        ordinaryFocus: Bool = false) throws -> NativeStandardControlSurvey {
+        // Proofread/focus/selection callers may supply a full source callback.
+        // Preserve their original strong per-query contract unchanged.
+        if let canonicalDirectBinding, additionalMetadataScopeValidation == nil,
+           let scope = canonicalDirectBinding.canonicalMetadataScope() {
+            return try makeStandardSurvey(authorizeMetadata: authorizeMetadata, useBoundMetadataPhase: true,
+                metadataScope: scope)
         }
-        try validate()
-        return try NativeOrdinaryWindowPolicySource.inspect(sourceID: sourceID, application: application,
-            access: .init(root: originalWindow, identical: { CFEqual($0, $1) }, validate: validate,
-                metadata: { node in
-                    let flags = try [bool(node, "AXProtectedContent"), bool(node, "AXContainsProtectedContent")]
-                    return .init(role: try string(node, kAXRoleAttribute) ?? "", subrole: try string(node, kAXSubroleAttribute, optional: true) ?? "",
-                        protectedContent: flags.contains(true) ? true : (flags.contains(false) ? false : nil),
-                        hidden: try bool(node, "AXHidden"), modal: try bool(node, kAXModalAttribute), minimized: try bool(node, kAXMinimizedAttribute))
-                }, children: { node in
-                    try validate()
-                    let role = try string(node, kAXRoleAttribute) ?? ""
-                    var raw: CFTypeRef?
-                    let status = AXUIElementCopyAttributeValue(node, kAXChildrenAttribute as CFString, &raw)
-                    try validate()
-                    let children: [AXUIElement]?
-                    if let raw {
-                        guard let typed = raw as? [AXUIElement], typed.allSatisfy({ CFGetTypeID($0) == AXUIElementGetTypeID() }) else { throw NativeOrdinaryWindowPolicySource.Failure.incomplete }
-                        children = typed
-                    } else { children = nil }
-                    return try NativeOrdinaryWindowPolicySource.childScope(role: role, status: status, value: children)
-                }, labels: { node in
-                    .init(title: try string(node, kAXTitleAttribute, optional: true),
-                        description: try string(node, kAXDescriptionAttribute, optional: true),
-                        identifier: try string(node, kAXIdentifierAttribute, optional: true))
-                }))
+        // This focused reader supplies the exact retained source as its
+        // per-query authorization. The bound phase also keeps live process
+        // and window fences around each metadata request.
+        return try makeStandardSurvey(authorizeMetadata: authorizeMetadata, useBoundMetadataPhase: ordinaryFocus,
+            inspectionBudget: ordinaryFocus ? .milliseconds(2_500) : nil)
+    }
+
+    private func makeStandardSurvey(authorizeMetadata: @escaping @MainActor () throws -> Void,
+                                    useBoundMetadataPhase: Bool,
+                                    metadataScope: NativeMetadataScopeBinding? = nil,
+                                    inspectionBudget: Duration? = nil) throws -> NativeStandardControlSurvey {
+        let validate = metadataValidation(authorizeScope: authorizeMetadata)
+        if let metadataScope, metadataScope.application != application { throw NativeVisualTaskFailure.staleTask }
+        let binding: TargetBoundNativeObservation.MetadataBinding?
+        if useBoundMetadataPhase, let metadataBinding, let metadataScope {
+            binding = try metadataBinding.scoped(to: self, scope: metadataScope)
+        } else { binding = useBoundMetadataPhase ? metadataBinding : nil }
+        if binding == nil { try validate() }
+        return try NativeStandardControlSurvey.capture(sourceID: sourceID, application: application,
+            window: originalWindow, validateSource: validate, readAudit: readAudit,
+            metadataBinding: binding, authorizeMetadataScope: {
+                try self.additionalMetadataScopeValidation?(); try authorizeMetadata()
+            }, inspectionBudget: inspectionBudget)
     }
 }

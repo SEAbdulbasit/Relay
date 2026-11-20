@@ -26,7 +26,7 @@ struct LocalMarkdownNote: Identifiable, Equatable {
     fileprivate let markdown: String
     var sharingMarkdown: String { markdown }
 
-    fileprivate init(url: URL, markdown: String, folderName: String?) {
+    init(url: URL, markdown: String, folderName: String?) {
         self.url = url
         self.folderName = folderName
         self.markdown = markdown
@@ -45,7 +45,7 @@ struct LocalMarkdownNote: Identifiable, Equatable {
 
 extension KnowledgeVaultManager {
     static let maximumNoteBytes = 65_536
-    private static let maximumNotes = 100
+    static let maximumNotes = 100
     private static let maximumFolders = 32
 
     func loadFolders() throws -> [LocalMarkdownFolder] {
@@ -127,6 +127,70 @@ extension KnowledgeVaultManager {
         try LocalPrivateFileWriter.write(data: Data(markdown.utf8), to: url, maximumBytes: Self.maximumNoteBytes,
                                          createOnly: original == nil)
         return LocalMarkdownNote(url: url, markdown: markdown, folderName: folder)
+    }
+
+    /// Stable response identity makes repeated explicit Save requests idempotent,
+    /// including after a row remount or app restart. User edits are never replaced.
+    func savedResponseNote(messageID: UUID) throws -> LocalMarkdownNote? {
+        let root = try notesDirectory()
+        let filename = Self.responseFilename(messageID)
+        let names = try FileManager.default.contentsOfDirectory(atPath: root.path)
+        guard names.count <= 512 else {
+            throw RelayError.message("This vault has too many entries to locate a saved response safely. Find the note in Knowledge before saving again.")
+        }
+        let folders = names.compactMap { name -> (String, URL)? in
+            guard let directory = try? noteFolder(name, in: root) else { return nil }
+            return (name, directory)
+        }
+        guard folders.count <= Self.maximumFolders else {
+            throw RelayError.message("This vault has more folders than Relay can search safely. Find the saved note in Knowledge before saving again.")
+        }
+        let containers: [(String?, URL)] = [(nil, root)] + folders.map { (Optional($0.0), $0.1) }
+        var matches: [LocalMarkdownNote] = []
+        for (folder, directory) in containers {
+            let candidate = directory.appendingPathComponent(filename)
+            do {
+                _ = try FileManager.default.attributesOfItem(atPath: candidate.path)
+            } catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {
+                // Foundation reports an absent metadata entry as either code4
+                // or code260. Other errors must not be treated as absence.
+                continue
+            }
+            // The same bounded no-follow reader used for every ordinary note.
+            let markdown = try readNote(candidate)
+            matches.append(LocalMarkdownNote(url: candidate, markdown: markdown, folderName: folder))
+        }
+        guard matches.count <= 1 else {
+            throw RelayError.message("More than one saved copy of this response exists. Find the note in Knowledge before saving again.")
+        }
+        return matches.first
+    }
+
+    @discardableResult
+    func saveResponseNote(messageID: UUID, title: String, body: String) throws -> LocalMarkdownNote {
+        let filename = Self.responseFilename(messageID)
+        if try trashedNotes().contains(where: { ($0.originalRelativePath as NSString).lastPathComponent == filename }) {
+            throw RelayError.message("This response’s saved note is in Trash. Restore it from Knowledge instead of creating a duplicate.")
+        }
+        if let existing = try savedResponseNote(messageID: messageID) { return existing }
+        guard try loadNotes().count < Self.maximumNotes else {
+            throw RelayError.message("The vault can hold up to \(Self.maximumNotes) notes in Relay.")
+        }
+        var name = title.unicodeScalars.map { scalar -> String in
+            CharacterSet.controlCharacters.contains(scalar) ? " " : String(scalar)
+        }.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty { name = "Saved response" }
+        while name.utf8.count > 180 { name.removeLast() }
+        guard !body.contains("\0") else { throw RelayError.message("This response contains text that cannot be saved as a Markdown note.") }
+        let url = try notesDirectory().appendingPathComponent(filename)
+        let markdown = "# \(name)\n\n\(body)"
+        try LocalPrivateFileWriter.write(data: Data(markdown.utf8), to: url,
+                                         maximumBytes: Self.maximumNoteBytes, createOnly: true)
+        return LocalMarkdownNote(url: url, markdown: markdown, folderName: nil)
+    }
+
+    private static func responseFilename(_ messageID: UUID) -> String {
+        "response-" + messageID.uuidString.lowercased() + ".md"
     }
 
     private func notesDirectory() throws -> URL {

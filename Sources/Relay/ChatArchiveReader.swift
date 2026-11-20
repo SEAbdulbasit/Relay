@@ -11,6 +11,19 @@ nonisolated struct ChatArchiveEntry: Equatable, Sendable {
     let time: String
     let sender: String
     let body: String
+    let incomingHandle: String?
+
+    init(time: String, sender: String, body: String, incomingHandle: String? = nil) {
+        self.time = time
+        self.sender = sender
+        self.body = body
+        self.incomingHandle = incomingHandle
+    }
+}
+
+nonisolated struct MessagesArchiveRead: Sendable {
+    let entries: [ChatArchiveEntry]
+    let omittedAttributedBodies: Int
 }
 
 nonisolated enum ChatArchiveReader {
@@ -40,6 +53,10 @@ nonisolated enum ChatArchiveReader {
                            changedSeconds: item.st_ctimespec.tv_sec, changedNanoseconds: item.st_ctimespec.tv_nsec)
     }
 
+    static func isStandaloneMessages(_ url: URL) -> Bool {
+        !["-wal", "-journal"].contains { FileManager.default.fileExists(atPath: url.path + $0) }
+    }
+
     @concurrent static func whatsApp(_ url: URL) async throws -> [ChatArchiveEntry] {
         try Task.checkCancellation()
         let data = try LocalStateFile.read(url, maximumBytes: maximumExportBytes)
@@ -67,7 +84,8 @@ nonisolated enum ChatArchiveReader {
         }
     }
 
-    @concurrent static func messages(_ url: URL, chatID: Int64, days: Int, now: Date = Date()) async throws -> [ChatArchiveEntry] {
+    @concurrent static func messages(_ url: URL, chatID: Int64, days: Int, now: Date = Date(),
+                                     includeIncomingHandles: Bool = false) async throws -> MessagesArchiveRead {
         guard chatID > 0, (1...365).contains(days) else { throw RelayError.message("Choose a conversation and a time range of 1 to 365 days.") }
         let appleEpoch: TimeInterval = 978_307_200
         let current = now.timeIntervalSince1970 - appleEpoch
@@ -77,28 +95,62 @@ nonisolated enum ChatArchiveReader {
         let upper = Int64(current)
         let cutoff = upper - Int64(days * 86_400)
         return try withDatabase(url) { db in
-            let rows: [ChatArchiveEntry] = try query(db, sql: """
-                SELECT CASE WHEN abs(m.date) > 100000000000 THEN m.date / 1000000000 ELSE m.date END,
-                       m.is_from_me, substr(h.id, 1, 180), substr(m.text, 1, 2000)
-                  FROM chat_message_join j
-                  JOIN message m ON m.rowid = j.message_id
+            let attributedColumns = try query(db, sql: "PRAGMA main.table_xinfo('message')") { row in
+                sqlite3_column_int(row, 6) == 0 && text(row, 1)?.lowercased() == "attributedbody"
+            }
+            let hasAttributedBody = attributedColumns.contains(true)
+            let plain = "m.text IS NOT NULL AND length(m.text) > 0"
+            let candidate = hasAttributedBody ? "(\(plain)) OR m.attributedBody IS NOT NULL" : plain
+            let attributed = hasAttributedBody ? """
+                CASE WHEN NOT (\(plain)) AND typeof(m.attributedBody) = 'blob'
+                          AND length(m.attributedBody) BETWEEN 1 AND \(MessagesAttributedBody.maximumArchiveBytes)
+                     THEN m.attributedBody END
+                """ : "NULL"
+            let handle = includeIncomingHandles ? """
+                CASE WHEN m.is_from_me = 0 AND typeof(h.id) = 'text'
+                          AND length(CAST(h.id AS BLOB)) BETWEEN 1 AND \(MessagesArchiveContacts.maximumHandleBytes)
+                     THEN h.id END
+                """ : "NULL"
+            // Bound the selected window before SQLite projects any body payloads.
+            let rows: [ChatArchiveEntry?] = try query(db, sql: """
+                WITH recent AS MATERIALIZED (
+                    SELECT m.rowid AS message_id,
+                           CASE WHEN abs(m.date) > 100000000000 THEN m.date / 1000000000 ELSE m.date END AS timestamp
+                      FROM chat_message_join j
+                      JOIN message m ON m.rowid = j.message_id
+                     WHERE j.chat_id = ?1 AND (\(candidate))
+                       AND (CASE WHEN abs(m.date) > 100000000000 THEN m.date / 1000000000 ELSE m.date END) BETWEEN ?2 AND ?3
+                     ORDER BY timestamp DESC, m.rowid DESC LIMIT \(maximumEntries)
+                )
+                SELECT recent.timestamp, m.is_from_me, substr(h.id, 1, 180),
+                       substr(m.text, 1, \(MessagesAttributedBody.maximumBodyScalars)), \(attributed), \(handle)
+                  FROM recent
+                  JOIN message m ON m.rowid = recent.message_id
                   LEFT JOIN handle h ON h.rowid = m.handle_id
-                 WHERE j.chat_id = ?1 AND m.text IS NOT NULL AND length(m.text) > 0
-                   AND (CASE WHEN abs(m.date) > 100000000000 THEN m.date / 1000000000 ELSE m.date END) BETWEEN ?2 AND ?3
-                 ORDER BY 1 DESC, m.rowid DESC LIMIT 80
+                 ORDER BY recent.timestamp DESC, m.rowid DESC
                 """, bind: { row in
                     sqlite3_bind_int64(row, 1, chatID) == SQLITE_OK && sqlite3_bind_int64(row, 2, cutoff) == SQLITE_OK
                         && sqlite3_bind_int64(row, 3, upper) == SQLITE_OK
                 }) { row in
+                    let plainBody = text(row, 3)
+                    let body = if let plainBody, !plainBody.isEmpty { plainBody }
+                               else { attributedBody(row, 4) }
+                    guard let body else { return nil }
                     let time = Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(row, 0)) + appleEpoch)
                     return ChatArchiveEntry(time: time.ISO8601Format(),
                         sender: sqlite3_column_int(row, 1) != 0 ? "Me" : text(row, 2) ?? "Participant",
-                        body: text(row, 3) ?? "")
+                        body: body, incomingHandle: exactText(row, 5))
                 }
-            guard !rows.isEmpty else {
-                throw RelayError.message("No plain-text messages were available in this conversation and time range. Rich-only messages and attachments are not included.")
+            let entries = rows.reversed().compactMap { $0 }
+            let omitted = rows.count - entries.count
+            guard !entries.isEmpty else {
+                if omitted > 0 {
+                    let unit = omitted == 1 ? "body" : "bodies"
+                    throw RelayError.message("No supported message text was available. Skipped \(omitted) unsupported message \(unit).")
+                }
+                throw RelayError.message("No message text was available in this conversation and time range.")
             }
-            return Array(rows.reversed())
+            return MessagesArchiveRead(entries: entries, omittedAttributedBodies: omitted)
         }
     }
 
@@ -113,7 +165,7 @@ nonisolated enum ChatArchiveReader {
             throw RelayError.message("Choose a regular local Messages database snapshot up to 2 GB.")
         }
         let path = url.path
-        guard !["-wal", "-journal"].contains(where: { FileManager.default.fileExists(atPath: path + $0) }) else {
+        guard isStandaloneMessages(url) else {
             throw RelayError.message("This database has a live journal. Choose a standalone backup of Messages instead.")
         }
         var handle: OpaquePointer?
@@ -142,7 +194,7 @@ nonisolated enum ChatArchiveReader {
         }
         let resultValue = try read(handle)
         guard try version(of: url) == before,
-              !["-wal", "-journal"].contains(where: { FileManager.default.fileExists(atPath: path + $0) }) else {
+              isStandaloneMessages(url) else {
             throw RelayError.message("The selected Messages snapshot changed during reading.")
         }
         return resultValue
@@ -164,6 +216,22 @@ nonisolated enum ChatArchiveReader {
             default: throw RelayError.message("The selected snapshot could not be read completely.")
             }
         }
+    }
+
+    private static func attributedBody(_ row: OpaquePointer, _ column: Int32) -> String? {
+        guard sqlite3_column_type(row, column) == SQLITE_BLOB else { return nil }
+        let count = Int(sqlite3_column_bytes(row, column))
+        guard (1...MessagesAttributedBody.maximumArchiveBytes).contains(count),
+              let bytes = sqlite3_column_blob(row, column) else { return nil }
+        return MessagesAttributedBody.decode(Data(bytes: bytes, count: count))
+    }
+
+    private static func exactText(_ row: OpaquePointer, _ column: Int32) -> String? {
+        guard sqlite3_column_type(row, column) == SQLITE_TEXT,
+              let bytes = sqlite3_column_text(row, column) else { return nil }
+        let count = Int(sqlite3_column_bytes(row, column))
+        guard (1...MessagesArchiveContacts.maximumHandleBytes).contains(count) else { return nil }
+        return String(bytes: UnsafeBufferPointer(start: bytes, count: count), encoding: .utf8)
     }
 
     private static func text(_ row: OpaquePointer, _ column: Int32) -> String? {

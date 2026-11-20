@@ -117,14 +117,24 @@ import PDFKit
 @MainActor final class FileExtractionWorker {
     static let shared = FileExtractionWorker()
     nonisolated enum Failure: LocalizedError, Equatable {
-        case busy, timedOut, unavailable, readFailed
+        case busy, timedOut, unavailable, readFailed, recognitionPreparing, recognitionUnavailable
         var errorDescription: String? {
             switch self {
             case .busy: "A selected-file extraction is still settling. No additional read was queued."
             case .timedOut: "Selected-file extraction timed out. Its late output will not be used."
             case .unavailable: "The selected file, task or authorized scope changed. Its extracted content cannot be reused."
             case .readFailed: "The selected file did not produce an admitted result within the supported format and size limits. Inspect the current file and format before deciding whether to read again."
+            case .recognitionPreparing: "Local text recognition is still finishing initial preparation on this Mac. Wait for preparation to settle, then try reading again."
+            case .recognitionUnavailable: "Local document text recognition is unavailable because initial preparation did not complete."
             }
+        }
+    }
+    nonisolated static func mapOCRFailure(_ error: any Error) -> any Error {
+        guard let failure = error as? LocalOCRExecution.Failure else { return error }
+        switch failure {
+        case .documentRecognitionPreparing: return Failure.recognitionPreparing
+        case .documentRecognitionUnavailable: return Failure.recognitionUnavailable
+        case .capacityUnavailable, .invalidImage, .recognitionUnavailable: return error
         }
     }
     fileprivate nonisolated struct Source: Sendable {
@@ -147,7 +157,13 @@ import PDFKit
         private let lock = NSLock()
         private var result: Resolution?
         private var continuation: CheckedContinuation<Value, any Error>?
+        private var kernelDone = false
         var pending: Bool { lock.withLock { result == nil } }
+        var isKernelDone: Bool { lock.withLock { kernelDone } }
+        @discardableResult func completeFromKernel(_ value: Resolution) -> Bool {
+            lock.withLock { kernelDone = true }
+            return complete(value)
+        }
         func install(_ continuation: CheckedContinuation<Value, any Error>) {
             let value = lock.withLock { () -> Resolution? in
                 if let result { return result }
@@ -177,6 +193,7 @@ import PDFKit
     private nonisolated final class ReadHook: @unchecked Sendable {
         private let lock = NSLock()
         private var value: (@Sendable () -> Void)?
+        var hasCallback: Bool { lock.withLock { value != nil } }
         func set(_ value: @escaping @Sendable () -> Void) { lock.withLock { self.value = value } }
         func take() -> (@Sendable () -> Void)? { lock.withLock { let old = value; value = nil; return old } }
     }
@@ -185,7 +202,7 @@ import PDFKit
     /// the snapshot, parser output or digest. Absent from Release builds.
     func pauseAfterNextSnapshot(_ value: @escaping @Sendable () -> Void) { readHook.set(value) }
     #endif
-    private struct Active { let id: UUID; let physical: Task<Void, Never>, expiry: Task<Void, Never> }
+    private struct Active { let id: UUID; let physical: Task<Void, Never>; let expiry: Task<Void, Never> }
     private var active: Active?
     private let extractionTimeout: Duration, validationTimeout: Duration
     var activeCount: Int { active == nil ? 0 : 1 }
@@ -227,35 +244,56 @@ import PDFKit
         let id = UUID(), delivery = Delivery()
         let deadline = ContinuousClock.now.advanced(by: expected == nil ? extractionTimeout : validationTimeout)
         #if DEBUG
-        let afterRead: @Sendable () -> Void = { [readHook] in readHook.take()?() }
-        #else
-        let afterRead: @Sendable () -> Void = {}
-        #endif
-        let physical = Task { [weak self] in
-            delivery.complete(await Self.kernel(input: input, grants: grants, expected: expected,
-                deadline: deadline, delivery: delivery, afterRead: afterRead))
-            self?.physicalFinished(id)
+        let afterRead: @Sendable () async -> Void = { [readHook] in
+            guard let callback = readHook.take() else { return }
+            await withCheckedContinuation { continuation in
+                DispatchQueue.global(qos: .userInteractive).async {
+                    callback()
+                    continuation.resume()
+                }
+            }
         }
-        let expiry = Task {
+        #else
+        let afterRead: @Sendable () async -> Void = {}
+        #endif
+        let physical = Task.detached(priority: .userInitiated) { [weak self] in
+            let result = await Self.kernel(input: input, grants: grants, expected: expected,
+                deadline: deadline, delivery: delivery, afterRead: afterRead)
+            if !delivery.completeFromKernel(result) {
+                await self?.physicalFinished(id)
+            }
+        }
+        let expiry = Task.detached(priority: .userInitiated) {
             do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }
             if delivery.complete(.failed(Failure.timedOut)) { physical.cancel() }
         }
         active = Active(id: id, physical: physical, expiry: expiry)
         return try await withTaskCancellationHandler {
-            let value = try await withCheckedThrowingContinuation { delivery.install($0) }
+            defer {
+                expiry.cancel()
+                if delivery.isKernelDone { physicalFinished(id) }
+            }
+            let value = try await Self.awaitDelivery(delivery)
             try Task.checkCancellation()
-            guard ContinuousClock.now < deadline else { throw Failure.timedOut }
             return value
         } onCancel: {
-            delivery.complete(.cancelled); physical.cancel(); expiry.cancel()
+            delivery.complete(.cancelled)
+            physical.cancel()
+            expiry.cancel()
+        }
+    }
+    private static func awaitDelivery(_ delivery: Delivery) async throws -> Value {
+        try await withCheckedThrowingContinuation { continuation in
+            delivery.install(continuation)
         }
     }
     private func physicalFinished(_ id: UUID) {
         guard let active, active.id == id else { return }
-        active.expiry.cancel(); self.active = nil
+        active.expiry.cancel()
+        self.active = nil
     }
     @concurrent private static func kernel(input: String, grants: [ScopeGrant], expected: Source?,
-        deadline: ContinuousClock.Instant, delivery: Delivery, afterRead: @escaping @Sendable () -> Void) async -> Resolution {
+        deadline: ContinuousClock.Instant, delivery: Delivery, afterRead: @escaping @Sendable () async -> Void) async -> Resolution {
         func check() throws {
             try Task.checkCancellation()
             guard delivery.pending else { throw CancellationError() }
@@ -271,7 +309,7 @@ import PDFKit
             }
             try check()
             let snapshot = try LocalStateFile.snapshot(url, maximumBytes: limit)
-            afterRead(); try check()
+            await afterRead(); try check()
             let digest = Data(SHA256.hash(data: snapshot.data))
             let id = rawIdentity(path: url.path, metadata: snapshot.metadata, digest: digest)
             let source = Source(input: input, canonicalPath: url.path, metadata: snapshot.metadata,
@@ -322,7 +360,10 @@ import PDFKit
                 evidence: "Decoded only inline plain-text MIME from selected mail export \(path), locally. Sender/subject/date are unverified claims; no account, HTML, attachment or remote asset was accessed. \(mail.coverageNote ?? "")")
         }
         if ["png", "jpg", "jpeg", "heic", "tiff", "bmp", "webp"].contains(ext) {
-            return Parsed(summary: try await LocalOCR.recognizeImage(data: data),
+            let recognized: String
+            do { recognized = try await LocalOCR.recognizeImage(data: data) }
+            catch { throw mapOCRFailure(error) }
+            return Parsed(summary: recognized,
                 evidence: "Ran Apple Vision OCR locally on selected image \(path). Recognized text may contain errors; this is not verification of visual meaning or layout.")
         }
         if ext == "pdf" {
@@ -340,7 +381,10 @@ import PDFKit
                 if characters >= 30_000 { truncated = truncated || pagesRead < document.pageCount; break }
             }
             if characters == 0 {
-                return Parsed(summary: try await LocalOCR.recognizePDF(data: data, maxPages: 3),
+                let recognized: String
+                do { recognized = try await LocalOCR.recognizePDF(data: data, maxPages: 3) }
+                catch { throw mapOCRFailure(error) }
+                return Parsed(summary: recognized,
                     evidence: "Ran bounded on-device OCR on up to 3 pages of selected PDF \(path). Recognition may contain errors; omitted pages were not inspected.")
             }
             let extracted = excerpts.joined(separator: "\n\n"), limited = bounded(extracted, maximum: 11_500)

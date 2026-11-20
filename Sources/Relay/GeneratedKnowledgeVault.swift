@@ -29,7 +29,7 @@ final class GeneratedKnowledgeVault {
     private static let checkpointSuffix = " -->"
 
     private(set) var notes: [GeneratedKnowledgeNote] = []
-    private(set) var status = "Generate source highlights with your on-device model."
+    private(set) var status = "Generate source highlights with your selected model provider."
     private(set) var isGenerating = false
     private(set) var consolidationDraft: CrossSourceKnowledge.Draft?
     private(set) var consolidationInvalidation: ConsolidationInvalidation?
@@ -361,16 +361,21 @@ final class GeneratedKnowledgeVault {
         return result
     }
 
-    static func boundedUTF8(_ text: String, limit: Int) -> String {
-        var prefix = ""
-        var remaining = limit
-        for character in text {
-            let size = String(character).utf8.count
-            guard size <= remaining else { break }
-            prefix.append(character)
-            remaining -= size
+    nonisolated static func boundedUTF8(_ text: String, limit: Int) -> String {
+        guard limit > 0, !text.isEmpty else { return "" }
+        let utf8 = text.utf8
+        if utf8.count <= limit { return text }
+        var idx = utf8.index(utf8.startIndex, offsetBy: limit)
+        // Walk back at most 3 UTF-8 continuation bytes (0b10xxxxxx) to reach a valid character boundary.
+        var steps = 0
+        while idx > utf8.startIndex && steps < 3 && (utf8[idx] & 0b1100_0000) == 0b1000_0000 {
+            idx = utf8.index(before: idx)
+            steps += 1
         }
-        return prefix
+        if let scalarIndex = idx.samePosition(in: text) {
+            return String(text[..<scalarIndex])
+        }
+        return String(decoding: utf8[..<idx], as: UTF8.self)
     }
 
     private struct Selection: Decodable { let highlights: [Int] }

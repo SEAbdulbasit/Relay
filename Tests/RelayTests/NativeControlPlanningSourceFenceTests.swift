@@ -23,6 +23,27 @@ import Testing
         #expect(rig.textReads == 0 && rig.labelReads == 0 && rig.focusCaptures == 0 && rig.insertionCaptures == 0)
     }
 
+    @Test func transportRechecksEditorAuthorizationWithoutRereadingItsContents() async throws {
+        let rig = NextNativeControlRig(), observation = try await rig.plan()
+        let originalReads = rig.textReads
+        #expect(rig.session.isCurrentForModelInput(observation))
+        #expect(rig.textReads == originalReads)
+        rig.planningAuthorized = false
+        #expect(!rig.session.isCurrentForModelInput(observation))
+        #expect(rig.textReads == originalReads && rig.commands.isEmpty)
+    }
+
+    @Test func navigationPreviewDoesNotAcquireTextInsertion() async throws {
+        let rig = NextNativeControlRig()
+        let read = try await rig.read()
+        let original = try rig.session.source(from: read)
+        let observation = try await rig.session.refreshOriginalForInputPlanning(original, includesTextInsertion: false,
+            authorizeInputPlanning: { try rig.authorizePlanning() })
+        #expect(observation.hasNavigationPreview)
+        #expect(!observation.hasTextInsertionPreview)
+        #expect(rig.focusCaptures == 1 && rig.insertionCaptures == 0)
+    }
+
     @Test func actualReadOnlyPlanningCatalogOmitsKeyAndTextAndRejectsAnUnadvertisedReply() async throws {
         let rig = NextNativeControlRig(), observation = try await rig.read()
         var calls = 0

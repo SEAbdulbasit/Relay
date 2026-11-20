@@ -25,6 +25,198 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
 /// One owner, one native FIFO and one observation namespace. This is deliberately not a tool
 /// registry or Codable history payload; no arbitrary native tool names/indices are accepted.
 @MainActor final class NativeControlSession {
+    /// Actual Controller-produced fact, never an executable/recovered token.
+    /// History's separate saved-result producer binds this exact object.
+    @MainActor final class ExactUnsentEffect {
+        nonisolated enum Phase: String, Sendable, Hashable { case focus, insertion }
+        nonisolated enum Fact: Sendable, Equatable {
+            case focus(NativeOriginalWindowFocus.ExactReport)
+            case insertion(NativeFocusedAXInsertion.Outcome)
+        }
+        nonisolated let identity: NativeExactUnsentOperation.Identity
+        nonisolated let logicalTaskID: UUID, runID: UUID, attemptID: UUID, proposalID: UUID, anchorID: UUID, requestID: UUID
+        nonisolated let invocationID: UUID
+        nonisolated let phase: Phase
+        nonisolated let literalDigest: Data, callDigest: Data
+        nonisolated let outcome: Fact
+        fileprivate init(identity: NativeExactUnsentOperation.Identity, invocationID: UUID, outcome: Fact) {
+            self.identity = identity; self.outcome = outcome
+            self.invocationID = invocationID
+            logicalTaskID = identity.logicalTaskID; runID = identity.runID; attemptID = identity.attemptID
+            proposalID = identity.proposalID; anchorID = identity.anchorID; requestID = identity.requestID
+            phase = identity.phase; literalDigest = identity.literalDigest; callDigest = identity.callDigest
+        }
+    }
+    /// Actual observer-bound, image-free source. Its constructor and executable
+    /// members are file-only; callers cannot supply AX IO or positive facts.
+    @MainActor final class ExactUnsentPreparation {
+        nonisolated let sourceID: UUID
+        nonisolated let application: DesktopApplicationIdentity
+        fileprivate weak var controller: NativeControlSession?
+        fileprivate let owner: UUID, revision: UUID
+        fileprivate let observer: TargetBoundNativeObservation
+        fileprivate let lease: TargetBoundNativeObservation.TargetLease
+        fileprivate let scope: NativeVisualTaskScope
+        fileprivate let purpose: NativeExactUnsentPurpose
+        fileprivate let authority: NativeLocalTaskInputAuthority
+        fileprivate let applicationObject: NSRunningApplication
+        fileprivate let root: AXUIElement, window: AXUIElement, editor: AXUIElement
+        fileprivate let policyTarget: NativeOriginalPolicyTarget
+        /// This actual preparation is minted only after the anchor's one-shot
+        /// observer adoption. Never replace/reset this acquisition on an error,
+        /// image revision, later phase or storage-only continuation.
+        fileprivate let initialMetadata = NativeInitialMetadataAcquisition()
+        fileprivate var initialPrivacyAdmissionBegan = false
+        fileprivate var admittedFacts: NativeOrdinaryWindowPolicySource.Facts?
+        fileprivate var focus: NativeOriginalWindowFocus?
+        fileprivate var writer: NativeFocusedAXInsertion?
+        fileprivate var insertion: NativeFocusedAXInsertion.PreparedInsertion?
+        fileprivate var focusStarted = false, insertionStarted = false
+        fileprivate var focusEffect: ExactUnsentEffect?, insertionEffect: ExactUnsentEffect?
+        fileprivate init(controller: NativeControlSession, observer: TargetBoundNativeObservation,
+                         lease: TargetBoundNativeObservation.TargetLease, scope: NativeVisualTaskScope,
+                         purpose: NativeExactUnsentPurpose, authority: NativeLocalTaskInputAuthority,
+                         application: NSRunningApplication, root: AXUIElement, window: AXUIElement,
+                         editor: AXUIElement, policyTarget: NativeOriginalPolicyTarget) {
+            self.controller = controller; owner = controller.owner; revision = controller.revision
+            self.observer = observer; self.lease = lease; sourceID = lease.sourceID; self.application = lease.application
+            self.scope = scope; self.purpose = purpose; self.authority = authority; applicationObject = application
+            self.root = root; self.window = window; self.editor = editor; self.policyTarget = policyTarget
+        }
+    }
+
+    /// Sealed Controller permit for the actual disclosed direct objective. It
+    /// is distinct from an ordinary visual review/PolicyContext.
+    @MainActor final class ExactUnsentFocusPermit {
+        let sourceID: UUID
+        private let source: ExactUnsentPreparation
+        private let seal: NativeExactUnsentOperation.DispatchSeal
+        private let identity: NativeExactUnsentOperation.Identity
+        private var consumed = false
+        fileprivate init(source: ExactUnsentPreparation, seal: NativeExactUnsentOperation.DispatchSeal,
+                         identity: NativeExactUnsentOperation.Identity) {
+            self.source = source; self.seal = seal; self.identity = identity; sourceID = source.sourceID
+        }
+        func validate() throws {
+            guard let controller = source.controller else { throw Failure.stopped }
+            try seal.validate(source: source, identity: identity)
+            try controller.validateExactUnsent(source, requireInput: false)
+            // Genuine saved-owner/disclosed-focus bridge is owned by Invocation/Store.
+            try source.purpose.requireOriginalFocusApproval(scope: source.scope)
+            try controller.admitExactUnsentPrivacy(source)
+            try seal.validate(source: source, identity: identity)
+        }
+        func consume() throws {
+            guard !consumed else { throw Failure.consumed }
+            try validate(); consumed = true
+        }
+    }
+
+    @MainActor final class ExactUnsentFocusExecution {
+        nonisolated let requestID: UUID, callDigest: Data, appPath: String
+        nonisolated let gate: NativeInputRevocation
+        private let source: ExactUnsentPreparation
+        private let seal: NativeExactUnsentOperation.DispatchSeal
+        private let identity: NativeExactUnsentOperation.Identity
+        private var began = false
+        fileprivate init(source: ExactUnsentPreparation, seal: NativeExactUnsentOperation.DispatchSeal,
+                         identity: NativeExactUnsentOperation.Identity, gate: NativeInputRevocation) {
+            self.source = source; self.seal = seal; self.identity = identity; self.gate = gate
+            requestID = identity.requestID; callDigest = identity.callDigest; appPath = source.application.bundleURL.path
+        }
+        func perform(notAfter: ContinuousClock.Instant) async throws -> ExactUnsentEffect {
+            guard !began, let controller = source.controller, let focus = source.focus else { throw Failure.consumed }
+            began = true
+            try seal.validate(source: source, identity: identity)
+            try controller.validateExactUnsent(source, requireInput: false)
+            let permit = ExactUnsentFocusPermit(source: source, seal: seal, identity: identity)
+            let report = await focus.restoreExactUnsent(authorization: permit, gate: gate, notAfter: notAfter)
+            // No post-action owner throw: Stop cannot erase an actual admitted
+            // activate/raise fact. The caller saves this on the original Run.
+            let fact = ExactUnsentEffect(identity: identity, invocationID: seal.invocationID, outcome: .focus(report))
+            source.focusEffect = fact
+            return fact
+        }
+    }
+
+    @MainActor final class ExactUnsentInsertionExecution {
+        nonisolated let requestID: UUID, callDigest: Data, appPath: String
+        nonisolated let gate: NativeInputRevocation
+        private let source: ExactUnsentPreparation
+        private let seal: NativeExactUnsentOperation.DispatchSeal
+        private let identity: NativeExactUnsentOperation.Identity
+        private var began = false, consumed = false
+        fileprivate init(source: ExactUnsentPreparation, seal: NativeExactUnsentOperation.DispatchSeal,
+                         identity: NativeExactUnsentOperation.Identity, gate: NativeInputRevocation) {
+            self.source = source; self.seal = seal; self.identity = identity; self.gate = gate
+            requestID = identity.requestID; callDigest = identity.callDigest; appPath = source.application.bundleURL.path
+        }
+        func perform(notAfter: ContinuousClock.Instant) throws -> ExactUnsentEffect {
+            guard !began, let controller = source.controller,
+                  let writer = source.writer, let insertion = source.insertion else { throw Failure.consumed }
+            began = true
+            defer { writer.stop(); controller.forget(writer); source.writer = nil; source.insertion = nil }
+            let check: @MainActor () throws -> Void = {
+                try self.seal.validate(source: self.source, identity: self.identity)
+                try controller.validateExactUnsent(self.source, requireInput: true)
+                try controller.revalidateExactUnsentPrivacy(self.source)
+            }
+            try check()
+            try controller.admitExactUnsentPrivacy(source)
+            let value = writer.execute(insertion, authorization: .init(validateTaskSource: check,
+                revalidate: { guard !self.consumed else { throw Failure.consumed }; try check() },
+                consume: { guard !self.consumed else { throw Failure.consumed }; try check(); self.consumed = true }),
+                notAfter: notAfter)
+            let fact = ExactUnsentEffect(identity: identity, invocationID: seal.invocationID, outcome: .insertion(value))
+            source.insertionEffect = fact
+            return fact
+        }
+    }
+
+    @MainActor final class ExactUnsentVerification {
+        let sourceID: UUID, focusRequestID: UUID, insertionRequestID: UUID
+        let literalDigest: Data, utf16Count: Int
+        fileprivate init(source: ExactUnsentPreparation, focus: ExactUnsentEffect, insertion: ExactUnsentEffect) {
+            sourceID = source.sourceID; focusRequestID = focus.requestID; insertionRequestID = insertion.requestID
+            literalDigest = insertion.literalDigest; utf16Count = source.purpose.objective.literal.utf16.count
+        }
+    }
+    @MainActor final class ExactUnsentReadRequest {
+        nonisolated let gate: NativeInputRevocation
+        nonisolated let requestID: UUID, callDigest: Data, appPath: String
+        private let source: ExactUnsentPreparation
+        private let focus: ExactUnsentEffect, insertion: ExactUnsentEffect
+        private let focusSaved: AssistantConversationHistory.NativeTextEffectSettlement
+        private let insertionSaved: AssistantConversationHistory.NativeTextEffectSettlement
+        private let publication: NativeExactUnsentOperation.CompletionTransport
+        fileprivate init(source: ExactUnsentPreparation, focus: ExactUnsentEffect, insertion: ExactUnsentEffect,
+                         focusSaved: AssistantConversationHistory.NativeTextEffectSettlement,
+                         insertionSaved: AssistantConversationHistory.NativeTextEffectSettlement,
+                         publication: NativeExactUnsentOperation.CompletionTransport,
+                         gate: NativeInputRevocation) {
+            self.source = source; self.focus = focus; self.insertion = insertion
+            self.focusSaved = focusSaved; self.insertionSaved = insertionSaved
+            self.publication = publication
+            self.gate = gate; requestID = insertion.requestID; callDigest = insertion.callDigest
+            appPath = source.application.bundleURL.path
+        }
+        func perform(notAfter: ContinuousClock.Instant) throws -> ExactUnsentVerification {
+            guard let controller = source.controller else { throw Failure.stopped }
+            try focusSaved.validate(effect: focus); try insertionSaved.validate(effect: insertion)
+            try controller.validateExactUnsent(source, requireInput: true)
+            let first = try controller.readExactUnsent(source, notAfter: notAfter)
+            let firstStyle = try NativeExactUnsentOperation.requireExactReadback(first, literal: source.purpose.objective.literal)
+            let second = try controller.readExactUnsent(source, notAfter: notAfter)
+            let secondStyle = try NativeExactUnsentOperation.requireExactReadback(second, literal: source.purpose.objective.literal)
+            guard firstStyle.matches(secondStyle) else { throw NativeExactUnsentOperation.Failure.readbackMismatch }
+            try focusSaved.validate(effect: focus); try insertionSaved.validate(effect: insertion)
+            try controller.validateExactUnsent(source, requireInput: true)
+            guard controller.clockNow() < notAfter else { throw NativeExactUnsentOperation.Failure.expired }
+            let actual = ExactUnsentVerification(source: source, focus: focus, insertion: insertion)
+            publication.publish(actual)
+            return actual
+        }
+    }
     nonisolated enum Failure: Error, Equatable {
         case inactiveSession, stopped, staleObservation, consumed, wrongOwner, invalidAction
         case unqualifiedEffect, changedPixels, changedFocus, unavailableFocus, invalidImage, busy
@@ -103,6 +295,36 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
         var captureInsertionForReview: (@MainActor (NativeInputRevocation, @escaping @MainActor () throws -> Void) throws -> NativeFocusedAXInsertion)? = nil
         /// Trusted in-process binder only; no AX lookup by model/source labels.
         var policyTarget: (@MainActor () throws -> NativeOriginalPolicyTarget)? = nil
+        /// Source-only privacy for this control target, never an input grant.
+        /// Nil is allowed only for the separate general read path.
+        var controlCapturePrivacy: (@MainActor (NativeOriginalPolicyTarget) throws -> Void)? = nil
+
+        func validateControlReadPrivacy() throws {
+            guard let controlCapturePrivacy else { return }
+            try validateOriginalSource()
+            guard let bind = policyTarget else { throw Failure.unqualifiedEffect }
+            let metadata = try bind()
+            guard metadata.sourceID == sourceID, metadata.application == application else { throw Failure.wrongOwner }
+            try controlCapturePrivacy(metadata)
+            try validateOriginalSource()
+        }
+        func captureForRead(_ reserved: OwnedNativeComputerUseClient.ReservedState?) async throws -> TargetBoundNativeObservation.Snapshot {
+            try validateControlReadPrivacy()
+            do {
+                let snapshot = try await capture(reserved)
+                try validateControlReadPrivacy()
+                return snapshot
+            } catch {
+                // A late provider error can contain source text too. Retain it
+                // only while the same control source/privacy fence is current.
+                // Execute still preserves any earlier attempted effect/focus.
+                if controlCapturePrivacy != nil {
+                    try validateControlReadPrivacy()
+                    try validateOriginalSource()
+                }
+                throw error
+            }
+        }
     }
 
     /// Source authority survives this owner's own image generation changes.
@@ -211,14 +433,35 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
     private var latestInputPreview: InputPreview?
     private let backend: Backend
     private let observer: TargetBoundNativeObservation?
+    private let exactUnsentClient: OwnedNativeComputerUseClient?
+    private let readAudit: NativeReadAudit?
     private let sessionIsActive: @MainActor () -> Bool
     private let authorizer: any NativeControlAuthorizing
     private let clockNow: @MainActor () -> ContinuousClock.Instant
 
-    init(client: OwnedNativeComputerUseClient, sessionIsActive: @escaping @MainActor () -> Bool,
+    convenience init(client: OwnedNativeComputerUseClient, sessionIsActive: @escaping @MainActor () -> Bool,
          authorizer: any NativeControlAuthorizing = DenyNativeControlMutations(),
-         clockNow: @escaping @MainActor () -> ContinuousClock.Instant = { .now }) {
+         clockNow: @escaping @MainActor () -> ContinuousClock.Instant = { .now },
+         readAudit: NativeReadAudit? = nil) {
         let observer = TargetBoundNativeObservation(client: client, sessionIsActive: sessionIsActive)
+        self.init(client: client, observer: observer, sessionIsActive: sessionIsActive,
+            authorizer: authorizer, clockNow: clockNow, readAudit: readAudit)
+    }
+
+    /// The dedicated path owns its liveness callback. An arbitrary caller
+    /// callback cannot be paired with a typed metadata source.
+    convenience init(client: OwnedNativeComputerUseClient, directExactUnsentAuthority authority: NativeLocalTaskInputAuthority,
+                     readAudit: NativeReadAudit?) {
+        let observer = TargetBoundNativeObservation(client: client, directExactUnsentAuthority: authority)
+        self.init(client: client, observer: observer, sessionIsActive: authority.exactUnsentSessionLiveness(),
+            authorizer: DenyNativeControlMutations(), clockNow: { .now }, readAudit: readAudit)
+    }
+
+    private init(client: OwnedNativeComputerUseClient, observer: TargetBoundNativeObservation,
+                 sessionIsActive: @escaping @MainActor () -> Bool, authorizer: any NativeControlAuthorizing,
+                 clockNow: @escaping @MainActor () -> ContinuousClock.Instant, readAudit: NativeReadAudit?) {
+        self.readAudit = readAudit
+        exactUnsentClient = client
         self.observer = observer; self.sessionIsActive = sessionIsActive; self.authorizer = authorizer; self.clockNow = clockNow
         backend = Backend(dispatch: { requestID, app, command, gate, preflight in
             try await client.mutate(requestID: requestID, app: app, command: command, revocation: gate, preflight: preflight)
@@ -231,19 +474,293 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
     init(backend: Backend, sessionIsActive: @escaping @MainActor () -> Bool,
          authorizer: any NativeControlAuthorizing = DenyNativeControlMutations(),
          clockNow: @escaping @MainActor () -> ContinuousClock.Instant = { .now }) {
-        self.backend = backend; self.sessionIsActive = sessionIsActive; self.authorizer = authorizer; observer = nil; self.clockNow = clockNow
+        self.backend = backend; self.sessionIsActive = sessionIsActive; self.authorizer = authorizer; observer = nil; self.clockNow = clockNow; readAudit = nil
+        exactUnsentClient = nil
     }
 
-    func observeForRead(application: NSRunningApplication) async throws -> Observation {
+    func prepareExactUnsent(purpose: NativeExactUnsentPurpose,
+                            authority: NativeLocalTaskInputAuthority) async throws -> ExactUnsentPreparation {
+        try await acquire(); defer { release() }
+        try requireActive(); try authority.validate(); try purpose.validateCurrent(scope: authority.scope)
+        guard exactUnsentClient != nil, let observer else { throw Failure.unqualifiedEffect }
+        let request = try observer.prepareInitialExactUnsent(purpose, readAudit: readAudit)
+        let lease = try observer.retainPreparedTarget(request)
+        let window = try observer.originalAXWindow(lease)
+        guard let app = NSRunningApplication(processIdentifier: lease.application.processID),
+              DesktopApplicationTarget.matches(lease.application, application: app) else { throw Failure.wrongOwner }
+        let root = AXUIElementCreateApplication(lease.application.processID)
+        try observer.validateOriginalSource(lease)
+        let editor = try Self.exactElement(root, kAXFocusedUIElementAttribute)
+        try purpose.objective.anchor.validateTechnicalIdentity()
+        guard CFEqual(editor, try Self.exactElement(root, kAXFocusedUIElementAttribute)) else { throw Failure.changedFocus }
+        let metadataBinding = try observer.metadataBinding(lease)
+        let target = metadataBinding.canonicalExactUnsentPolicyTarget(readAudit: readAudit)
+            ?? NativeOriginalPolicyTarget(sourceID: lease.sourceID, application: lease.application,
+                originalWindow: window, validateOriginalSource: { try observer.validateOriginalSource(lease) },
+                readAudit: readAudit, metadataBinding: metadataBinding)
+        let source = ExactUnsentPreparation(controller: self, observer: observer, lease: lease,
+            scope: authority.scope, purpose: purpose, authority: authority, application: app,
+            root: root, window: window, editor: editor, policyTarget: target)
+        source.focus = NativeOriginalWindowFocus(sourceID: source.sourceID, application: app,
+            identity: source.application, originalWindow: window,
+            validateOriginalSource: { [weak self, weak source] in
+                guard let self, let source else { throw Failure.stopped }
+                try self.validateExactUnsent(source, requireInput: false)
+            }, validateForInput: { [weak self, weak source] in
+                guard let self, let source else { throw Failure.stopped }
+                try self.validateExactUnsent(source, requireInput: true)
+            }, sessionIsActive: { [weak self] in self?.isActive == true })
+        try validateExactUnsent(source, requireInput: false); try admitExactUnsentPrivacy(source)
+        return source
+    }
+
+    func restoreExactUnsentFocus(_ source: ExactUnsentPreparation,
+                                 identity: NativeExactUnsentOperation.Identity,
+                                 dispatch: NativeExactUnsentOperation.DispatchSeal) async throws -> ExactUnsentEffect {
+        try await acquire(); defer { release() }
+        try validateExactUnsent(source, requireInput: false)
+        try validateExactIdentity(identity, source: source, phase: .focus)
+        try dispatch.validate(source: source, identity: identity)
+        guard !source.focusStarted, let client = exactUnsentClient else { throw Failure.consumed }
+        source.focusStarted = true
+        let execution = ExactUnsentFocusExecution(source: source, seal: dispatch, identity: identity, gate: inputRevocation)
+        return try await client.reserveExactUnsentFocus(execution)
+    }
+
+    func prepareExactUnsentInsertion(_ source: ExactUnsentPreparation, focus: ExactUnsentEffect,
+                                     saved: AssistantConversationHistory.NativeTextEffectSettlement) async throws {
+        try await acquire(); defer { release() }
+        try saved.validate(effect: focus)
+        guard source.focusEffect === focus, case .focus(let report) = focus.outcome, report.verified,
+              !source.insertionStarted, source.writer == nil else { throw Failure.unqualifiedEffect }
+        try validateExactUnsent(source, requireInput: true); try admitExactUnsentPrivacy(source)
+        let writer = try NativeFocusedAXInsertion.captureForReview(application: source.application,
+            originalWindow: source.window, validateOriginalSource: { [weak self, weak source] in
+                guard let self, let source else { throw Failure.stopped }
+                try self.validateExactUnsent(source, requireInput: false)
+            }, validateForInput: { [weak self, weak source] in
+                guard let self, let source else { throw Failure.stopped }
+                try self.validateExactUnsent(source, requireInput: true)
+            }, sessionIsActive: { [weak self] in self?.isActive == true }, admissionGate: inputRevocation,
+            policyTarget: source.policyTarget, authorizePrivateQuery: { [weak self, weak source] in
+                guard let self, let source else { throw Failure.stopped }
+                try self.revalidateExactUnsentPrivacy(source)
+            })
+        do {
+            guard let selected = writer.focusedTargetDescriptor?.selection,
+                  selected.location == 0, selected.length == 0, selected.originalUTF16Count == 0 else {
+                throw NativeExactUnsentOperation.Failure.nonemptyEditor
+            }
+            let insertion = try writer.prepare(source.purpose.objective.literal)
+            guard insertion.selection == NSRange(location: 0, length: 0),
+                  insertion.expectedUTF16Count == source.purpose.objective.literal.utf16.count,
+                  insertion.expectedCaret == NSRange(location: source.purpose.objective.literal.utf16.count, length: 0) else {
+                throw NativeExactUnsentOperation.Failure.nonemptyEditor
+            }
+            try saved.validate(effect: focus); try validateExactUnsent(source, requireInput: true)
+            source.writer = writer; source.insertion = insertion
+            focusedInsertions.append(WeakInsertion(writer))
+        } catch { writer.stop(); throw error }
+    }
+
+    func executeExactUnsentInsertion(_ source: ExactUnsentPreparation,
+                                     identity: NativeExactUnsentOperation.Identity,
+                                     dispatch: NativeExactUnsentOperation.DispatchSeal) async throws -> ExactUnsentEffect {
+        try await acquire(); defer { release() }
+        try validateExactUnsent(source, requireInput: true)
+        try validateExactIdentity(identity, source: source, phase: .insertion)
+        try dispatch.validate(source: source, identity: identity)
+        guard !source.insertionStarted, source.writer != nil, source.insertion != nil,
+              let client = exactUnsentClient else { throw Failure.consumed }
+        source.insertionStarted = true
+        let execution = ExactUnsentInsertionExecution(source: source, seal: dispatch, identity: identity, gate: inputRevocation)
+        return try await client.reserveExactUnsentInsertion(execution)
+    }
+
+    func verifyExactUnsent(_ source: ExactUnsentPreparation, focus: ExactUnsentEffect, insertion: ExactUnsentEffect,
+                           focusSaved: AssistantConversationHistory.NativeTextEffectSettlement,
+                           insertionSaved: AssistantConversationHistory.NativeTextEffectSettlement,
+                           publication: NativeExactUnsentOperation.CompletionTransport) async throws -> ExactUnsentVerification {
+        try await acquire(); defer { release() }
+        try focusSaved.validate(effect: focus); try insertionSaved.validate(effect: insertion)
+        guard source.focusEffect === focus, source.insertionEffect === insertion,
+              case .focus(let report) = focus.outcome, report.verified,
+              case .insertion(.inserted) = insertion.outcome,
+              let client = exactUnsentClient else { throw NativeExactUnsentOperation.Failure.incompleteEffects }
+        try validateExactUnsent(source, requireInput: true)
+        let read = ExactUnsentReadRequest(source: source, focus: focus, insertion: insertion,
+            focusSaved: focusSaved, insertionSaved: insertionSaved, publication: publication, gate: inputRevocation)
+        return try await client.reserveExactUnsentVerification(read)
+    }
+
+    private func validateExactIdentity(_ identity: NativeExactUnsentOperation.Identity,
+                                       source: ExactUnsentPreparation, phase: ExactUnsentEffect.Phase) throws {
+        let actual = try NativeExactUnsentOperation.Identity(scope: source.scope, purpose: source.purpose,
+            sourceID: source.sourceID, phase: phase)
+        guard identity == actual else { throw Failure.conflictingRequest }
+    }
+    private func validateExactUnsent(_ source: ExactUnsentPreparation, requireInput: Bool) throws {
+        try requireActive()
+        guard source.controller === self, source.owner == owner, source.revision == revision else { throw Failure.wrongOwner }
+        try source.authority.validate(); try source.purpose.validateCurrentForPreparedSource(owner: source.observer)
+        if source.focusEffect != nil {
+            try source.policyTarget.validateSource()
+            guard DesktopApplicationTarget.matches(source.application, application: source.applicationObject),
+                  source.observer.matchesOriginalAXWindow(source.window, lease: source.lease),
+                  CFEqual(source.editor, try Self.exactElement(source.root, kAXFocusedUIElementAttribute)) else { throw Failure.changedFocus }
+            if requireInput { try source.observer.validateAlreadyVerifiedOriginalForInput(source.lease) }
+            try source.authority.validate(); try requireActive()
+            return
+        }
+        try source.observer.validateOriginalSource(source.lease); try source.policyTarget.validateSource()
+        guard DesktopApplicationTarget.matches(source.application, application: source.applicationObject),
+              CFEqual(source.window, try source.observer.originalAXWindow(source.lease)),
+              CFEqual(source.editor, try Self.exactElement(source.root, kAXFocusedUIElementAttribute)) else { throw Failure.changedFocus }
+        try source.purpose.objective.anchor.validateTechnicalIdentity()
+        if requireInput { try source.observer.validateForInput(source.lease) }
+        try source.authority.validate(); try requireActive()
+    }
+    private func admitExactUnsentPrivacy(_ source: ExactUnsentPreparation) throws {
+        let initial = !source.initialPrivacyAdmissionBegan
+        // Spend before ANY strong owner/source check. An error cannot renew
+        // the initial opportunity on this same actual preparation.
+        source.initialPrivacyAdmissionBegan = true
+        try validateExactUnsent(source, requireInput: false)
+        let facts: NativeOrdinaryWindowPolicySource.Facts
+        if initial {
+            facts = try source.policyTarget.inspectInitialMetadata(using: source.initialMetadata,
+                validateInitialOwnership: { [weak self, weak source] in
+                    guard let self, let source else { throw Failure.stopped }
+                    try self.validateExactUnsent(source, requireInput: false)
+                }, authorizeMetadata: {
+                    try source.authority.authorizeMetadataScope(source.application)
+                }, metadataScope: source.authority.metadataScopeBinding(for: source.application))
+        } else if source.focusEffect != nil, let admittedFacts = source.admittedFacts {
+            try admittedFacts.admitPrivateEditorPlanning()
+            try validateExactUnsent(source, requireInput: false)
+            return
+        } else {
+            facts = try source.authority.inspect(source.policyTarget)
+        }
+        try facts.admitPrivateEditorPlanning()
+        try validateExactUnsent(source, requireInput: false)
+        if source.focusEffect != nil {
+            source.admittedFacts = facts
+        }
+    }
+    private func revalidateExactUnsentPrivacy(_ source: ExactUnsentPreparation) throws {
+        guard source.initialPrivacyAdmissionBegan, let facts = source.admittedFacts else {
+            try admitExactUnsentPrivacy(source)
+            return
+        }
+        try validateExactUnsent(source, requireInput: false)
+        try source.authority.authorizeMetadataScope(source.application)
+        guard facts.sourceID == source.sourceID, facts.application == source.application,
+              facts.coverage == .standardRoleSurvey, facts.context == .ordinary,
+              facts.standardSurvey != nil else {
+            throw NativeOrdinaryWindowPolicySource.Failure.incomplete
+        }
+        try validateExactUnsent(source, requireInput: false)
+    }
+    private static func exactElement(_ node: AXUIElement, _ name: String) throws -> AXUIElement {
+        AXUIElementSetMessagingTimeout(node, 0.05)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(node, name as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { throw Failure.unavailableFocus }
+        return unsafeDowncast(value, to: AXUIElement.self)
+    }
+
+    /// Actual independent reads only: no access to writer.State, verifiedCaret,
+    /// old Contents, native state, images, input closure or provider response.
+    private func readExactUnsent(_ source: ExactUnsentPreparation,
+                                 notAfter: ContinuousClock.Instant) throws -> NativeExactUnsentOperation.ReadbackSample {
+        func check() throws {
+            try Task.checkCancellation()
+            guard clockNow() < notAfter else { throw NativeExactUnsentOperation.Failure.expired }
+            try validateExactUnsent(source, requireInput: true); try revalidateExactUnsentPrivacy(source)
+            guard clockNow() < notAfter else { throw NativeExactUnsentOperation.Failure.expired }
+        }
+        func attribute(_ name: String, stage: NativeReadAudit.Stage) throws -> CFTypeRef {
+            try check(); AXUIElementSetMessagingTimeout(source.editor, 0.05)
+            var value: CFTypeRef?
+            let status = NativeReadAudit.measure(readAudit, stage) {
+                AXUIElementCopyAttributeValue(source.editor, name as CFString, &value)
+            }
+            try check()
+            guard status == .success, let value else { throw NativeExactUnsentOperation.Failure.unavailableReadback }
+            return value
+        }
+        try check()
+        let survey = try source.policyTarget.standardSurvey(authorizeMetadata: {
+            try self.validateExactUnsent(source, requireInput: false)
+        })
+        let metadata = try survey.editor(source.editor)
+        if metadata.usesCanonicalDirectBoundary {
+            try metadata.validateEditorMetadataOnly(role: metadata.role, subrole: metadata.subrole,
+                protected: metadata.protected, hidden: metadata.hidden, enabled: metadata.enabled)
+        } else {
+            try metadata.validate(role: metadata.role, subrole: metadata.subrole,
+                protected: metadata.protected, hidden: metadata.hidden, enabled: metadata.enabled)
+        }
+        try NativeFocusedAXInsertion.validateSourceHierarchy(editor: source.editor, window: source.window,
+            pid: source.application.processID, authorizePrivateQuery: check, readAudit: readAudit)
+        guard let value = try attribute(kAXValueAttribute, stage: .editorValue) as? String,
+              value.utf8.count <= NativeFocusedAXInsertion.maximumFieldBytes else { throw Failure.unavailableFocus }
+        let rawRange = try attribute(kAXSelectedTextRangeAttribute, stage: .editorSelection)
+        guard CFGetTypeID(rawRange) == AXValueGetTypeID() else { throw Failure.unavailableFocus }
+        var range = CFRange()
+        let actualRange = unsafeDowncast(rawRange, to: AXValue.self)
+        guard AXValueGetType(actualRange) == .cfRange, AXValueGetValue(actualRange, .cfRange, &range),
+              range.location >= 0, range.length >= 0 else { throw Failure.unavailableFocus }
+        guard let selected = try attribute(kAXSelectedTextAttribute, stage: .editorSelectedText) as? String,
+              selected.utf8.count <= NativeFocusedAXInsertion.maximumFieldBytes else { throw Failure.unavailableFocus }
+        try check()
+        var full = CFRange(location: 0, length: value.utf16.count)
+        guard let parameter = AXValueCreate(.cfRange, &full) else { throw Failure.unavailableFocus }
+        var rawAttributed: CFTypeRef?
+        let status = NativeReadAudit.measure(readAudit, .editorStyle) {
+            AXUIElementCopyParameterizedAttributeValue(source.editor, kAXAttributedStringForRangeParameterizedAttribute as CFString,
+                parameter, &rawAttributed)
+        }
+        try check()
+        guard status == .success, let attributed = rawAttributed as? NSAttributedString else { throw Failure.unavailableFocus }
+        return .init(value: value, selectedText: selected,
+            caret: NSRange(location: range.location, length: range.length), attributed: attributed)
+    }
+
+    func observeForRead(application: NSRunningApplication,
+                        authorizeSourceBeforeCapture: (@MainActor (NativeOriginalPolicyTarget) throws -> Void)? = nil) async throws -> Observation {
         try await acquire(); defer { release() }
         return try await withTaskCancellationHandler {
             try requireActive()
             guard let observer else { throw Failure.invalidAction }
             retireInputPreview()
             let expected = revision
-            let snapshot = try await observer.observe(observer.prepare(application: application))
+            let request = try observer.prepare(application: application)
+            let lease = try observer.retainPreparedTarget(request)
+            let beforeCapture = try observer.originalAXWindow(lease)
+            let metadataBinding = try observer.metadataBinding(lease)
+            let admissionTarget = NativeOriginalPolicyTarget(sourceID: lease.sourceID,
+                application: lease.application, originalWindow: beforeCapture,
+                validateOriginalSource: { try observer.validateOriginalSource(lease) }, readAudit: readAudit,
+                metadataBinding: metadataBinding)
+            try authorizeSourceBeforeCapture?(admissionTarget)
             try requireRevision(expected)
-            let lease = try observer.retainTarget(for: snapshot)
+            let snapshot: TargetBoundNativeObservation.Snapshot
+            do { snapshot = try await observer.observe(request) }
+            catch {
+                // Initial production capture precedes Target construction but
+                // must fence late error text by the same admitted source.
+                if let authorizeSourceBeforeCapture {
+                    try requireRevision(expected)
+                    try authorizeSourceBeforeCapture(admissionTarget)
+                    try requireRevision(expected)
+                }
+                throw error
+            }
+            try requireRevision(expected)
+            try authorizeSourceBeforeCapture?(admissionTarget)
+            try requireRevision(expected)
             let active = sessionIsActive
             let originalWindow = try observer.originalAXWindow(lease)
             let validateSource: @MainActor () throws -> Void = { try observer.validateOriginalSource(lease) }
@@ -253,7 +770,10 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
             // target closures keep only these immutable identity values.
             let applicationIdentity = snapshot.application
             let windowInfo = snapshot.window
-            let target = Target(sourceID: lease.sourceID, application: applicationIdentity, window: windowInfo,
+            let metadataTarget = NativeOriginalPolicyTarget(sourceID: lease.sourceID, application: applicationIdentity,
+                originalWindow: originalWindow, validateOriginalSource: validateSource, readAudit: readAudit,
+                metadataBinding: metadataBinding)
+            var target = Target(sourceID: lease.sourceID, application: applicationIdentity, window: windowInfo,
                 validateOriginalSource: validateSource, validateForInput: validateInput,
                 capture: { reserved in
                     if let reserved { return try await observer.observeOriginal(lease, reserved: reserved) }
@@ -262,36 +782,38 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
                 captureFocusForReview: { authorization in
                     try authorization()
                     return try Self.captureFocusForReview(application: applicationIdentity, originalWindow: originalWindow,
-                        validateSource: { try authorization(); try validateSource() },
-                        validateCapture: { try authorization(); try validateCapture() },
-                        validateInput: { try authorization(); try validateInput() })
+                        validateSource: validateSource, validateCapture: validateCapture, validateInput: validateInput,
+                        policyTarget: metadataTarget, authorizePrivateQuery: authorization)
                 }, restoreReviewedOriginalFocus: { authorization, gate, deadline in
                     await observer.restoreReviewedOriginalFocus(lease, authorization: authorization, gate: gate, notAfter: deadline)
                 }, captureInsertionForReview: { gate, authorization in
                     try authorization(); try validateCapture()
                     return try NativeFocusedAXInsertion.captureForReview(application: applicationIdentity,
                         originalWindow: originalWindow,
-                        validateOriginalSource: { try authorization(); try validateSource() },
-                        validateForInput: { try authorization(); try validateInput() },
-                        sessionIsActive: active, admissionGate: gate)
+                        validateOriginalSource: validateSource, validateForInput: validateInput,
+                        sessionIsActive: active, admissionGate: gate,
+                        policyTarget: metadataTarget, authorizePrivateQuery: authorization)
                 }, policyTarget: {
                     try validateSource()
-                    return NativeOriginalPolicyTarget(sourceID: lease.sourceID, application: applicationIdentity,
-                        originalWindow: originalWindow, validateOriginalSource: validateSource)
+                    return metadataTarget
                 })
+            target.controlCapturePrivacy = authorizeSourceBeforeCapture
             try target.validateOriginalSource()
             revision = UUID()
             return Observation(snapshot: snapshot, owner: owner, revision: revision, target: target)
         } onCancel: { Task { @MainActor [weak self] in self?.stop() } }
     }
 
-    func observeForRead(target: Target) async throws -> Observation {
+    func observeForRead(target: Target,
+                        authorizeSourceBeforeCapture: (@MainActor (NativeOriginalPolicyTarget) throws -> Void)? = nil) async throws -> Observation {
         try await acquire(); defer { release() }
         return try await withTaskCancellationHandler {
             try requireActive(); try target.validateOriginalSource()
             retireInputPreview()
             let expected = revision
-            let snapshot = try await target.capture(nil)
+            var target = target
+            if let authorizeSourceBeforeCapture { target.controlCapturePrivacy = authorizeSourceBeforeCapture }
+            let snapshot = try await target.captureForRead(nil)
             try requireRevision(expected); try target.validateOriginalSource()
             guard target.isCurrent(snapshot), snapshot.application == target.application,
                   target.window.matchesExactly(snapshot.window) else { throw Failure.staleObservation }
@@ -309,7 +831,7 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
             try validate(observation)
             retireInputPreview()
             let expected = revision, target = observation.target
-            let snapshot = try await target.capture(nil)
+            let snapshot = try await target.captureForRead(nil)
             try requireRevision(expected); try target.validateOriginalSource()
             guard target.isCurrent(snapshot), snapshot.application == target.application,
                   snapshot.window.matchesExactly(target.window) else { throw Failure.staleObservation }
@@ -325,27 +847,44 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
         return OriginalSource(owner: owner, target: observation.target)
     }
 
-    func validateOriginalSource(_ source: OriginalSource) throws {
+    private func validateRetainedSourceIdentity(_ source: OriginalSource) throws {
         try requireActive()
         guard source.owner == owner else { throw Failure.wrongOwner }
         try source.target.validateOriginalSource(); try requireActive()
+    }
+    func validateOriginalSource(_ source: OriginalSource) throws {
+        try validateRetainedSourceIdentity(source)
+        try source.target.validateControlReadPrivacy()
+        try validateRetainedSourceIdentity(source)
+    }
+    /// Image-free source capability for control continuation/goal reads. A
+    /// general read target cannot silently become a protected control capture.
+    func controlReadSource(from observation: Observation) throws -> OriginalSource {
+        let original = try source(from: observation)
+        guard original.target.controlCapturePrivacy != nil else { throw Failure.unqualifiedEffect }
+        try validateOriginalSource(original)
+        return original
     }
 
     /// Actual retained AX-window metadata capability only. Image consumption
     /// does not create a replacement source, and this performs no capture,
     /// activation, focus or input. The reader separately gates task/privacy IO.
     func policyTarget(from source: OriginalSource) throws -> NativeOriginalPolicyTarget {
-        try validateOriginalSource(source)
+        try validateRetainedSourceIdentity(source)
         guard let bind = source.target.policyTarget else { throw Failure.unqualifiedEffect }
         let target = try bind()
-        try validateOriginalSource(source)
+        try validateRetainedSourceIdentity(source)
         guard target.sourceID == source.id, target.application == source.target.application else { throw Failure.wrongOwner }
         let scoped = target.addingSourceValidation { [weak self] in
             guard let self else { throw Failure.stopped }
-            try self.validateOriginalSource(source)
+            try self.validateRetainedSourceIdentity(source)
+        } metadataLeaseValidation: { [weak self] in
+            guard let self else { throw Failure.stopped }
+            try self.requireActive()
+            guard source.owner == self.owner else { throw Failure.wrongOwner }
         }
         try scoped.validateSource()
-        try validateOriginalSource(source)
+        try validateRetainedSourceIdentity(source)
         return scoped
     }
 
@@ -360,7 +899,7 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
             try validateOriginalSource(source)
             retireInputPreview()
             let expected = revision, target = source.target
-            let snapshot = try await target.capture(nil)
+            let snapshot = try await target.captureForRead(nil)
             try requireRevision(expected); try validateOriginalSource(source)
             guard target.isCurrent(snapshot), snapshot.application == target.application,
                   snapshot.window.matchesExactly(target.window) else { throw Failure.staleObservation }
@@ -376,7 +915,7 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
         return try await refreshOriginalForInputPlanning(source(from: first), authorizeInputPlanning: authorizeInputPlanning)
     }
 
-    func refreshOriginalForInputPlanning(_ source: OriginalSource,
+    func refreshOriginalForInputPlanning(_ source: OriginalSource, includesTextInsertion: Bool = true,
                                         authorizeInputPlanning: @escaping @MainActor () throws -> Void) async throws -> Observation {
         try await acquire(); defer { release() }
         return try await withTaskCancellationHandler {
@@ -385,7 +924,8 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
             let expected = revision, target = source.target
             let authorize: @MainActor () throws -> Void = { [weak self] in
                 guard let self else { throw Failure.stopped }
-                try self.requireActive(); try authorizeInputPlanning(); try target.validateOriginalSource()
+                try self.requireActive(); try target.validateControlReadPrivacy()
+                try authorizeInputPlanning(); try target.validateOriginalSource()
             }
             var focus: FocusFence?, insertion: NativeFocusedAXInsertion?
             do { focus = try target.captureFocusForReview(authorize) }
@@ -394,7 +934,7 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
                 guard let failure = error as? Failure,
                       failure == .unavailableFocus else { throw error }
             }
-            if let capture = target.captureInsertionForReview {
+            if includesTextInsertion, let capture = target.captureInsertionForReview {
                 do {
                     insertion = try capture(inputRevocation, authorize)
                     if let insertion {
@@ -415,9 +955,11 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
             defer { if !published { preview.stop() } }
             // The exact source editor/value/selection/style must bracket the model's
             // native frame, not be adopted from whichever field exists after inference.
-            try preview.validate()
-            let snapshot = try await target.capture(nil)
-            try requireRevision(expected); try authorize(); try preview.validate()
+            // Navigation capture has already established its editor snapshot.
+            // Insertion capture can add another editor read before this image.
+            if includesTextInsertion { try preview.validate() }
+            let snapshot = try await target.captureForRead(nil)
+            try requireRevision(expected); try preview.validate()
             guard target.isCurrent(snapshot), snapshot.application == target.application,
                   snapshot.window.matchesExactly(target.window) else { throw Failure.staleObservation }
             revision = UUID(); latestInputPreview = preview; published = true
@@ -434,12 +976,35 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
     /// private preview and this performs no full-field value/style reads for them.
     func validatePlanningObservation(_ observation: Observation) throws {
         try validate(observation)
-        try observation.inputPreview?.validate()
+        if let preview = observation.inputPreview {
+            // The preview brackets its private reads with the same capture
+            // privacy gate and additionally revalidates the editor grant.
+            try preview.validate()
+        } else {
+            try observation.target.validateControlReadPrivacy()
+        }
         try validate(observation)
     }
 
     func isCurrentForPlanning(_ observation: Observation) -> Bool {
         do { try validatePlanningObservation(observation); return true } catch { return false }
+    }
+
+    /// Transport checks protect the already-captured image and window. The
+    /// planning phase validates the exact editor state before and after the
+    /// model call, and the controller checks it again before input.
+    func isCurrentForModelInput(_ observation: Observation) -> Bool {
+        do {
+            try validate(observation)
+            if let preview = observation.inputPreview {
+                guard !preview.retired else { return false }
+                try preview.validateAuthorization()
+            } else {
+                try observation.target.validateControlReadPrivacy()
+            }
+            try validate(observation)
+            return true
+        } catch { return false }
     }
 
     func prepareForReview(_ action: Action, request: NativeControlRequestAdmission,
@@ -471,7 +1036,7 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
         case .key(let key):
             guard let preview = observation.inputPreview, let originalFocus = preview.focus else { throw Failure.unavailableFocus }
             try preview.validate()
-            focus = originalFocus; try focus?.validateSourceBeforeInput()
+            focus = originalFocus
             effect = .native(.key(key)); normalized = nil
         case .typeUnsentText(let text):
             guard Self.validUnsentText(text) else { throw Failure.invalidAction }
@@ -502,14 +1067,17 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
             guard let source = permit.validateTaskSource else { throw Failure.unqualifiedEffect }
             try validateTaskSource(source)
         } else if let source = permit.validateTaskSource { try validateTaskSource(source) }
-        try validate(observation); try focus?.validateSourceBeforeInput(); try permit.revalidate()
+        try validate(observation); try permit.revalidate()
         // Only the trusted authorizer selects image-bound context after semantic/review
         // admission. Model geometry or an otherwise valid rectangle grants no authority.
         let rectangles = try permit.visualProof.nativeRectangles(action: action, frame: frame)
         let pixels: PixelProof?
-        if let normalized { pixels = try await PixelProof.make(pixels: normalized, rectangles: rectangles) }
-        else { pixels = nil }
-        try validate(observation); try focus?.validateSourceBeforeInput(); try permit.revalidate()
+        if let normalized {
+            pixels = try await PixelProof.make(pixels: normalized, rectangles: rectangles)
+            try validate(observation); try permit.revalidate()
+        } else {
+            pixels = nil
+        }
         if let source = permit.validateTaskSource { try validateTaskSource(source) }
         try requireUnused(key, fingerprint: fingerprint)
         preparedSuccessfully = true
@@ -591,21 +1159,22 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
                     try await self.restoreForExecution(prepared, target: target, revision: dispatchRevision, reserved: reserved, focus: focus)
                     // The original reservation still caps the fresh-image window; focus
                     // restoration cannot renew the already-owned transport deadline.
+                    let fresh = try await target.captureForRead(reserved)
                     let captured = self.clockNow()
-                    let notAfter = min(reserved.notAfter, captured.advanced(by: .seconds(2)))
-                    let fresh = try await target.capture(reserved)
                     if let source = prepared.permit.validateTaskSource { try self.validateTaskSource(source) }
                     try self.requireRevision(dispatchRevision); try prepared.request.validate(); try target.validateForInput()
                     guard target.isCurrent(fresh), fresh.application == prepared.context.application,
                           fresh.window.matchesExactly(prepared.context.window) else { throw Failure.staleObservation }
                     if let pixels = prepared.pixels, !(try await pixels.matches(fresh)) { throw Failure.changedPixels }
                     try self.requireRevision(dispatchRevision); try target.validateForInput()
-                    try prepared.context.focus?.validateBeforeInput(); try prepared.permit.revalidate()
-                    guard target.isCurrent(fresh), self.clockNow() < notAfter else { throw Failure.staleObservation }
                     try prepared.permit.consume()
                     if let source = prepared.permit.validateTaskSource { try self.validateTaskSource(source) }
                     try self.requireRevision(dispatchRevision); try prepared.request.validate(); try target.validateForInput()
                     try prepared.context.focus?.validateBeforeInput()
+                    // Pointer input is bound to the fresh pixel proof. Navigation
+                    // instead uses the just-validated original focused editor.
+                    let proofTime = prepared.pixels == nil ? self.clockNow() : captured
+                    let notAfter = min(reserved.notAfter, proofTime.advanced(by: .seconds(2)))
                     guard target.isCurrent(fresh), self.clockNow() < notAfter else { throw Failure.staleObservation }
                     return .init(notAfter: notAfter, revocation: self.inputRevocation)
                 })
@@ -638,6 +1207,8 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
         let box = AXExecutionBox()
         let checkSource: @MainActor () throws -> Void = { [self] in
             try requireRevision(expected); try prepared.request.validate(); try validateTaskSource(source); try target.validateOriginalSource()
+            try target.validateControlReadPrivacy()
+            try requireRevision(expected); try prepared.request.validate(); try validateTaskSource(source); try target.validateOriginalSource()
         }
         try checkSource()
         let nativeID = prepared.request.requestID
@@ -649,7 +1220,7 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
                     try checkSource()
                     try await self.restoreForExecution(prepared, target: target, revision: expected, reserved: reserved, focus: box.focus)
                     let captured = self.clockNow(), notAfter = min(reserved.notAfter, captured.advanced(by: .seconds(2)))
-                    let fresh = try await target.capture(reserved)
+                    let fresh = try await target.captureForRead(reserved)
                     try checkSource()
                     guard target.isCurrent(fresh), fresh.application == prepared.context.application,
                           fresh.window.matchesExactly(prepared.context.window), self.clockNow() < notAfter else { throw Failure.staleObservation }
@@ -723,7 +1294,7 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
             if let validateSource { try validateTaskSource(validateSource) }
             try requireRevision(expected); try target.validateOriginalSource()
             try focus?.validateAfterInput()
-            let snapshot = try await target.capture(reserved)
+            let snapshot = try await target.captureForRead(reserved)
             if let validateSource { try validateTaskSource(validateSource) }
             try requireRevision(expected); try target.validateOriginalSource(); try focus?.validateAfterInput()
             guard target.isCurrent(snapshot), snapshot.application == target.application,
@@ -776,7 +1347,7 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
         let app = target.application, window = target.window
         let tool: String, arguments: [String: JSONValue]
         switch effect {
-        case .native(let command): tool = command.tool; arguments = try command.arguments(app: app.bundleURL.path)
+        case .native(let command): tool = command.tool; arguments = try command.arguments(app: app.bundleURL.path, allowUnicode: true)
         case .focusedAX(_, let insertion):
             guard let literal = insertion.literalText else { throw Failure.consumed }
             tool = "relay_focused_ax_insertion"
@@ -835,13 +1406,20 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
     private static func captureFocusForReview(application: DesktopApplicationIdentity, originalWindow: AXUIElement,
                                               validateSource: @escaping @MainActor () throws -> Void,
                                               validateCapture: @escaping @MainActor () throws -> Void,
-                                              validateInput: @escaping @MainActor () throws -> Void) throws -> FocusFence {
-        try validateSource(); try validateCapture()
+                                              validateInput: @escaping @MainActor () throws -> Void,
+                                              policyTarget: NativeOriginalPolicyTarget,
+                                              authorizePrivateQuery: @escaping @MainActor () throws -> Void) throws -> FocusFence {
+        try validateSource(); try validateCapture(); try authorizePrivateQuery()
+        let survey = try policyTarget.standardSurvey(authorizeMetadata: validateSource, ordinaryFocus: true)
         let root = AXUIElementCreateApplication(application.processID)
-        AXUIElementSetMessagingTimeout(root, 0.12)
-        func attribute(_ element: AXUIElement, _ name: String) throws -> CFTypeRef {
+        AXUIElementSetMessagingTimeout(root, 0.04)
+        func attribute(_ element: AXUIElement, _ name: String, stage: NativeReadAudit.Stage = .focusedIdentityMetadata) throws -> CFTypeRef {
+            try Task.checkCancellation(); try validateSource()
+            AXUIElementSetMessagingTimeout(element, 0.04)
             var value: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success, let value else { throw Failure.unavailableFocus }
+            let status = NativeReadAudit.measure(policyTarget.readAudit, stage) { AXUIElementCopyAttributeValue(element, name as CFString, &value) }
+            guard status == .success, let value else { throw Failure.unavailableFocus }
+            try Task.checkCancellation(); try validateSource()
             return value
         }
         func element(_ value: CFTypeRef) throws -> AXUIElement {
@@ -851,42 +1429,61 @@ nonisolated enum NativeControlKey: String, Sendable, CaseIterable {
         let focus = try element(attribute(root, kAXFocusedUIElementAttribute))
         guard CFEqual(try element(attribute(root, kAXFocusedWindowAttribute)), originalWindow),
               CFEqual(try element(attribute(focus, kAXWindowAttribute)), originalWindow) else { throw Failure.changedFocus }
+        let standard: NativeStandardControlSurvey.Editor
+        do { standard = try survey.editor(focus) }
+        catch NativeOrdinaryWindowPolicySource.Failure.incomplete { throw Failure.unavailableFocus }
         let sourceIdentity: @MainActor () throws -> Void = {
             try validateSource(); try validateCapture()
             guard CFEqual(try element(attribute(root, kAXFocusedUIElementAttribute)), focus),
                   CFEqual(try element(attribute(root, kAXFocusedWindowAttribute)), originalWindow),
                   CFEqual(try element(attribute(focus, kAXWindowAttribute)), originalWindow) else { throw Failure.changedFocus }
         }
+        let privateCheck: @MainActor () throws -> Void = {
+            try sourceIdentity(); try authorizePrivateQuery()
+            try standard.validateEditorMetadataOnly(role: standard.role, subrole: standard.subrole, protected: standard.protected,
+                hidden: standard.hidden, enabled: standard.enabled)
+            try sourceIdentity()
+        }
+        func privateAttributes(_ names: [String], stage: NativeReadAudit.Stage) throws -> [AnyObject] {
+            try sourceIdentity()
+            try standard.validateEditorMetadataOnly(role: standard.role, subrole: standard.subrole,
+                protected: standard.protected, hidden: standard.hidden, enabled: standard.enabled)
+            var result: CFArray?
+            let status = NativeReadAudit.measure(policyTarget.readAudit, stage) {
+                AXUIElementCopyMultipleAttributeValues(focus, names as CFArray, [], &result)
+            }
+            try sourceIdentity()
+            guard status == .success, let values = result as? [AnyObject], values.count == names.count else {
+                throw Failure.unavailableFocus
+            }
+            return values
+        }
         return try NativeControlFocus.capture(.init(validateIdentity: sourceIdentity,
             validateInputIdentity: { try sourceIdentity(); try validateInput(); try Self.requireForeground(application) },
             metadata: {
-                func writable(_ element: AXUIElement, _ name: String) -> Bool {
-                    var value = DarwinBoolean(false)
-                    return AXUIElementIsAttributeSettable(element, name as CFString, &value) == .success && value.boolValue
-                }
-                return .init(role: (try? attribute(focus, kAXRoleAttribute)) as? String ?? "",
-                    subrole: (try? attribute(focus, kAXSubroleAttribute)) as? String ?? "",
-                    protected: NativeControlFocus.protectedValue([(try? attribute(focus, "AXProtectedContent")) as? Bool,
-                        (try? attribute(focus, "AXContainsProtectedContent")) as? Bool]),
-                    hidden: (try? attribute(focus, "AXHidden")) as? Bool,
-                    enabled: (try? attribute(focus, kAXEnabledAttribute)) as? Bool,
-                    valueWritable: writable(focus, kAXValueAttribute), selectionWritable: writable(focus, kAXSelectedTextRangeAttribute))
+                var metadata = NativeControlFocus.Metadata(role: standard.role, subrole: standard.subrole,
+                    protected: standard.protected, hidden: standard.hidden, enabled: standard.enabled,
+                    valueWritable: standard.valueWritable, selectionWritable: standard.selectionWritable)
+                metadata.standardEditor = standard
+                return metadata
             }, qualifiedLabels: {
-                try sourceIdentity()
-                try NativeFocusedAXInsertion.validateSourceHierarchy(editor: focus, window: originalWindow, pid: application.processID)
-                let label = [kAXDescriptionAttribute, kAXTitleAttribute, kAXPlaceholderValueAttribute]
-                    .compactMap { (try? attribute(focus, $0)) as? String }.first { !$0.isEmpty }
-                let identifier = ((try? attribute(focus, kAXIdentifierAttribute)) as? String).flatMap { $0.isEmpty ? nil : $0 }
+                try NativeFocusedAXInsertion.validateSourceHierarchy(editor: focus, window: originalWindow,
+                    pid: application.processID, authorizePrivateQuery: sourceIdentity, readAudit: policyTarget.readAudit)
+                let values = try privateAttributes([kAXDescriptionAttribute, kAXTitleAttribute,
+                    kAXPlaceholderValueAttribute, kAXIdentifierAttribute], stage: .editorLabel)
+                let label = values.prefix(3).compactMap { $0 as? String }.first { !$0.isEmpty }
+                let identifier = (values[3] as? String).flatMap { $0.isEmpty ? nil : $0 }
                 return .init(label: label, identifier: identifier)
             }, contents: {
-                guard let value = try attribute(focus, kAXValueAttribute) as? String else { throw Failure.unavailableFocus }
-                let raw = try attribute(focus, kAXSelectedTextRangeAttribute)
-                guard CFGetTypeID(raw) == AXValueGetTypeID() else { throw Failure.unavailableFocus }
+                let values = try privateAttributes([kAXValueAttribute, kAXSelectedTextRangeAttribute], stage: .editorValue)
+                let raw = values[1]
+                guard let value = values[0] as? String,
+                      CFGetTypeID(raw) == AXValueGetTypeID() else { throw Failure.unavailableFocus }
                 let axValue = unsafeDowncast(raw, to: AXValue.self)
                 var range = CFRange()
                 guard AXValueGetType(axValue) == .cfRange, AXValueGetValue(axValue, .cfRange, &range) else { throw Failure.unavailableFocus }
                 return .init(value: value, selection: NSRange(location: range.location, length: range.length))
-            }))
+            }, validatePrivacy: privateCheck))
     }
 
     /// Original and fresh images each normalize/decode once. The default hashes the whole

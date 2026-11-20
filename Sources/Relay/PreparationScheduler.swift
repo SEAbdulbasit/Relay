@@ -63,9 +63,12 @@ final class PreparationScheduler {
     private(set) var errorMessage: String?
     private(set) var isPreparing = false
     private(set) var refreshGrantIDs: Set<UUID> = []
-    private(set) var calendarRefreshIDs: Set<String> = []
+    @ObservationIgnored private var storedCalendarRefreshIDs: Set<String> = []
+    private(set) var calendarRefreshEpoch = UUID()
+    var calendarRefreshIDs: Set<String> { _ = calendarRefreshEpoch; return storedCalendarRefreshIDs }
     private(set) var agenda: [CalendarSource.EventInfo] = []
     let notifications: MorningBriefNotifications
+    let managedWake: ManagedPreparationWake?
     var isBusy: () -> Bool = { false }
     var prepare: (() throws -> String)?
     @ObservationIgnored var refreshAndPrepare: ((Date, Set<UUID>, Set<String>) async throws -> PreparedBrief)?
@@ -80,7 +83,13 @@ final class PreparationScheduler {
     @ObservationIgnored private let clock: () -> Date
     @ObservationIgnored private let systemTimeZone: () -> TimeZone
     @ObservationIgnored private let onExternalPower: () -> Bool
+    @ObservationIgnored private let batteryCharge: (() -> Int?)?
     @ObservationIgnored private let scheduledWakeDates: () -> [Date]?
+    @ObservationIgnored private let holdIdleSleep: (TimeInterval) -> (() -> Void)?
+    @ObservationIgnored private let waitForRunLimit: () async throws -> Void
+    @ObservationIgnored private var releaseIdleSleep: (() -> Void)?
+    @ObservationIgnored private var runLimitTask: Task<Void, Never>?
+    private static let maximumAutomaticRunSeconds: TimeInterval = 20 * 60
     @ObservationIgnored private var timer: Task<Void, Never>?
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var activeRefreshIsAutomatic = false
@@ -89,7 +98,7 @@ final class PreparationScheduler {
     @ObservationIgnored private var lastHandledDay: String?
     @ObservationIgnored private var lastOutcome: Outcome?
     @ObservationIgnored private var reservation: Reservation?
-    private enum Outcome: String, Codable { case reserved, paused, prepared, missed, failed, cancelled }
+    private enum Outcome: String, Codable { case reserved, paused, prepared, missed, failed, cancelled, timedOut }
     private struct Reservation: Codable {
         let sources: Set<UUID>
         let includesCalendar: Bool
@@ -115,17 +124,34 @@ final class PreparationScheduler {
         systemTimeZone: @escaping () -> TimeZone = { .autoupdatingCurrent },
         thermalLimited: @escaping () -> Bool = PreparationWakeSystem.isThermallyLimited,
         onExternalPower: @escaping () -> Bool = PreparationWakeSystem.isOnExternalPower,
-        scheduledWakeDates: @escaping () -> [Date]? = PreparationWakeSystem.scheduledDates
+        scheduledWakeDates: @escaping () -> [Date]? = PreparationWakeSystem.scheduledDates,
+        batteryCharge: (() -> Int?)? = nil,
+        holdIdleSleep: ((TimeInterval) -> (() -> Void)?)? = nil,
+        waitForRunLimit: (() async throws -> Void)? = nil
     ) {
         self.persistenceURL = persistenceURL
         notifications = MorningBriefNotifications(persistenceURL: persistenceURL?.deletingPathExtension().appendingPathExtension("notifications.json"))
         self.automaticTimers = automaticTimers
+        managedWake = automaticTimers ? ManagedPreparationWake() : nil
         self.lowPower = lowPower
         self.clock = clock
         self.systemTimeZone = systemTimeZone
         self.thermalLimited = thermalLimited
         self.onExternalPower = onExternalPower
+        if let batteryCharge {
+            self.batteryCharge = batteryCharge
+        } else if automaticTimers {
+            self.batteryCharge = { PreparationWakeSystem.batteryChargePercent() }
+        } else {
+            self.batteryCharge = nil
+        }
         self.scheduledWakeDates = scheduledWakeDates
+        self.holdIdleSleep = holdIdleSleep ?? { seconds in
+            automaticTimers ? PreparationWakeSystem.holdIdleSleep(for: seconds) : nil
+        }
+        self.waitForRunLimit = waitForRunLimit ?? {
+            try await Task.sleep(for: .seconds(Self.maximumAutomaticRunSeconds))
+        }
         restore()
     }
     /// Called only after the owner has restored/revalidated source scope and installed callbacks.
@@ -141,6 +167,7 @@ final class PreparationScheduler {
             cancelCurrentPreparation()
             status = "Scheduled preparation is off. Nothing runs automatically."
             persist()
+            managedWake?.refresh(nil)
         }
     }
 
@@ -162,10 +189,11 @@ final class PreparationScheduler {
     /// Calendar selection and prepared event titles are session data.
     func setCalendarRefreshEnabled(_ value: Bool) {
         let ids = value ? eligibleCalendarRefreshIDs() : []
-        guard ids != calendarRefreshIDs else { return }
-        calendarRefreshIDs = ids
+        guard !CalendarSelectionIdentity.same(ids, calendarRefreshIDs) else { return }
+        storedCalendarRefreshIDs = ids
         agenda = []
         cancelCurrentPreparation()
+        calendarRefreshEpoch = UUID()
     }
 
     private func updateRefreshSources(_ ids: Set<UUID>) {
@@ -182,6 +210,7 @@ final class PreparationScheduler {
             persist()
         }
         if let refreshTask {
+            stopRunProtection()
             refreshTask.cancel()
             status = "Stopping the Morning Brief refresh."
         }
@@ -205,8 +234,12 @@ final class PreparationScheduler {
     func tick(now: Date = Date(), timeZone: TimeZone = .autoupdatingCurrent) {
         guard enabled, !sleeping else { return }
         if isPreparing {
-            if activeRefreshIsAutomatic, let deferral = automaticPowerDeferral {
+            if activeRefreshIsAutomatic, let deferral = automaticPowerDeferral(isRunning: true) {
                 pauseAutomaticRefresh(status: deferral)
+            }
+            if !onExternalPower() {
+                stopIdleSleepHold()
+                managedWake?.stopClosedLidPreparation()
             }
             return
         }
@@ -258,7 +291,7 @@ final class PreparationScheduler {
             next.retriedAfterExit = saved.retriedAfterExit || lastOutcome == .reserved
         }
         guard !isBusy() else { status = "Waiting for the current task, voice input or indexing to finish."; return }
-        if let deferral = automaticPowerDeferral { status = deferral; return }
+        if let deferral = automaticPowerDeferral(isRunning: false) { status = deferral; return }
         guard let prepare else { status = "Preparation is not connected to selected sources."; return }
         let needsRefresh = !sources.isEmpty || includesCalendar || preparesDrafts
         guard !needsRefresh || refreshAndPrepare != nil else { status = "Scheduled source refresh is unavailable."; return }
@@ -293,6 +326,19 @@ final class PreparationScheduler {
         agenda = []
         errorMessage = nil
         status = resuming ? "Resuming the Morning Brief…" : "Refreshing selected local sources for the Morning Brief…"
+        if automatic {
+            if onExternalPower() {
+                releaseIdleSleep = holdIdleSleep(Self.maximumAutomaticRunSeconds)
+                managedWake?.startClosedLidPreparation()
+            }
+            runLimitTask = Task { @MainActor [weak self, waitForRunLimit] in
+                do {
+                    try await waitForRunLimit()
+                    try Task.checkCancellation()
+                    self?.expireAutomaticRefresh()
+                } catch { return }
+            }
+        }
         refreshTask = Task { @MainActor [weak self] in
             do {
                 try Task.checkCancellation()
@@ -306,6 +352,7 @@ final class PreparationScheduler {
     }
 
     private func finishRefresh(_ result: Result<PreparedBrief, any Error>, at date: Date, automatic: Bool) {
+        stopRunProtection()
         refreshTask = nil
         activeRefreshIsAutomatic = false
         isPreparing = false
@@ -314,6 +361,11 @@ final class PreparationScheduler {
             return
         }
         if automatic { reservation = nil }
+        if automatic, lastOutcome == .timedOut {
+            status = "Scheduled preparation reached its time limit. Prepare manually or wait for tomorrow."
+            persist()
+            return
+        }
         switch result {
         case .success(let brief):
             if automatic { lastOutcome = .prepared }
@@ -350,9 +402,15 @@ final class PreparationScheduler {
         }
     }
 
-    private var automaticPowerDeferral: String? {
+    private func automaticPowerDeferral(isRunning: Bool) -> String? {
         if lowPower() { return "Preparation paused in Low Power Mode." }
         if thermalLimited() { return "Preparation is waiting for this Mac to cool down." }
+        guard let batteryCharge, !onExternalPower() else { return nil }
+        guard let percent = batteryCharge(), (0...100).contains(percent) else {
+            return "Preparation is waiting for a known power state. Connect this Mac to power."
+        }
+        let minimum = isRunning ? 21 : (lastPreparedAt == nil ? 50 : 30)
+        if percent < minimum { return "Preparation is waiting for more battery charge." }
         return nil
     }
 
@@ -361,7 +419,30 @@ final class PreparationScheduler {
         lastOutcome = .paused
         self.status = status
         persist()
+        stopRunProtection()
         refreshTask.cancel()
+    }
+
+    private func expireAutomaticRefresh() {
+        guard activeRefreshIsAutomatic, lastOutcome == .reserved, let refreshTask else { return }
+        lastOutcome = .timedOut
+        reservation = nil
+        status = "Stopping scheduled preparation because it reached its time limit."
+        stopRunProtection()
+        persist()
+        refreshTask.cancel()
+    }
+
+    private func stopRunProtection() {
+        runLimitTask?.cancel()
+        runLimitTask = nil
+        stopIdleSleepHold()
+        managedWake?.stopClosedLidPreparation()
+    }
+
+    private func stopIdleSleepHold() {
+        releaseIdleSleep?()
+        releaseIdleSleep = nil
     }
 
     func systemWillSleep() { pauseUntilNextWakeOrLaunch() }
@@ -371,7 +452,20 @@ final class PreparationScheduler {
         evaluateSchedule()
     }
 
-    private func evaluateSchedule() { tick(now: clock(), timeZone: systemTimeZone()) }
+    func refreshManagedWake() {
+        guard let managedWake, managedWake.isRequested else { return }
+        guard !sleeping else { return }
+        let date = enabled && onExternalPower() && !lowPower() && !thermalLimited()
+            ? PreparationWakeSetup.nextWake(now: clock(), timeZone: systemTimeZone(), hour: hour, minute: minute,
+                                            lastHandledDay: lastHandledDay, minimumLead: 0)
+            : nil
+        managedWake.refresh(date)
+    }
+
+    private func evaluateSchedule() {
+        tick(now: clock(), timeZone: systemTimeZone())
+        refreshManagedWake()
+    }
 
     private func startTimer() {
         guard automaticTimers, timer == nil, enabled else { return }
@@ -438,5 +532,5 @@ final class PreparationScheduler {
         reservation = saved.reservation
         status = enabled ? "Saved schedule is on; it starts only after selected sources are restored." : "Scheduled preparation is off."
     }
-    isolated deinit { stopTimer(); refreshTask?.cancel() }
+    isolated deinit { stopTimer(); stopRunProtection(); refreshTask?.cancel() }
 }

@@ -24,6 +24,10 @@ import Foundation
         let token: UUID
         let step: PlanStep
     }
+    struct ProgressEntry {
+        let token: UUID
+        let attempts: Int
+    }
     struct Lease {
         fileprivate let owner: UUID
         fileprivate let run: UUID
@@ -70,6 +74,7 @@ import Foundation
     private struct Record {
         let binding: Binding
         let entries: [Entry]
+        var attempts: [Int]
         var cursor = 0
         var stage = Stage.ready
     }
@@ -141,12 +146,20 @@ import Foundation
         let (total, totalOverflow) = goalCost.addingReportingOverflow(binding.context.configurationBytes)
         guard !multiplyOverflow, !addOverflow, !goalOverflow, !totalOverflow,
               total <= Self.maximumRetainedPlanBytes - 512 else { state = .unavailable(binding, .planBudget); return }
-        state = .cached(Record(binding: binding, entries: original.map { Entry(token: UUID(), step: $0) }))
+        state = .cached(Record(binding: binding, entries: original.map { Entry(token: UUID(), step: $0) }, attempts: Array(repeating: 0, count: original.count)))
+    }
+
+    /// Presentation-only identity/counters. A cursor is not renewed outcome proof.
+    func progressEntries(for lease: Lease) throws -> [ProgressEntry]? {
+        try validate(lease)
+        guard case .cached(let record) = state else { return nil }
+        return record.entries.enumerated().map { ProgressEntry(token: $0.element.token, attempts: record.attempts[$0.offset]) }
     }
 
     func enterStep(at index: Int, lease: Lease) throws {
         try change(index: index, lease: lease) { record in
             guard record.stage != .declinedBeforeDispatch, record.stage != .declinedAfterPossibleDispatch else { throw Failure.declined }
+            record.attempts[index] += 1
             record.stage = record.entries[index].step.role == .executor ? .executorStarted : .readOnlyStarted
         }
     }
@@ -167,6 +180,7 @@ import Foundation
     }
     func beginReconciliation(at index: Int, lease: Lease) throws {
         try change(index: index, lease: lease) { record in
+            record.attempts[index] += 1
             if record.stage != .declinedBeforeDispatch, record.stage != .declinedAfterPossibleDispatch { record.stage = .reconciling }
         }
     }

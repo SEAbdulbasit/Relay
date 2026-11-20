@@ -158,6 +158,7 @@ struct ArtifactToolIntegrationTests {
         try imageData(text: "SCOPE OCR 321").write(to: image)
         let tools = MacTools()
         tools.grants = [ScopeGrant(path: allowed.path)]
+        try await prepareOwnedOCRReadinessRecordingFailure()
         try await withArtifactReceiptState(root: root, grants: tools.grants) { receipts in
             let actual = try await receipts.read(tools, call: ToolCall(name: "read_file", arguments: ["path": .string(image.path)]))
             let result = actual.result
@@ -204,6 +205,7 @@ struct ArtifactToolIntegrationTests {
         #expect(PDFDocument(url: url)?.string?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false)
         let tools = MacTools()
         tools.grants = [ScopeGrant(path: folder.path)]
+        try await prepareOwnedOCRReadinessRecordingFailure()
         try await withArtifactReceiptState(root: folder, grants: tools.grants) { receipts in
             let actual = try await receipts.read(tools, call: ToolCall(name: "read_file", arguments: ["path": .string(url.path)]))
             let result = actual.result

@@ -18,6 +18,7 @@ struct NativeReadFailureTests {
         ]), content: content, isError: true)
         let failure = NativeReadProviderError(result: result)
         #expect(failure.detail.contains("ScreenCaptureKit failed -3811"))
+        #expect(!failure.needsFreshConnection)
         #expect(failure.detail.contains("code=-3811") && failure.detail.contains("stage=state"))
         #expect(failure.detail.utf8.count <= NativeProviderFailureText.maximumBytes)
         #expect(!failure.localizedDescription.contains(body) && !failure.localizedDescription.contains(image))
@@ -70,7 +71,8 @@ struct NativeReadFailureTests {
         observer.stop(); await observer.drain()
     }
 
-    @Test func deadReadConnectionIsReplacedOnlyOnTheNextExplicitRead() async throws {
+    @Test(arguments: [false, true])
+    func deadReadConnectionIsReplacedOnlyOnTheNextExplicitRead(_ providerBootstrapFailure: Bool) async throws {
         var active = true, factories = 0, captures = 0, closes = 0
         let application = preparation().application
         let owner = NativeWindowTaskAdapter.Ownership(taskID: UUID(), isCurrent: { active },
@@ -80,7 +82,13 @@ struct NativeReadFailureTests {
             let isFirst = factories == 1
             let observer = TargetBoundNativeObservation(backend: .init(capture: { _, _ in
                 captures += 1
-                if isFirst { throw OwnedNativeComputerUseClient.Failure.closed }
+                if isFirst {
+                    if providerBootstrapFailure {
+                        let content: [JSONValue] = [.object(["type": .string("text"), "text": .string("bootstrapTimedOut")])]
+                        return .init(raw: .object(["content": .array(content)]), content: content, isError: true)
+                    }
+                    throw OwnedNativeComputerUseClient.Failure.closed
+                }
                 return successfulState()
             }, close: { closes += 1 }), sessionIsActive: { active })
             return .init(initial: { _ in
@@ -89,7 +97,11 @@ struct NativeReadFailureTests {
             }, stop: { observer.stop() }, drain: { await observer.drain() })
         }, complete: { _ in .init(content: "Synthetic readable state.", toolCalls: []) })
         let call = ToolCall(name: NativeWindowReadTool.name, arguments: ["bundle_id": .string(application.bundleID), "question": .string("Read the chosen window.")])
-        await #expect(throws: NativeReadTransportError.self) { try await service.read(call, objective: "Read only this window.") }
+        if providerBootstrapFailure {
+            await #expect(throws: NativeReadProviderError.self) { try await service.read(call, objective: "Read only this window.") }
+        } else {
+            await #expect(throws: NativeReadTransportError.self) { try await service.read(call, objective: "Read only this window.") }
+        }
         #expect(factories == 1 && captures == 1 && closes == 1,
             "No automatic replay or replacement read occurs inside the failed request.")
         let result = try await service.read(ToolCall(name: call.name, arguments: call.arguments), objective: "Read only this window.")

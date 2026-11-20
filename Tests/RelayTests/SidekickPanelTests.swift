@@ -116,6 +116,53 @@ struct SidekickPanelTests {
         #expect(!hosted.contains("Use the notes fixture."))
     }
 
+    @Test func notchRecentHistoryCardAndReopenThreadPreserveConversationAndSizeCleanly() async throws {
+        let suite = "RelayTests.SidekickPanel.History.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let layout = SidekickPanelLayout(
+            screen: CGRect(x: 0, y: 0, width: 1512, height: 982),
+            visibleTop: 945,
+            notchInset: 37,
+            notchWidth: 186
+        )
+        let store = AssistantStore(persistenceURL: nil, codexComplete: { _, _ in
+            ModelReply(content: "Here is the summary of your recent task.", toolCalls: [])
+        }, codexCheck: {})
+        await store.selectWorkspaceCodex()
+
+        let controller = NotchOverlayController(preferences: defaults, nonpresentingLayout: layout)
+        controller.connect(store: store, available: true, openWorkspace: {})
+        controller.open()
+
+        let emptyComposeSize = controller.presentationContentSize(for: store)
+        #expect(!controller.hasReopenableResult)
+
+        let user1 = ChatMessage(role: "user", text: "What did we decide about the launch?")
+        let assistant1 = ChatMessage(role: "assistant", text: "We scheduled the launch for Thursday morning.")
+        let user2 = ChatMessage(role: "user", text: "Who owns the release notes?")
+        let assistant2 = ChatMessage(role: "assistant", text: "You own the release notes draft.")
+        store.messages = [user1, assistant1, user2, assistant2]
+
+        // Opening the notch in compose mode with history expands height to fit NotchRecentHistoryCard
+        let historyComposeSize = controller.presentationContentSize(for: store)
+        #expect(historyComposeSize.height > emptyComposeSize.height)
+        #expect(controller.hasReopenableResult)
+
+        // Reopening the recent result works even when lastCompletedSubmittedMessageID was nil
+        controller.reopenRecentResult()
+        let reopened = try #require(controller.latestResult(in: store.messages))
+        #expect(reopened.id == assistant2.id)
+
+        let thread = NotchOverlayController.recentThreadMessages(for: reopened, in: store.messages)
+        #expect(thread.map(\.id) == [user1.id, assistant1.id, user2.id, assistant2.id])
+
+        let resultSize = controller.presentationContentSize(for: store)
+        #expect(resultSize.height >= 216)
+        #expect(resultSize.height <= 368)
+    }
+
     private func waitForRun(_ store: AssistantStore) async throws {
         await store.waitForConversationTaskToSettle()
         try #require(!store.isRunning)

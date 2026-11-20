@@ -364,8 +364,8 @@ final class ModelDownload {
     }
 
     private static func checkAvailableSpace(at directory: URL, required: Int64) throws {
-        let values = try directory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
-        let available = values.volumeAvailableCapacityForImportantUsage ?? values.volumeAvailableCapacity.map(Int64.init)
+        let values = try directory.resourceValues(forKeys: [.volumeAvailableCapacityKey])
+        let available = values.volumeAvailableCapacity.map(Int64.init)
         if let available, available < required + 268_435_456 {
             throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteOutOfSpaceError, userInfo: [NSLocalizedDescriptionKey: "Free at least \(ByteCountFormatter.string(fromByteCount: required + 268_435_456, countStyle: .file)) for the model and temporary setup files, then retry."])
         }

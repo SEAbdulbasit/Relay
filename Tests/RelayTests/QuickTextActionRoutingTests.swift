@@ -28,9 +28,16 @@ struct QuickTextActionRoutingTests {
         #expect(fixture.controller.promptText == "Proofread this selected text.")
         #expect(fixture.controller.errorMessage == "Synthetic source changed.")
         fixture.store.actionsReady = false
-        fixture.controller.submit(store: fixture.store)
-        #expect(fixture.actions.count == 1)
-        #expect(fixture.controller.errorMessage?.contains("Load a local model") == true)
+        for provider in LocalBackend.allCases {
+            var selected = fixture.store.configuration
+            selected.backend = provider
+            fixture.store.configuration = selected
+            fixture.controller.submit(store: fixture.store)
+            #expect(fixture.actions.count == 1)
+            #expect(fixture.controller.errorMessage == "Check the selected model and finish preparing text actions before trying again.")
+            #expect(fixture.controller.promptText == "Proofread this selected text.")
+            #expect(fixture.store.configuration == selected && !fixture.store.workspaceUsesCodex && !fixture.store.actionsReady)
+        }
         #expect(fixture.store.draft == fixture.originalDraft && fixture.store.messages.isEmpty)
         #expect(fixture.localCalls == 0 && fixture.hostedCalls == 0)
     }

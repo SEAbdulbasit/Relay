@@ -1,12 +1,11 @@
 import AppKit
 import Foundation
 
-/// Source-only positive production adapter. This successor is not registered in
-/// the active SDK. Its controller policyTarget binding and full factory/Store
-/// tests still require qualification before any catalog or runtime cutover.
+/// Composes one retained-window controller with live application and task policy.
 @MainActor final class NativeProductionTaskConnectionFactory {
     private let scope: NativeVisualTaskScope
     private let authority: NativeLocalTaskInputAuthority
+    private let validateAvailability: @MainActor () throws -> Void
     /// Finite trusted OS/client boundary. The default is the real signed native
     /// client and exact running-process resolver; tests inject only inert IO.
     struct Platform {
@@ -16,12 +15,16 @@ import Foundation
         }
         let open: @MainActor (NativeOrdinaryVisualPolicy, @escaping @MainActor () -> Bool) async throws -> Opened
         let observeRead: @MainActor (NativeControlSession, NativeWindowTaskAdapter.ApplicationAdmission) async throws -> NativeControlSession.Observation
-        static var production: Self {
+        var observeControl: (@MainActor (NativeControlSession, NativeWindowTaskAdapter.ApplicationAdmission,
+            @escaping @MainActor (NativeOriginalPolicyTarget) throws -> Void) async throws -> NativeControlSession.Observation)? = nil
+        static var production: Self { production(readAudit: nil, processStarted: nil) }
+        static func production(readAudit: NativeReadAudit?,
+                               processStarted: (@Sendable (OwnedNativeComputerUseClient.ProcessStarted) throws -> Void)?) -> Self {
             .init(open: { policy, current in
                 let runtime = try OwnedNativeComputerUseClient.Runtime.discover()
-                let client = try await OwnedNativeComputerUseClient.open(runtime: runtime)
+                let client = try await OwnedNativeComputerUseClient.open(runtime: runtime, readAudit: readAudit, processStarted: processStarted)
                 return Opened(controller: NativeControlSession(client: client, sessionIsActive: current,
-                    authorizer: policy), close: { await client.close() })
+                    authorizer: policy, readAudit: readAudit), close: { await client.close() })
             }, observeRead: { controller, admission in
                 try admission.validate()
                 guard let application = NSRunningApplication(processIdentifier: admission.application.processID),
@@ -31,18 +34,33 @@ import Foundation
                 let observation = try await controller.observeForRead(application: application)
                 try admission.validate()
                 return observation
+            }, observeControl: { controller, admission, authorize in
+                try admission.validate()
+                guard let application = NSRunningApplication(processIdentifier: admission.application.processID),
+                      DesktopApplicationTarget.matches(admission.application, application: application) else {
+                    throw NativeVisualTaskFailure.staleTask
+                }
+                let observation = try await controller.observeForRead(application: application,
+                    authorizeSourceBeforeCapture: authorize)
+                try admission.validate()
+                return observation
             })
         }
     }
     private let platform: Platform
     private var policyTargets: [UUID: NativeOriginalPolicyTarget] = [:]
     private var originals: [UUID: NativeControlSession.OriginalSource] = [:]
+    private let initialMetadata: NativeInitialMetadataOwners<NativeOriginalPolicyTarget>
     private var closed = false
 
     init(scope: NativeVisualTaskScope, inputAuthority: NativeLocalTaskInputAuthority,
-         platform: Platform = .production) throws {
+         platform: Platform? = nil, readAudit: NativeReadAudit? = nil,
+         processStarted: (@Sendable (OwnedNativeComputerUseClient.ProcessStarted) throws -> Void)? = nil,
+         validateAvailability: @escaping @MainActor () throws -> Void = {}) throws {
         guard inputAuthority.scope === scope else { throw NativeVisualTaskFailure.staleTask }
-        self.scope = scope; self.authority = inputAuthority; self.platform = platform
+        self.scope = scope; self.authority = inputAuthority; self.platform = platform ?? .production(readAudit: readAudit, processStarted: processStarted)
+        self.validateAvailability = validateAvailability
+        initialMetadata = NativeInitialMetadataOwners(owner: scope)
         try scope.validate(); try authority.validate()
     }
 
@@ -52,13 +70,30 @@ import Foundation
         try target.validateSource(); return target
     }
 
+    /// Dedicated metadata preparation, not general control availability. A real
+    /// Store saved-message bridge is required before a purpose can exist.
+    func prepareInitialExactUnsent(using observer: TargetBoundNativeObservation) throws -> TargetBoundNativeObservation.Request {
+        try validate(); try authority.validate()
+        guard case .initialExactUnsent(let purpose) = authority.windowRequirement else {
+            throw NativeExactUnsentFailure.wrongTask
+        }
+        try purpose.validateCurrent(scope: scope)
+        let request = try observer.prepareInitialExactUnsent(purpose)
+        try purpose.validateCurrent(scope: scope); try authority.validate(); try validate()
+        return request
+    }
+
     func open(policy: NativeOrdinaryVisualPolicy) async throws -> NativeVisualTaskConnection {
+        guard scope.executionKind == .inference else { throw NativeExactUnsentFailure.directAdapterUnavailable }
         try validate()
         // A pinned source from a previous owner cannot be imported by creating
         // another controller or selecting a new/lookalike app window.
         if case .pinned = authority.windowRequirement {
             throw NativeVisualTaskFailure.unavailableDependency("a transferable original-window source for this continuation")
         }
+        // This purpose must never fall through into an app-scoped model/read/
+        // mutation route before the closed direct adapter is implemented.
+        if case .initialExactUnsent = authority.windowRequirement { throw NativeExactUnsentFailure.directAdapterUnavailable }
         let opened = try await platform.open(policy, { [weak self] in
             guard let self else { return false }
             return (try? self.validate()) != nil
@@ -85,35 +120,16 @@ import Foundation
                     let observation = try await controller.refreshOriginalForRead(original)
                     try validate(); try previous.validateOriginalSource()
                     return try retain(observation, controller: controller)
-                }, refreshForInputPlanning: { [self] previous in
+                }, refreshForInputPlanning: { [self] previous, includesTextInsertion in
                     let original = try source(previous, controller: controller)
                     let target = try policyTarget(previous.sourceID)
                     // Metadata/privacy precedes all focused labels/content.
                     // This callback is an existing positive live task grant;
                     // a model offering key/text wrappers cannot manufacture it.
-                    let metadata = try authority.inspect(target)
-                    switch metadata.context {
-                    case .protected: throw NativeOrdinaryWindowPolicySource.Failure.protectedContext
-                    case .dedicated: throw NativeOrdinaryWindowPolicySource.Failure.dedicatedContext
-                    case .ordinary, .modalReviewRequired: break
-                    }
-                    let modal: Bool
-                    if case .modalReviewRequired = metadata.context { modal = true } else { modal = false }
-                    if metadata.coverage != .complete || modal {
-                        // An unknown modal does not acquire field contents.
-                        // Pointer planning may still use existing read scope;
-                        // actual input requires the exact local review.
-                        let observation = try await controller.refreshOriginalForRead(original)
-                        try validate()
-                        let current = try authority.inspect(target)
-                        guard current.digest == metadata.digest else { throw NativeOrdinaryWindowPolicySource.Failure.changedContext }
-                        return try retain(observation, controller: controller)
-                    }
                     let grant = try authority.privateEditorPlanningGrant(for: target)
-                    let observation = try await controller.refreshOriginalForInputPlanning(original,
+                    let observation = try await controller.refreshOriginalForInputPlanning(original, includesTextInsertion: includesTextInsertion,
                         authorizeInputPlanning: grant)
                     try validate(); try grant()
-                    try controller.validatePlanningObservation(observation)
                     return try retain(observation, controller: controller)
                 }, prepareForReview: { [self] action, identity, source, frame in
                     try validate(); try source.validateOriginalSource()
@@ -135,7 +151,31 @@ import Foundation
                     }
                 }, closeOwnedClient: { [self] in
                     closed = true; policyTargets.removeAll(); originals.removeAll()
+                    initialMetadata.revoke()
                     await opened.close()
+                }, observeForControl: { [self] admission in
+                    try validate(); try authority.admit(admission)
+                    guard let observeControl = platform.observeControl else {
+                        throw NativeVisualTaskFailure.unavailableDependency("pre-capture original-window control policy")
+                    }
+                    let observation = try await observeControl(controller, admission, { [self] target in
+                        let facts = try inspectInitialControlReadPrivacy(target)
+                        try facts.admitControlReadCapture()
+                    })
+                    try validate(); try admission.validate()
+                    guard observation.snapshot.application == admission.application else { throw NativeVisualTaskFailure.staleTask }
+                    return try retain(observation, controller: controller)
+                }, refreshOriginalForControl: { [self] previous in
+                    let original = try source(previous, controller: controller)
+                    let target = try policyTarget(previous.sourceID)
+                    let before = try inspectControlReadPrivacy(target)
+                    try before.admitControlReadCapture()
+                    let observation = try await controller.refreshOriginalForRead(original)
+                    try validate(); try previous.validateOriginalSource()
+                    let after = try inspectControlReadPrivacy(target)
+                    try after.admitControlReadCapture()
+                    guard before.digest == after.digest else { throw NativeOrdinaryWindowPolicySource.Failure.changedContext }
+                    return try retain(observation, controller: controller)
                 })
         } catch {
             controller.stop(); await controller.drain(); await opened.close(); throw error
@@ -160,6 +200,51 @@ import Foundation
             }, validateForInput: { [self] in try validate(); try controller.validateForInput(original) })
     }
 
+    /// Reuses only actual task/read authority for control-derived capture.
+    /// Input planning/dispatch continue to require their independent input grant.
+    private func inspectControlReadPrivacy(_ target: NativeOriginalPolicyTarget) throws -> NativeOrdinaryWindowPolicySource.Facts {
+        try validate(); try target.validateSource()
+        return try target.inspectMetadata(authorizeMetadata: { [self] in
+            // NativeOriginalPolicyTarget's metadata fence brackets this callback
+            // with the exact original-source validation before and after it.
+            try authorizeControlReadMetadataScope(target.application)
+        }, metadataScope: .controlRead(self, application: target.application))
+    }
+
+    /// Only this first control pre-capture callback can acquire a stable pair.
+    /// The retained success/error callback re-enters through the spent owner
+    /// and uses strict inspection, even after image/wrapper/source-ID changes.
+    private func inspectInitialControlReadPrivacy(_ target: NativeOriginalPolicyTarget) throws -> NativeOrdinaryWindowPolicySource.Facts {
+        try initialMetadata.withSource(target, sourceID: target.sourceID, owner: scope,
+            sameOriginalWindow: { $0.sharesOriginalWindow(with: $1) }, validate: { [self] in
+                try validate(); try target.validateSource()
+            }, initial: { [self] acquisition, validateOwner in
+                try target.inspectInitialMetadata(using: acquisition, validateInitialOwnership: validateOwner,
+                    authorizeMetadata: { [self] in try authorizeControlReadMetadataScope(target.application) },
+                    metadataScope: .controlRead(self, application: target.application))
+            }, strict: { [self] in try inspectControlReadPrivacy(target) })
+    }
+
+    /// Scope only, used solely inside the retained policy target's metadata
+    /// bracket. No full-window/source/privacy validator is replaced or cached.
+    func authorizeControlReadMetadataScope(_ identity: DesktopApplicationIdentity) throws {
+        try validate()
+        let application = try scope.admitRead(identity.bundleID)
+        guard application.application == identity else { throw NativeVisualTaskFailure.staleTask }
+        try application.validate(); try validate()
+    }
+
+    /// Only the typed metadata factory uses these. The actual scope stays here;
+    /// callers cannot pair this owner with a different task's scope.
+    func bindControlReadMetadataApplication(_ identity: DesktopApplicationIdentity) throws -> NativeWindowTaskAdapter.ApplicationAdmission {
+        try validate()
+        let application = try scope.admitRead(identity.bundleID)
+        guard application.application == identity else { throw NativeVisualTaskFailure.staleTask }
+        try application.validate(); try validate()
+        return application
+    }
+    func validateControlReadMetadataOwner() throws { try validate() }
+
     private func source(_ previous: NativeVisualTaskSource,
                         controller: NativeControlSession) throws -> NativeControlSession.OriginalSource {
         try validate(); try previous.validateOriginalSource()
@@ -169,6 +254,7 @@ import Foundation
     }
     private func validate() throws {
         try scope.validate()
+        try validateAvailability()
         guard !closed else { throw NativeVisualTaskFailure.stopped }
     }
 }

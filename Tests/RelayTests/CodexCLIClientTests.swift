@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import Relay
 
-@MainActor struct CodexCLIClientTests {
+@MainActor @Suite(.serialized) struct CodexCLIClientTests {
     private let tool = ToolDefinition(name: "launch_app", description: "Review opening an application", parameters: .object([
         "type": .string("object"),
         "properties": .object(["name": .object(["type": .string("string")])]),
@@ -65,6 +65,34 @@ import Testing
         #expect(!args.joined(separator: " ").contains(marker))
         #expect(args.contains("--ephemeral"))
         #expect(args.contains("--ignore-user-config"))
+    }
+
+    @Test func ambiguousToolDefinitionsAreRejectedAcrossPromptSchemaAndResponseParsing() throws {
+        let conflicting = ToolDefinition(name: tool.name, description: "A different action under the same name", parameters: .object([
+            "type": .string("object"),
+            "properties": .object(["url": .object(["type": .string("string")])]),
+            "required": .array([.string("url")])
+        ]))
+        for definitions in [[tool, tool], [tool, conflicting]] {
+            #expect(throws: CodexCLIError.invalidOutput) {
+                try CodexCLIClient.outputSchema(tools: definitions)
+            }
+            #expect(throws: CodexCLIError.invalidOutput) {
+                try CodexCLIClient.prompt(messages: [.init(role: "user", content: "Owned request")], tools: definitions)
+            }
+            #expect(throws: CodexCLIError.invalidOutput) {
+                try CodexCLIClient.parseEvents(events(name: tool.name, arguments: #"{"name":"Calendar"}"#), tools: definitions)
+            }
+        }
+    }
+
+    @Test(arguments: ["", "bad name", "bad/name", "café", String(repeating: "a", count: 65)])
+    func invalidToolNamesNeverReachThePromptOrSchema(name: String) throws {
+        let invalid = ToolDefinition(name: name, description: tool.description, parameters: tool.parameters)
+        #expect(throws: CodexCLIError.invalidOutput) { try CodexCLIClient.outputSchema(tools: [invalid]) }
+        #expect(throws: CodexCLIError.invalidOutput) {
+            try CodexCLIClient.prompt(messages: [.init(role: "user", content: "Owned request")], tools: [invalid])
+        }
     }
 
     @Test func pinsAPlanningCatalogWithNoNativeToolMetadata() throws {
@@ -207,14 +235,17 @@ import Testing
             try await CodexCLIProcess.run(executable: binary, arguments: ["10"], environment: [:], directory: directory, input: nil,
                                           timeout: 0.06, limit: 1024)
         }
+        let timeoutReturned = clock.now
         let task = Task {
             try await CodexCLIProcess.run(executable: binary, arguments: ["10"], environment: [:], directory: directory, input: nil,
                                           timeout: 8, limit: 1024)
         }
         try? await Task.sleep(for: .milliseconds(60))
+        let cancellationRequested = clock.now
         task.cancel()
         await #expect(throws: CancellationError.self) { try await task.value }
-        #expect(start.duration(to: clock.now) < .seconds(4))
+        #expect(start.duration(to: clock.now) < .seconds(4),
+            "Codex strict4s: timeout_return_ms=\(WorkerSettlementDiagnostics.milliseconds(start.duration(to: timeoutReturned))), cancel_request_ms=\(WorkerSettlementDiagnostics.milliseconds(start.duration(to: cancellationRequested))), cancel_settle_ms=\(WorkerSettlementDiagnostics.milliseconds(cancellationRequested.duration(to: clock.now)))")
     }
 
     private func events(content: String = "", name: String = "", arguments: String = "{}", prefix: String = "", complete: Bool = true) -> Data {

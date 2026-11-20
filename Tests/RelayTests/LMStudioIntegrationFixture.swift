@@ -2,6 +2,12 @@ import Foundation
 @preconcurrency import LiteRTLM
 @testable import Relay
 
+/// A failed inert fixture handshake is distinct from production lease busy.
+/// Closed technical timing only; no request, prompt, URL or provider body.
+nonisolated enum InferenceFixtureWaitFailure: Error {
+    case deadlineExpired(budgetMilliseconds: Int64, elapsedMilliseconds: Int64, polls: Int)
+}
+
 // Inert protocol peer. It is never bound to a socket and never owns a model.
 actor LMStudioIntegrationFixture {
     enum Mode: Sendable, Equatable { case answer, calculate }
@@ -72,7 +78,9 @@ actor LMStudioIntegrationFixture {
 }
 
 @MainActor func awaitLMStudioCondition(_ condition: () async -> Bool) async throws {
-    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-    while ContinuousClock.now < deadline { if await condition() { return }; try await Task.sleep(for: .milliseconds(1)) }
-    throw LocalInferenceFailure.busy
+    let start = ContinuousClock.now, deadline = start.advanced(by: .seconds(3))
+    var polls = 0
+    while ContinuousClock.now < deadline { polls += 1; if await condition() { return }; try await Task.sleep(for: .milliseconds(1)) }
+    throw InferenceFixtureWaitFailure.deadlineExpired(budgetMilliseconds: 3_000,
+        elapsedMilliseconds: WorkerSettlementDiagnostics.milliseconds(start.duration(to: .now)), polls: polls)
 }

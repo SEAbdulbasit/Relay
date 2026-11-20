@@ -18,14 +18,14 @@ struct ProductionContextCapacityTests {
         for index in 0..<20 {
             store.draft = "Earlier completed synthetic request \(index)"
             store.send()
-            for _ in 0..<2_000 where store.isRunning { await Task.yield() }
+            await store.waitForConversationTaskToSettle()
             try #require(!store.isRunning && store.errorMessage == nil)
         }
         let priorConversation = store.messages.map(\.text)
         try #require(priorConversation.reduce(0) { $0 + $1.utf8.count } > 110_000)
         store.draft = exactCurrent
         store.send()
-        for _ in 0..<2_000 where store.isRunning { await Task.yield() }
+        await store.waitForConversationTaskToSettle()
         #expect(turns == 21 && !store.isRunning && store.errorMessage == nil)
         #expect(finalInput.contains { $0.role == "user" && $0.content.utf8.elementsEqual(exactCurrent.utf8) })
         #expect(Array(store.messages.prefix(priorConversation.count)).map(\.text) == priorConversation,
@@ -50,8 +50,13 @@ struct ProductionContextCapacityTests {
             let systemBytes = messages.filter { $0.role == "system" }.reduce(0) { $0 + $1.content.utf8.count }
             let schemaBytes = try JSONEncoder().encode(tools).count
             let historyBytes = ContextWindow.bytes(messages.filter { $0.role != "system" })
+            #expect(LocalModelClient.maximumContextBytes - systemBytes - schemaBytes >= 6_000,
+                "The complete production catalog must leave room for the full fresh native state and protocol, including newly advertised tools.")
             print("Production native context budget: turn=\(turns), systemBytes=\(systemBytes), schemaBytes=\(schemaBytes), historyBytes=\(historyBytes), availableHistoryBytes=\(LocalModelClient.maximumContextBytes - systemBytes - schemaBytes), freshSummaryBytes=\(snapshot.utf8.count).")
-            _ = try LocalModelClient.prepareContext(messages: messages, tools: tools)
+            let embedded = try LocalModelClient.prepareNativeTextContext(messages: messages, tools: tools)
+            #expect(embedded.availableHistoryBytes >= 6_000,
+                "Actual native schemas plus protocol must leave the same full fresh-state headroom.")
+            print("Actual embedded schema budget: nativeSchemaBytes=\(embedded.actualNativeSchemaBytes), schemaBytes=\(embedded.schemaBytes), protocolSystemBytes=\(embedded.systemPrompt.utf8.count), availableHistoryBytes=\(embedded.availableHistoryBytes), totalBytes=\(embedded.countedBytes).")
             if turns == 1 { return ModelReply(content: "", toolCalls: [ToolCall(name: "observe_app", arguments: ["bundle_id": .string(AccessibilityCheckRunner.fixtureBundleID)])]) }
             let message = try #require(messages.last(where: { $0.role == "tool" && $0.toolName == "observe_app" }))
             let result = try JSONDecoder().decode(ToolResult.self, from: Data(message.content.utf8))
@@ -65,7 +70,7 @@ struct ProductionContextCapacityTests {
         store.configuration = ModelConfiguration(modelPath: "/synthetic/context-capacity.litertlm")
         store.draft = goal
         store.send()
-        for _ in 0..<2_000 where store.isRunning { await Task.yield() }
+        await store.waitForConversationTaskToSettle()
         #expect(!store.isRunning && store.errorMessage == nil, Comment(rawValue: store.errorMessage ?? "No Store error"))
         #expect(turns == 2)
     }

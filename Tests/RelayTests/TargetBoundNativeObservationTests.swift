@@ -8,6 +8,53 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct TargetBoundNativeObservationTests {
+    private func requiredWindowSlots() throws -> [AnyObject] {
+        var point = CGPoint(x: -21.5, y: 43), size = CGSize(width: 612, height: 410.5)
+        return ["AXWindow" as NSString, "Cafe\u{0301} 🧪" as NSString, kCFBooleanFalse,
+                try #require(AXValueCreate(.cgPoint, &point)), try #require(AXValueCreate(.cgSize, &size))]
+    }
+
+    @Test func requiredWindowBatchDecodesExactGeometryAndTitleBytes() throws {
+        #expect(TargetBoundNativeObservation.requiredWindowInfoAttributes == [kAXRoleAttribute, kAXTitleAttribute,
+            kAXMinimizedAttribute, kAXPositionAttribute, kAXSizeAttribute])
+        let slots = try requiredWindowSlots()
+        let value = try TargetBoundNativeObservation.decodeRequiredWindowInfo(status: .success, values: slots as CFArray)
+        #expect(value.role == "AXWindow")
+        #expect(value.title.utf16.elementsEqual("Cafe\u{0301} 🧪".utf16))
+        #expect(!value.title.utf16.elementsEqual("Café 🧪".utf16))
+        #expect(value.minimized == false)
+        #expect(value.point == CGPoint(x: -21.5, y: 43))
+        #expect(value.dimensions == CGSize(width: 612, height: 410.5))
+    }
+
+    @Test func requiredWindowBatchRefusesTopLevelErrorsAndEveryMalformedRequiredSlot() throws {
+        let slots = try requiredWindowSlots()
+        let expected = TargetBoundNativeObservation.Failure.unavailableWindow
+        for (status, values) in [(.cannotComplete, slots as CFArray), (.success, nil),
+                                 (.success, "wrong shape" as CFString), (.success, Array(slots.dropLast()) as CFArray),
+                                 (.success, (slots + ["extra" as NSString]) as CFArray)] as [(AXError, CFTypeRef?)] {
+            #expect(throws: expected) {
+                _ = try TargetBoundNativeObservation.decodeRequiredWindowInfo(status: status, values: values)
+            }
+        }
+        var error = AXError.noValue
+        let boxedError = try #require(AXValueCreate(.axError, &error))
+        for index in slots.indices {
+            for invalid in [kCFNull as AnyObject, boxedError, NSNumber(value: 17)] {
+                var input = slots
+                input[index] = invalid
+                #expect(throws: expected) {
+                    _ = try TargetBoundNativeObservation.decodeRequiredWindowInfo(status: .success, values: input as CFArray)
+                }
+            }
+        }
+        var wrongGeometry = slots
+        wrongGeometry.swapAt(3, 4)
+        #expect(throws: expected) {
+            _ = try TargetBoundNativeObservation.decodeRequiredWindowInfo(status: .success, values: wrongGeometry as CFArray)
+        }
+    }
+
     @Test func validatesNativePathBundlePIDAndQuotedWindowHeader() throws {
         let header = try TargetBoundNativeObservation.parseHeader(TargetObservationFixture.text())
         #expect(header.path == "/Applications/Synthetic Fixture.app")

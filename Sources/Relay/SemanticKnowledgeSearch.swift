@@ -223,21 +223,24 @@ actor SemanticKnowledgeSearch {
             (partial ? " Coverage is partial; lexical search should retain the rest of the authorized index." : "")
     }
 
-    private struct Chunk {
+    struct Chunk: Equatable {
         let path: String
         let hash: String
         let index: Int
         let text: String
         let coverageNote: String?
     }
-    private struct Batch { let chunks: [Chunk]; let considered: Int; let partial: Bool }
-    private static func makeChunks(_ records: [KnowledgeRecord]) -> Batch {
+    struct Batch: Equatable { let chunks: [Chunk]; let considered: Int; let partial: Bool }
+    static func makeChunks(_ records: [KnowledgeRecord]) -> Batch {
         var groups: [[Chunk]] = []
         var paths = Set<String>()
         var partial = records.count > maximumSources
         for record in records.prefix(maximumSources) {
-            guard record.sourcePath.hasPrefix("/"), record.sourcePath.utf8.count <= 4_096, !record.sourcePath.contains("\0"),
-                  record.sourcePath.split(separator: "/", omittingEmptySubsequences: false).dropFirst().allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
+            let isFilesystemPath = record.sourcePath.hasPrefix("/")
+                && record.sourcePath.split(separator: "/", omittingEmptySubsequences: false).dropFirst().allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." })
+            let isLiveURI = record.sourcePath.hasPrefix("relay-live://")
+                && record.sourcePath.dropFirst("relay-live://".count).split(separator: "/", omittingEmptySubsequences: false).allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." })
+            guard (isFilesystemPath || isLiveURI), record.sourcePath.utf8.count <= 4_096, !record.sourcePath.contains("\0"),
                   !record.evidenceFingerprint.isEmpty, record.evidenceFingerprint.utf8.count <= 128, !record.evidenceFingerprint.contains("\0"),
                   record.text.utf8.count <= 65_536, paths.insert(record.sourcePath).inserted else { partial = true; continue }
             var cursor = record.text.startIndex

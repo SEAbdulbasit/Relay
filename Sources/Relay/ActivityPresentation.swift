@@ -7,6 +7,7 @@ nonisolated struct ActivityPresentation {
     let icon: String
     let verified: Bool
     let failed: Bool
+    let needsAttention: Bool
 
     init(name: String, status rawStatus: String) {
         let labels = [
@@ -29,8 +30,11 @@ nonisolated struct ActivityPresentation {
         let value = rawStatus.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         verified = value == "verified"
         failed = value.hasPrefix("failed")
+        needsAttention = failed || value == "effect uncertain" || value == "needs input"
         if verified { status = "Result checked"; icon = "checkmark.circle.fill" }
         else if failed { status = "Couldn’t complete"; icon = "exclamationmark.circle" }
+        else if value == "effect uncertain" { status = "Effect uncertain · inspect details"; icon = "exclamationmark.triangle" }
+        else if value == "stopping" { status = "Stopping · waiting for current work"; icon = "stop.circle" }
         else if value == "needs input" { status = "Needs your input"; icon = "hand.raised" }
         else if value == "finished" { status = "Response finished"; icon = "bubble.left" }
         else if value == "requested" { status = "Requested"; icon = "arrow.turn.down.right" }
@@ -38,5 +42,24 @@ nonisolated struct ActivityPresentation {
         else if value == "observed" { status = "Context checked"; icon = "eye" }
         else if value == "stopped" || value == "cancelled" { status = "Stopped"; icon = "stop.circle" }
         else { status = rawStatus; icon = "circle" }
+    }
+}
+
+/// A run ending is not evidence that every proposed step was performed.
+/// Keep the phase wording independent of provider and tool capabilities.
+nonisolated struct WorkspaceTaskPresentation {
+    let status: String
+
+    init(phase: RunPhase) {
+        status = switch phase {
+        case .idle: "Ready for a request"
+        case .thinking: "Planning the next step…"
+        case .acting: "Using tools for your request…"
+        case .awaitingReview: "Waiting for your review"
+        case .stopped: "Task stopped"
+        case .failed: "Task couldn’t finish"
+        case .completed: "Run finished · inspect results below"
+        case .needsInput: "Needs your input"
+        }
     }
 }

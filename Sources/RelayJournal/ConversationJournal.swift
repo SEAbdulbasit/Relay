@@ -1,6 +1,11 @@
+import Dispatch
 import Foundation
 
 public actor ConversationJournal {
+    private let executorQueue = DispatchSerialQueue(label: "RelayJournal.ConversationJournal", qos: .userInitiated)
+    public nonisolated var unownedExecutor: UnownedSerialExecutor {
+        executorQueue.asUnownedSerialExecutor()
+    }
     public nonisolated let producerEpoch = UUID()
     private var database: JournalSQLite?
     private var files: JournalFiles?
@@ -23,13 +28,17 @@ public actor ConversationJournal {
     func atNextBoundary(_ boundary: JournalTestBoundary, _ hook: @escaping @Sendable () -> Void) { nextBoundaryHook = (boundary, hook) }
     #endif
 
-    @concurrent public static func open(directory: URL, initialization: JournalInitialization = .ready, limits: JournalLimits = .init()) async throws -> ConversationJournal {
-        try ConversationJournal(directory: directory, initialization: initialization, limits: limits)
+    public static func open(directory: URL, initialization: JournalInitialization = .ready, limits: JournalLimits = .init()) async throws -> ConversationJournal {
+        let journal = try ConversationJournal(limits: limits)
+        try await journal.openStorage(directory: directory, initialization: initialization)
+        return journal
     }
-    private init(directory: URL, initialization: JournalInitialization, limits: JournalLimits) throws {
+    private init(limits: JournalLimits) throws {
         guard (65_536...128 * 1024 * 1024).contains(limits.databaseBytes), (4096...16 * 1024 * 1024).contains(limits.walThresholdBytes),
               (0...1000).contains(limits.busyMilliseconds) else { throw JournalError.invalidEvent }
         self.limits = limits
+    }
+    private func openStorage(directory: URL, initialization: JournalInitialization) throws {
         let files = try JournalFiles(root: directory)
         let isNew = try files.prepareNewOrValidate { path in
             let snapshot = try JournalSQLite(path: path, busyMilliseconds: limits.busyMilliseconds)
@@ -108,25 +117,48 @@ public actor ConversationJournal {
         if requireReady, try !isReady() { throw JournalError.notReady }
     }
     func injectFault(_ fault: JournalFault) { nextFault = fault }
-    private func transaction<T>(scope expected: JournalScope, requireReady: Bool = true, honorCancellation: Bool = true, _ operation: (JournalSQLite) throws -> T) throws -> T {
+    private func checkpointIfNeeded(_ database: JournalSQLite) throws {
+        guard let files, try files.walBytes() >= limits.walThresholdBytes else { return }
+        if let truncated = try? database.query("PRAGMA wal_checkpoint(TRUNCATE)").first,
+           truncated[0].integer == 0, truncated[1].integer == truncated[2].integer {
+            return
+        }
+        _ = try database.query("PRAGMA wal_checkpoint(PASSIVE)")
+        // A complete checkpoint permits WAL reuse even when the allocated file remains large.
+        let status = try database.query("PRAGMA wal_checkpoint(PASSIVE)").first!
+        guard status[0].integer == 0, status[1].integer == status[2].integer else { throw JournalError.tooLarge }
+    }
+    private func transaction<T>(scope expected: JournalScope, requireReady: Bool = true, honorCancellation: Bool = true,
+                                requiringNewUserEvent: JournalOpaqueID? = nil, _ operation: (JournalSQLite) throws -> T) throws -> T {
         let database = try db()
         if honorCancellation, Task.isCancelled { throw JournalError.cancelled }
         try files?.validateLiveFiles()
-        if let files, try files.walBytes() >= limits.walThresholdBytes {
-            _ = try database.query("PRAGMA wal_checkpoint(PASSIVE)")
-            // A complete checkpoint permits WAL reuse even when the allocated file remains large.
-            let status = try database.query("PRAGMA wal_checkpoint(PASSIVE)").first!
-            guard status[0].integer == 0, status[1].integer == status[2].integer else { throw JournalError.tooLarge }
-        }
-        let fault = nextFault; nextFault = nil
+        try checkpointIfNeeded(database)
+        // Ordinary transactions retain their existing eager fault/hook capture.
+        // A required-new user must pass its atomic precondition first; a refused
+        // old row must not consume an after-COMMIT acknowledgment fault or hook.
+        let deferFaultCapture = requiringNewUserEvent != nil
+        var fault = deferFaultCapture ? nil : nextFault
+        if !deferFaultCapture { nextFault = nil }
         #if DEBUG
-        let boundaryHook = nextBoundaryHook; nextBoundaryHook = nil
+        var boundaryHook = deferFaultCapture ? nil : nextBoundaryHook
+        if !deferFaultCapture { nextBoundaryHook = nil }
         #endif
         return try database.withBudget(honorCancellation: honorCancellation) {
             try database.execute("BEGIN IMMEDIATE")
             var committed = false
             do {
                 try check(expected, requireReady: requireReady)
+                if let required = requiringNewUserEvent {
+                    guard try database.query("SELECT 1 FROM events WHERE generation=? AND event_id=? LIMIT 1",
+                        [.blob(uuidBytes(expected.generation)), .blob(required.bytes)], maximumRows: 1).isEmpty else {
+                        throw JournalError.conflictingID
+                    }
+                    fault = nextFault; nextFault = nil
+                    #if DEBUG
+                    boundaryHook = nextBoundaryHook; nextBoundaryHook = nil
+                    #endif
+                }
                 let result = try operation(database)
                 #if DEBUG
                 if case .beforeCommit? = boundaryHook?.0 { boundaryHook?.1() }
@@ -265,14 +297,22 @@ public actor ConversationJournal {
         }
         return JournalAppend(record: JournalRecord(scope: expected, sequence: sequence, event: event, digest: digest), inserted: true)
     }
-    public func appendBatch(_ events: [JournalEvent], expectedScope: JournalScope) throws -> [JournalAppend] {
-        try append(events, expectedScope: expectedScope)
+    public func appendBatch(_ events: [JournalEvent], expectedScope: JournalScope,
+                            requiringNewUserEvent: JournalOpaqueID? = nil) throws -> [JournalAppend] {
+        try append(events, expectedScope: expectedScope, requiringNewUserEvent: requiringNewUserEvent)
     }
-    private func append(_ events: [JournalEvent], expectedScope: JournalScope, legacy: Bool = false, recovery: Bool = false, honorCancellation: Bool = true) throws -> [JournalAppend] {
+    private func append(_ events: [JournalEvent], expectedScope: JournalScope, legacy: Bool = false, recovery: Bool = false,
+                        honorCancellation: Bool = true, requiringNewUserEvent: JournalOpaqueID? = nil) throws -> [JournalAppend] {
         guard !events.isEmpty, events.count <= 32 else { throw JournalError.tooLarge }
         let encoded = try events.map(journalEncoded)
         guard encoded.reduce(0, { $0 + $1.count }) <= 512 * 1024 else { throw JournalError.tooLarge }
-        return try transaction(scope: expectedScope, requireReady: !legacy, honorCancellation: honorCancellation) { _ in
+        if let required = requiringNewUserEvent {
+            let selected = events.filter { $0.id.bytes == required.bytes }
+            guard selected.count == 1, let event = selected.first, case let .user(text) = event.payload,
+                  text.origin == .user else { throw JournalError.invalidEvent }
+        }
+        return try transaction(scope: expectedScope, requireReady: !legacy, honorCancellation: honorCancellation,
+                               requiringNewUserEvent: requiringNewUserEvent) { _ in
             try zip(events, encoded).map { try insert($0.0, bytes: $0.1, expected: expectedScope, legacy: legacy, recovery: recovery) }
         }
     }
@@ -313,6 +353,23 @@ public actor ConversationJournal {
     public func finishTask(_ event: JournalEvent, expectedScope: JournalScope) throws -> JournalAppend {
         guard case .finished = event.payload else { throw JournalError.invalidEvent }
         return try append([event], expectedScope: expectedScope, honorCancellation: false)[0]
+    }
+    /// One scoped indexed record lookup. Reuses the same payload/hash/event/
+    /// relationship validation as paging; never reconstructs a cursor or writes.
+    public func record(sequence: Int64, expectedScope: JournalScope) throws -> JournalRecord? {
+        try check(expectedScope)
+        guard sequence > 0 else { throw JournalError.invalidEvent }
+        let database = try db()
+        return try database.withBudget {
+            // Inspect length before materializing a potentially corrupt blob,
+            // exactly as page does. Both lookups use the sequence primary key.
+            guard let size = try database.query("SELECT length(payload) FROM events WHERE sequence=?",
+                [.integer(sequence)], maximumRows: 1).first else { return nil }
+            guard let length = size.first?.integer, length > 0, length <= 262_144 else { throw JournalError.corrupt }
+            guard let row = try database.query("SELECT \(Self.columns) FROM events WHERE sequence=?",
+                [.integer(sequence)], maximumRows: 1).first else { throw JournalError.corrupt }
+            return try record(row, expected: expectedScope)
+        }
     }
     public func page(after cursor: JournalCursor? = nil, limit: Int = 100, byteBudget: Int = 1_048_576, expectedScope: JournalScope) throws -> JournalPage {
         try check(expectedScope)

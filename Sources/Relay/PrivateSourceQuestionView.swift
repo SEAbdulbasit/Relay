@@ -20,16 +20,35 @@ struct PrivateSourceQuestionView: View {
                 }
                 .disabled(work != nil)
                 TextField("Ask about this selection", text: $question, axis: .vertical)
-                    .textFieldStyle(.roundedBorder).lineLimit(2...4).disabled(work != nil)
+                    .textFieldStyle(.plain)
+                    .relayTextField()
+                    .lineLimit(2...4)
+                    .disabled(work != nil)
                 HStack {
                     Button("Answer locally") { ask() }.buttonStyle(RelayPrimaryButtonStyle())
                         .disabled(store.isRunning || !store.actionsReady || question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                   || store.nativeSources.items(for: kind).isEmpty || work != nil)
-                    if let work { Button("Stop") { work.cancel() } }
+                    if let work {
+                        Button("Stop") { work.cancel() }
+                            .buttonStyle(RelaySecondaryButtonStyle())
+                    }
                 }
                 if !store.actionsReady { Text("Load and check a local model first.").font(.relayCaption).foregroundStyle(RelayTheme.muted) }
                 if let error { Text(error).font(.relayCaption).foregroundStyle(RelayTheme.muted) }
-                if let answer { Text(answer).textSelection(.enabled).accessibilityIdentifier("nativeSources.privateAnswer") }
+                if let answer {
+                    Text(answer)
+                        .font(.relayBody)
+                        .foregroundStyle(RelayColors.textPrimary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
+                        )
+                        .accessibilityIdentifier("nativeSources.privateAnswer")
+                }
             }
             .padding(.vertical, 8)
         }

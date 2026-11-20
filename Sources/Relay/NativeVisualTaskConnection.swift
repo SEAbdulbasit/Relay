@@ -1,5 +1,92 @@
 import Foundation
 
+extension NativeVisualTaskConnection {
+    /// Concrete direct owner, separate from the image/model visual adapter.
+    /// There are no throwing placeholder visual callbacks on this path.
+    @MainActor final class ExactUnsentConnection {
+        private let controller: NativeControlSession
+        private let client: OwnedNativeComputerUseClient
+        private let scope: NativeVisualTaskScope
+        private let purpose: NativeExactUnsentPurpose
+        private let authority: NativeLocalTaskInputAuthority
+        private var closing: Task<Void, Never>?
+        private var closed = false
+        fileprivate init(controller: NativeControlSession, client: OwnedNativeComputerUseClient,
+                         scope: NativeVisualTaskScope, purpose: NativeExactUnsentPurpose,
+                         authority: NativeLocalTaskInputAuthority) {
+            self.controller = controller; self.client = client; self.scope = scope
+            self.purpose = purpose; self.authority = authority
+        }
+        private func validate() throws {
+            guard !closed else { throw NativeVisualTaskFailure.stopped }
+            try scope.validate(); try authority.validate(); try purpose.validateCurrent(scope: scope)
+        }
+        func prepare() async throws -> NativeControlSession.ExactUnsentPreparation {
+            try validate()
+            let source = try await controller.prepareExactUnsent(purpose: purpose, authority: authority)
+            try validate(); return source
+        }
+        func restoreFocus(_ source: NativeControlSession.ExactUnsentPreparation,
+                          identity: NativeExactUnsentOperation.Identity,
+                          dispatch: NativeExactUnsentOperation.DispatchSeal) async throws -> NativeControlSession.ExactUnsentEffect {
+            try validate()
+            // Deliberately no post-effect currentness throw. Actual facts are
+            // saved for the original run even if Stop follows an admission.
+            return try await controller.restoreExactUnsentFocus(source, identity: identity, dispatch: dispatch)
+        }
+        func prepareInsertion(_ source: NativeControlSession.ExactUnsentPreparation,
+                              focus: NativeControlSession.ExactUnsentEffect,
+                              saved: AssistantConversationHistory.NativeTextEffectSettlement) async throws {
+            try validate(); try await controller.prepareExactUnsentInsertion(source, focus: focus, saved: saved)
+            try validate()
+        }
+        func insert(_ source: NativeControlSession.ExactUnsentPreparation,
+                    identity: NativeExactUnsentOperation.Identity,
+                    dispatch: NativeExactUnsentOperation.DispatchSeal) async throws -> NativeControlSession.ExactUnsentEffect {
+            try validate()
+            return try await controller.executeExactUnsentInsertion(source, identity: identity, dispatch: dispatch)
+        }
+        func verify(_ source: NativeControlSession.ExactUnsentPreparation,
+                    focus: NativeControlSession.ExactUnsentEffect, insertion: NativeControlSession.ExactUnsentEffect,
+                    focusSaved: AssistantConversationHistory.NativeTextEffectSettlement,
+                    insertionSaved: AssistantConversationHistory.NativeTextEffectSettlement,
+                    publication: NativeExactUnsentOperation.CompletionTransport) async throws -> NativeControlSession.ExactUnsentVerification {
+            try validate()
+            let actual = try await controller.verifyExactUnsent(source, focus: focus, insertion: insertion,
+                focusSaved: focusSaved, insertionSaved: insertionSaved, publication: publication)
+            return actual
+        }
+        func stop() {
+            guard !closed else { return }
+            closed = true; controller.stop()
+            let controller = controller, client = client
+            closing = Task { await controller.drain(); await client.close() }
+        }
+        func drain() async {
+            stop()
+            if let closing { await closing.value }
+        }
+    }
+
+    @MainActor static func openExactUnsent(scope: NativeVisualTaskScope, purpose: NativeExactUnsentPurpose,
+        authority: NativeLocalTaskInputAuthority, readAudit: NativeReadAudit? = nil,
+        processStarted: (@Sendable (OwnedNativeComputerUseClient.ProcessStarted) throws -> Void)? = nil) async throws -> ExactUnsentConnection {
+        guard case .directExactUnsent = scope.executionKind, authority.scope === scope,
+              case .initialExactUnsent(let adopted) = authority.windowRequirement, adopted === purpose else {
+            throw NativeVisualTaskFailure.staleTask
+        }
+        try scope.validate(); try authority.validate(); try purpose.validateCurrent(scope: scope)
+        let runtime = try OwnedNativeComputerUseClient.Runtime.discover()
+        let client = try await OwnedNativeComputerUseClient.open(runtime: runtime, readAudit: readAudit, processStarted: processStarted)
+        do {
+            try scope.validate(); try authority.validate(); try purpose.validateCurrent(scope: scope)
+            let controller = NativeControlSession(client: client, directExactUnsentAuthority: authority, readAudit: readAudit)
+            return ExactUnsentConnection(controller: controller, client: client, scope: scope,
+                purpose: purpose, authority: authority)
+        } catch { await client.close(); throw error }
+    }
+}
+
 /// Original-target/source facts are separate from foreground input admission.
 /// The frozen controller cannot yet supply every field for background reads;
 /// production availability remains false until that adapter is qualified.
@@ -17,10 +104,14 @@ import Foundation
     let id = UUID()
     let controller: NativeControlSession
     let observeRead: @MainActor (NativeWindowTaskAdapter.ApplicationAdmission) async throws -> NativeVisualTaskSource
+    /// Control-only first/read-refresh image admission. Missing callbacks refuse;
+    /// a general read capability cannot silently become input planning scope.
+    let observeForControl: @MainActor (NativeWindowTaskAdapter.ApplicationAdmission) async throws -> NativeVisualTaskSource
+    let refreshOriginalForControl: @MainActor (NativeVisualTaskSource) async throws -> NativeVisualTaskSource
     let refreshOriginal: @MainActor (NativeVisualTaskSource) async throws -> NativeVisualTaskSource
     /// Control-only explicit authorized composite observation. This may keep a
     /// read-only source when task/window metadata does not admit editor capture.
-    let refreshForInputPlanning: @MainActor (NativeVisualTaskSource) async throws -> NativeVisualTaskSource
+    let refreshForInputPlanning: @MainActor (NativeVisualTaskSource, Bool) async throws -> NativeVisualTaskSource
     let prepareForReview: @MainActor (NativeControlSession.Action, NativeVisualProposalIdentity, NativeVisualTaskSource, NativeVisionFrame?) async throws -> NativeControlSession.ReviewedProposal
     /// Runs only in inserted journal.effect admission. The positive adapter
     /// restores focus inside its reserved FIFO/shared gate and returns typed
@@ -32,11 +123,15 @@ import Foundation
     init(controller: NativeControlSession,
          observeRead: @escaping @MainActor (NativeWindowTaskAdapter.ApplicationAdmission) async throws -> NativeVisualTaskSource,
          refreshOriginal: @escaping @MainActor (NativeVisualTaskSource) async throws -> NativeVisualTaskSource,
-         refreshForInputPlanning: @escaping @MainActor (NativeVisualTaskSource) async throws -> NativeVisualTaskSource,
+         refreshForInputPlanning: @escaping @MainActor (NativeVisualTaskSource, Bool) async throws -> NativeVisualTaskSource,
          prepareForReview: @escaping @MainActor (NativeControlSession.Action, NativeVisualProposalIdentity, NativeVisualTaskSource, NativeVisionFrame?) async throws -> NativeControlSession.ReviewedProposal,
          executeAdmitted: @escaping @MainActor (NativeControlSession.ReviewedProposal) async -> NativeVisualStepOutcome,
-         closeOwnedClient: @escaping @MainActor () async -> Void) {
+         closeOwnedClient: @escaping @MainActor () async -> Void,
+         observeForControl: (@MainActor (NativeWindowTaskAdapter.ApplicationAdmission) async throws -> NativeVisualTaskSource)? = nil,
+         refreshOriginalForControl: (@MainActor (NativeVisualTaskSource) async throws -> NativeVisualTaskSource)? = nil) {
         self.controller = controller; self.observeRead = observeRead; self.refreshOriginal = refreshOriginal
+        self.observeForControl = observeForControl ?? { _ in throw NativeVisualTaskFailure.unavailableDependency("pre-capture original-window control policy") }
+        self.refreshOriginalForControl = refreshOriginalForControl ?? { _ in throw NativeVisualTaskFailure.unavailableDependency("fresh original-window control policy") }
         self.refreshForInputPlanning = refreshForInputPlanning
         self.closeOwnedClient = closeOwnedClient
         self.prepareForReview = prepareForReview; self.executeAdmitted = executeAdmitted
@@ -182,7 +277,7 @@ import Foundation
         try validate()
         guard let current = connection else { throw NativeVisualTaskFailure.staleTask }
         let controller = current.controller, connectionID = current.id
-        let original = try controller.source(from: observation)
+        let original = try controller.controlReadSource(from: observation)
         let application = observation.snapshot.application
         let window = observation.snapshot.window
         let check: @MainActor () throws -> Void = { [weak self, weak controller] in

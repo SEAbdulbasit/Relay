@@ -15,6 +15,21 @@ ROOT = Path(__file__).resolve().parent.parent
 MACHO = {b'\xcf\xfa\xed\xfe', b'\xfe\xed\xfa\xcf', b'\xce\xfa\xed\xfe',
          b'\xfe\xed\xfa\xce', b'\xca\xfe\xba\xbe', b'\xbe\xba\xfe\xca',
          b'\xca\xfe\xba\xbf', b'\xbf\xba\xfe\xca'}
+REQUIRED_MACHO = (
+    'Contents/MacOS/Relay',
+    'Contents/MacOS/agent-desktop',
+    'Contents/MacOS/agent-desktop-macos-helper',
+    'Contents/Frameworks/agent-desktop-macos-helper',
+    'Contents/Frameworks/libagent_desktop_ffi.dylib',
+    'Contents/Resources/RelayAccessibilityFixture.app/Contents/MacOS/RelayAccessibilityFixture',
+)
+REQUIRED_RESOURCES = (
+    'Contents/Library/LaunchDaemons/dev.relay.assistant.preparation-wake.plist',
+    'Contents/Resources/ThirdPartyNotices.txt',
+    'Contents/Resources/LiteRT-LM-LICENSE.txt',
+    'Contents/Resources/agent-desktop-LICENSE.txt',
+    'Contents/Resources/agent-desktop-version.txt',
+)
 
 
 def run(args, capture=False):
@@ -48,11 +63,14 @@ def validate_bundle(app):
     build = info.get('CFBundleVersion', '')
     if not re.fullmatch(r'\d+(?:\.\d+){1,2}', version) or not re.fullmatch(r'\d+(?:\.\d+){0,2}', build):
         raise ValueError('Release version/build must be numeric and safe for artifact names.')
-    for relative in ['Contents/MacOS/Relay', 'Contents/Resources/ThirdPartyNotices.txt',
-                     'Contents/Resources/LiteRT-LM-LICENSE.txt',
-                     'Contents/Resources/RelayAccessibilityFixture.app/Contents/MacOS/RelayAccessibilityFixture']:
-        if not (app / relative).is_file():
+    for relative in REQUIRED_MACHO + REQUIRED_RESOURCES:
+        path = app / relative
+        if not path.is_file() or path.is_symlink() or path.stat().st_size == 0:
             raise ValueError('Missing required runtime, fixture or license resource: ' + relative)
+        if relative in REQUIRED_MACHO:
+            with path.open('rb') as stream:
+                if stream.read(4) not in MACHO:
+                    raise ValueError('Required runtime is not Mach-O: ' + relative)
     for path in app.rglob('*'):
         if path.is_symlink() and not path.resolve().is_relative_to(app.resolve()):
             raise ValueError('Bundle contains an escaping symlink.')
@@ -116,7 +134,7 @@ def main(argv=None):
     modes.add_argument('--notarize', action='store_true', help='sign, submit to Apple, require Accepted, staple, assess, archive')
     modes.add_argument('--runtime-candidate', '--runtime-check', dest='runtime_check', action='store_true', help='construct an ad-hoc hardened candidate only; does not launch or qualify runtime behavior')
     args = parser.parse_args(argv)
-    app = ROOT / 'build/Relay.app'
+    app = ROOT / os.environ.get('RELAY_BUILD_APP_PATH', 'build/Relay.app')
     version, build = validate_bundle(app)
     identities = run(['/usr/bin/security', 'find-identity', '-v', '-p', 'codesigning'], capture=True)
     profile = os.environ.get('RELAY_NOTARY_PROFILE', '').strip()
