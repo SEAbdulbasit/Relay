@@ -12,13 +12,17 @@ struct WritingProfileView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "text.quote", color: RelayColors.accentAmethyst, size: 36, iconSize: 16)
+                Image(systemName: "text.quote")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 28)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Writing Voice & Tone")
-                        .font(.relayHeadline.weight(.semibold))
+                        .font(RelayPageStyle.sectionTitle)
                         .foregroundStyle(RelayColors.textPrimary)
                     Text("Approve standing writing preferences to guide replies. You can also ask your model to infer your style from examples before saving.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .lineSpacing(3)
                 }
@@ -26,7 +30,7 @@ struct WritingProfileView: View {
             }
 
             Text("Edits apply to future replies after you choose Approve & Save Style.")
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textSecondary)
 
             HStack(spacing: 12) {
@@ -36,7 +40,7 @@ struct WritingProfileView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Additional Instructions")
-                    .font(.relayCaption.weight(.medium))
+                    .font(RelayPageStyle.caption.weight(.medium))
                     .foregroundStyle(RelayColors.textSecondary)
                 adaptiveMultilineField("Other standing writing preferences", text: $profile.additionalInstructions, lineLimit: 2...5)
             }
@@ -44,7 +48,7 @@ struct WritingProfileView: View {
             DisclosureGroup("Style Examples (\(profile.sampleTexts.count))") {
                 VStack(alignment: .leading, spacing: 12) {
                     adaptiveMultilineField("Paste an example message or email to save locally", text: $sample, lineLimit: 3...6)
-                    HStack(spacing: 10) {
+                    RelayChipFlow(spacing: 8, alignment: .leading) {
                         Button("Add Example") {
                             let trimmed = sample.trimmingCharacters(in: .whitespacesAndNewlines)
                             guard !trimmed.isEmpty else { return }
@@ -66,28 +70,27 @@ struct WritingProfileView: View {
                                     .buttonStyle(RelaySecondaryButtonStyle())
                             }
                         }
-                        Spacer()
                     }
 
                     Text("Up to five examples, 8,000 bytes each and 20,000 bytes total. Examples stay local until you request style analysis using your workspace model.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                     if !sample.isEmpty && (sample.utf8.count > 8_000 || profile.sampleTexts.reduce(0, { $0 + $1.utf8.count }) + sample.utf8.count > 20_000) {
                         Label("Shorten this example to fit the saved sample limits.", systemImage: "exclamationmark.circle")
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.accentCoral)
                     }
 
                     if let learningStatus {
                         Text(learningStatus)
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textSecondary)
                     }
 
                     ForEach(Array(profile.sampleTexts.enumerated()), id: \.offset) { index, text in
                         HStack(alignment: .top, spacing: 12) {
                             Text(text)
-                                .font(.relayCaption)
+                                .font(RelayPageStyle.caption)
                                 .foregroundStyle(RelayColors.textPrimary)
                                 .lineLimit(3)
                                 .textSelection(.enabled)
@@ -107,8 +110,8 @@ struct WritingProfileView: View {
                 }
                 .padding(.top, 8)
             }
-            .font(.relayBody.weight(.medium))
-            .disclosureGroupStyle(RelayDisclosureGroupStyle(accent: RelayColors.accentAmethyst))
+            .font(RelayPageStyle.body.weight(.medium))
+            .disclosureGroupStyle(RelayDisclosureGroupStyle(accent: RelayColors.workbenchAccent))
 
             HStack(spacing: 10) {
                 Button("Approve & Save Style") {
@@ -121,23 +124,21 @@ struct WritingProfileView: View {
                 }
                 .buttonStyle(RelaySecondaryButtonStyle())
 
-                Spacer()
-
-                Text(profile.status)
-                    .font(.relayCaption)
-                    .foregroundStyle(RelayColors.textSecondary)
             }
+            Text(profile.status)
+                .font(RelayPageStyle.caption)
+                .foregroundStyle(RelayColors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             if let error = profile.errorMessage {
                 Text(error)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.accentCoral)
             }
         }
-        .font(.relayBody)
+        .font(RelayPageStyle.body)
         .foregroundStyle(RelayColors.textPrimary)
-        .padding(20)
-        .relayGlassCard(cornerRadius: RelayTheme.radius)
+        .relayFormSection()
         .onDisappear { learning?.cancel() }
         .confirmationDialog("Clear writing profile and examples?", isPresented: $showClearConfirmation, titleVisibility: .visible) {
             Button("Clear profile", role: .destructive) {
@@ -179,7 +180,7 @@ struct WritingProfileView: View {
     private func labeledField(_ label: String, placeholder: String, text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label)
-                .font(.relayCaption.weight(.medium))
+                .font(RelayPageStyle.caption.weight(.medium))
                 .foregroundStyle(RelayColors.textSecondary)
             adaptiveField(placeholder, text: text)
         }
@@ -189,7 +190,7 @@ struct WritingProfileView: View {
     private func adaptiveField(_ placeholder: String, text: Binding<String>) -> some View {
         TextField("", text: text, prompt: Text(""))
             .textFieldStyle(.plain)
-            .font(.relayBody)
+            .font(RelayPageStyle.body)
             .relayTextFieldPrompt(placeholder, when: text.wrappedValue.isEmpty, font: .relayBody)
             .accessibilityLabel(placeholder)
             .foregroundStyle(RelayColors.textPrimary)
@@ -206,7 +207,7 @@ struct WritingProfileView: View {
         TextField("", text: text, prompt: Text(""), axis: .vertical)
             .lineLimit(lineLimit)
             .textFieldStyle(.plain)
-            .font(.relayBody)
+            .font(RelayPageStyle.body)
             .relayTextFieldPrompt(placeholder, when: text.wrappedValue.isEmpty, font: .relayBody)
             .accessibilityLabel(placeholder)
             .foregroundStyle(RelayColors.textPrimary)

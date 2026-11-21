@@ -39,8 +39,7 @@ import SwiftUI
             directMCPSection
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
-        .relayLitCard(accent: RelayColors.accentBlue, cornerRadius: RelayTheme.radius)
+        .relayFormSection()
         .onChange(of: connector.endpoint) { _, _ in
             resourceID = ""; toolID = ""; arguments = "{}"
         }
@@ -55,13 +54,17 @@ import SwiftUI
     private var curatedCloudSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "point.3.connected.trianglepath.dotted", color: RelayColors.accentBlue, size: 38, iconSize: 17)
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Cloud & OAuth 2.0 MCP Connectors")
-                        .font(.relayHeadline)
+                        .font(RelayPageStyle.sectionTitle)
                         .foregroundStyle(RelayColors.textPrimary)
                     Text("Connect Notion, Granola, Gmail, Google Calendar, Outlook, Slack, or a custom OAuth 2.0 + S256 PKCE MCP server. Tokens are stored in your Mac Keychain and isolated by account generation.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -112,7 +115,7 @@ import SwiftUI
                         .buttonStyle(RelaySecondaryButtonStyle())
                 }
                 Text(selectedPreset.subtitle)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
 
                 if selectedPreset == .custom {
@@ -176,17 +179,12 @@ import SwiftUI
                         .accessibilityIdentifier("oauthConnector.signIn")
                     }
                     Text(oauthErrorMessage ?? oauth.status)
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(oauthErrorMessage == nil ? RelayColors.textSecondary : RelayColors.accentAmber)
                         .lineLimit(2)
                 }
             }
-            .padding(14)
-            .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
-            )
+            .padding(.vertical, 4)
 
             if !oauth.connections.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
@@ -209,7 +207,7 @@ import SwiftUI
                     }
                     ScrollView {
                         Text(verbatim: cloudPreviewOutput)
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -233,7 +231,7 @@ import SwiftUI
                 Text("\(conn.provider.displayName) · \(conn.accountLabel)")
                     .font(.system(size: 12, weight: .semibold))
                 Text(conn.state == .connected ? "Connected · Gen \(conn.generation.uuidString.prefix(8))" : "Reconnect required")
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayTheme.muted)
             }
             Spacer()
@@ -315,13 +313,17 @@ import SwiftUI
     private var directMCPSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "terminal.fill", color: RelayColors.accentAmethyst, size: 36, iconSize: 16)
+                Image(systemName: "terminal")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Direct MCP Session Inspector")
-                        .font(.relayHeadline)
+                        .font(RelayPageStyle.sectionTitle)
                         .foregroundStyle(RelayColors.textPrimary)
                     Text("Connect directly to an HTTPS or loopback MCP server with an optional session bearer token to inspect read-only resources and tools.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -333,7 +335,7 @@ import SwiftUI
                 connectForm
             }
             Text(verbatim: connector.status)
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -368,12 +370,7 @@ import SwiftUI
                 }
             }
         }
-        .padding(14)
-        .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
-        )
+        .padding(.vertical, 4)
     }
 
     private func connected(_ endpoint: URL) -> some View {
@@ -388,9 +385,9 @@ import SwiftUI
             }
             Toggle("Allow this connection in tasks", isOn: Binding(
                 get: { connector.taskReadsEnabled }, set: { connector.setTaskReadsEnabled($0) }))
-                .font(.relayCaption).disabled(busy || connector.isBusy)
+                .font(RelayPageStyle.caption).disabled(busy || connector.isBusy)
             Text("Off by default. Enabling shares bounded catalog data with your configured model. Each remote read still needs its exact request review. Writes and automatic retries are unavailable.")
-                .font(.relayCaption).foregroundStyle(RelayTheme.muted).fixedSize(horizontal: false, vertical: true)
+                .font(RelayPageStyle.caption).foregroundStyle(RelayTheme.muted).fixedSize(horizontal: false, vertical: true)
             if !connector.resources.isEmpty {
                 HStack {
                     Picker("Resource", selection: $resourceID) {
@@ -410,7 +407,7 @@ import SwiftUI
                     Text("Server response").font(.system(size: 13, weight: .semibold))
                     ScrollView {
                         Text(verbatim: output)
-                            .font(.relayCaption).textSelection(.enabled)
+                            .font(RelayPageStyle.caption).textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .frame(maxHeight: 220)
@@ -501,10 +498,10 @@ import SwiftUI
             .disabled(connector.isBusy)
             if let tool = connector.tools.first(where: { $0.id == toolID }) {
                 if let description = tool.description {
-                    Text(verbatim: description).font(.relayCaption).foregroundStyle(RelayTheme.muted)
+                    Text(verbatim: description).font(RelayPageStyle.caption).foregroundStyle(RelayTheme.muted)
                 }
                 Text("The server supplies the read-only label. Review the tool and arguments before running it.")
-                    .font(.relayCaption).foregroundStyle(RelayTheme.muted)
+                    .font(RelayPageStyle.caption).foregroundStyle(RelayTheme.muted)
 
                 let params = schemaParameters(for: tool)
                 if !params.isEmpty {
@@ -606,7 +603,7 @@ import SwiftUI
                         Text(verbatim: JSONValue.object(tool.schema).pretty).font(.relayMono).textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }.frame(maxHeight: 140)
-                }.font(.relayCaption)
+                }.font(RelayPageStyle.caption)
                 TextField("JSON arguments", text: $arguments, axis: .vertical)
                     .font(.relayMono)
                     .lineLimit(2...5)

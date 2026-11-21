@@ -101,7 +101,7 @@ struct RelayApp: App {
                 }
                     .keyboardShortcut("k", modifiers: [.command])
                     .disabled(!onboarding.completed)
-                Button("Toggle Sidebar") {
+                Button("Toggle History") {
                     NotificationCenter.default.post(name: Notification.Name("relay.toggleSidebar"), object: nil)
                 }
                     .keyboardShortcut("s", modifiers: [.command, .shift])

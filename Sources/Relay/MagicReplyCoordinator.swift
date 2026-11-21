@@ -1791,13 +1791,17 @@ struct MagicReplySettingsView: View {
         VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 12) {
-                    RelayIconBadge(icon: "wand.and.stars", color: RelayColors.accentAmethyst, size: 38, iconSize: 17)
+                    Image(systemName: "wand.and.stars")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Shortcut & Context")
-                            .font(.relayHeadline)
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
                         Text("Click any reply box in Mail, Messages, Gmail, Slack, WhatsApp, or Discord and double-tap \(store.focusedDraft.shortcutKey.title) — or choose Magic Reply in Sidekick — to draft an unsent reply in your voice.")
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textSecondary)
                             .lineSpacing(2)
                     }
@@ -1814,7 +1818,7 @@ struct MagicReplySettingsView: View {
                         )
                     )
                     .toggleStyle(.switch)
-                    .font(.relayBodyStrong)
+                    .font(RelayPageStyle.body.weight(.medium))
                     .foregroundStyle(RelayColors.textPrimary)
                     .accessibilityIdentifier("magicReply.enabledToggle")
 
@@ -1828,32 +1832,30 @@ struct MagicReplySettingsView: View {
                         )
                     )
                     .toggleStyle(.switch)
-                    .font(.relayBodyStrong)
+                    .font(RelayPageStyle.body.weight(.medium))
                     .foregroundStyle(RelayColors.textPrimary)
 
                     Text("Replies are inserted unsent for your review and never press Return or Send.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textMuted)
                 }
-                .padding(14)
-                .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
-                )
+                .padding(.top, 4)
             }
-            .padding(20)
-            .relayLitCard(accent: RelayColors.accentAmethyst, cornerRadius: RelayTheme.radius)
+            .relayFormSection()
 
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 12) {
-                    RelayIconBadge(icon: "cpu", color: RelayColors.accentBlue, size: 38, iconSize: 17)
+                    Image(systemName: "cpu")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Magic Reply Provider")
-                            .font(.relayHeadline)
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
                         Text("Choose whether Magic Reply uses your active workspace provider or a dedicated local or cloud model.")
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textSecondary)
                     }
                     Spacer()
@@ -1884,28 +1886,26 @@ struct MagicReplySettingsView: View {
                     providerConfigurationFields
 
                     Text(prefs.status)
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(prefs.configurationProblem == nil ? RelayColors.textSecondary : RelayColors.accentAmber)
                 }
-                .padding(14)
-                .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
-                )
+                .padding(.top, 4)
             }
-            .padding(20)
-            .relayGlassCard(cornerRadius: RelayTheme.radius)
+            .relayFormSection()
 
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 12) {
-                    RelayIconBadge(icon: "slider.horizontal.3", color: RelayColors.accentGold, size: 38, iconSize: 17)
+                    Image(systemName: "slider.horizontal.3")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Custom Reply Instructions")
-                            .font(.relayHeadline)
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
                         Text("Optional standing preferences (for example: “Use lowercase in chat messages; sign emails with Best, Alex”). Overrides inferred writing style without changing factual grounding.")
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textSecondary)
                             .lineSpacing(2)
                     }
@@ -1913,7 +1913,7 @@ struct MagicReplySettingsView: View {
                 }
 
                 TextEditor(text: $instructionsDraft)
-                    .font(.relayBody)
+                    .font(RelayPageStyle.body)
                     .foregroundStyle(RelayColors.textPrimary)
                     .scrollContentBackground(.hidden)
                     .frame(minHeight: 84, maxHeight: 130)
@@ -1928,33 +1928,33 @@ struct MagicReplySettingsView: View {
                     }
                     .accessibilityIdentifier("magicReply.customInstructions")
 
-                HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 10) {
                     Text("\(instructionsDraft.utf8.count) / \(DraftModelPreferences.customInstructionsByteLimit) bytes")
                         .font(.relayMonoSmall)
                         .foregroundStyle(
                             instructionsDraft.utf8.count > DraftModelPreferences.customInstructionsByteLimit
                                 ? RelayColors.accentAmber : RelayColors.textMuted
                         )
-                    Spacer()
-                    Button("Reveal Knowledge Vault") {
-                        KnowledgeVaultManager.shared.revealVaultInFinder()
+                    RelayChipFlow(spacing: 8, alignment: .leading) {
+                        Button("Reveal Knowledge Vault") {
+                            KnowledgeVaultManager.shared.revealVaultInFinder()
+                        }
+                        .buttonStyle(RelaySecondaryButtonStyle())
+                        Button("Reveal writingstyle.md") {
+                            KnowledgeVaultManager.shared.revealWritingStyleInFinder()
+                        }
+                        .buttonStyle(RelaySecondaryButtonStyle())
                     }
-                    .buttonStyle(RelaySecondaryButtonStyle())
-                    Button("Reveal writingstyle.md") {
-                        KnowledgeVaultManager.shared.revealWritingStyleInFinder()
-                    }
-                    .buttonStyle(RelaySecondaryButtonStyle())
                 }
 
                 if let report = MagicReplyCoordinator.shared.lastReport {
                     Text("Last Magic Reply: \(report)")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textMuted)
                         .textSelection(.enabled)
                 }
             }
-            .padding(20)
-            .relayGlassCard(cornerRadius: RelayTheme.radius)
+            .relayFormSection()
         }
         .onAppear {
             guard !didLoad else { return }
@@ -1976,15 +1976,13 @@ struct MagicReplySettingsView: View {
     private var providerConfigurationFields: some View {
         switch prefs.providerKind {
         case .workspaceDefault:
-            Text("Uses your active Relay workspace model automatically.")
-                .font(.relayCaption)
-                .foregroundStyle(RelayColors.textSecondary)
+            EmptyView() // The live provider status below already explains this mode.
 
         case .onDeviceGemma:
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text(prefs.model?.localModelDisplayName ?? "No separate .litertlm selected")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textPrimary)
                     Spacer()
                     if prefs.model?.backend == .liteRTLM {

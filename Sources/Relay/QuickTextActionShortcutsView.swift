@@ -5,13 +5,17 @@ struct QuickTextActionShortcutsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "keyboard.fill", color: RelayColors.accentAmethyst, size: 38, iconSize: 17)
+                Image(systemName: "keyboard")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Text Action Shortcuts")
-                        .font(.relayHeadline)
+                        .font(RelayPageStyle.sectionTitle)
                         .foregroundStyle(RelayColors.textPrimary)
                     Text("Shortcuts are optional. Settings (⌘,) and Stop (⌘.) keep their existing behavior. No text is captured until you invoke an enabled action.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                 }
                 Spacer()
@@ -33,19 +37,13 @@ struct QuickTextActionShortcutsView: View {
                     }
                 }
             }
-            .padding(14)
-            .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
-            )
+            .padding(.vertical, 4)
             if let error = shortcuts.errorMessage {
                 Text(error)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.accentAmber)
             }
         }
-        .padding(20)
-        .relayGlassCard(cornerRadius: RelayTheme.radius)
+        .relayFormSection()
     }
 }

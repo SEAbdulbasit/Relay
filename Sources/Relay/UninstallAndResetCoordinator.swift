@@ -577,29 +577,37 @@ final class UninstallAndResetCoordinator {
 
 struct RelayDangerButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
+    @Environment(\.isFocused) private var focused
     @State private var hovered = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.relayCallout.weight(.medium))
-            .foregroundStyle(enabled ? Color.white : RelayColors.textDim)
+            .font(RelayPageStyle.body.weight(.medium))
+            .foregroundStyle(enabled ? RelayColors.buttonInk : RelayColors.textDim)
             .padding(.horizontal, 14)
             .padding(.vertical, 6)
             .frame(minHeight: RelayControlHeight.bar)
-            .background(
-                enabled
-                    ? RelayColors.accentCoral.opacity(configuration.isPressed ? 0.80 : (hovered ? 0.90 : 1.0))
-                    : RelayColors.subtleFill,
-                in: Capsule(style: .continuous)
-            )
+            .background {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(enabled ? RelayColors.accentCoral : RelayColors.subtleFill)
+                    .overlay {
+                        if enabled {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color.black.opacity(configuration.isPressed ? 0.12 : (hovered ? 0.06 : 0)))
+                        }
+                    }
+            }
             .overlay(
-                Capsule(style: .continuous)
-                    .strokeBorder(
-                        enabled ? RelayColors.accentCoral.opacity(0.65) : RelayColors.borderSubtle.opacity(0.5),
-                        lineWidth: 1
-                    )
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(enabled ? RelayColors.accentCoral.opacity(0.65) : RelayColors.borderSubtle.opacity(0.5), lineWidth: 1)
             )
-            .contentShape(Capsule())
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(focused ? RelayColors.focusRing : .clear, lineWidth: 2)
+                    .padding(-2)
+                    .allowsHitTesting(false)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .onHover { hovered = $0 }
     }
 }
@@ -626,7 +634,7 @@ struct FactoryResetSheetView: View {
                     .foregroundStyle(RelayColors.accentAmber)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(completedWarnings.isEmpty ? "Factory Reset Relay" : "Factory Reset Completed with Warnings")
-                        .font(.system(size: 18, weight: .semibold))
+                        .font(RelayPageStyle.dialogTitle)
                         .foregroundStyle(RelayPalette.ink)
                     Text(completedWarnings.isEmpty
                          ? "Erase learned knowledge, conversations, and local setup, then return to Onboarding."
@@ -642,10 +650,8 @@ struct FactoryResetSheetView: View {
                     resetBullet("Clears Relay Keychain API keys, OAuth grants, folder grants, and source checkpoints.")
                     resetBullet("Leaves your own files, ~/.codex, and ~/.claude completely untouched.")
                 }
-                .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RelayPalette.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(RelayPalette.stroke, lineWidth: 1))
+                .relayFormSection()
 
                 Toggle(isOn: $deleteDownloadedModels) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -705,10 +711,8 @@ struct FactoryResetSheetView: View {
                         }
                     }
                 }
-                .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RelayPalette.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(RelayPalette.stroke, lineWidth: 1))
+                .relayFormSection()
 
                 HStack {
                     Spacer()
@@ -723,7 +727,7 @@ struct FactoryResetSheetView: View {
         }
         .padding(24)
         .frame(width: 480)
-        .background(RelayColors.canvas)
+        .relayPageBackground()
         .relayPreferredAppearance()
         .interactiveDismissDisabled(coordinator.isPerformingFactoryReset)
     }
@@ -773,7 +777,7 @@ struct CleanUninstallSheetView: View {
         }
         .padding(24)
         .frame(width: 520)
-        .background(RelayColors.canvas)
+        .relayPageBackground()
         .relayPreferredAppearance()
         .interactiveDismissDisabled(coordinator.phase == .running)
     }
@@ -785,7 +789,7 @@ struct CleanUninstallSheetView: View {
                 .foregroundStyle(coordinator.phase == .completed ? RelayColors.accentEmerald : RelayColors.accentCoral)
             VStack(alignment: .leading, spacing: 3) {
                 Text(coordinator.phase == .completed ? "Relay Data Removed" : "Clean Uninstall Relay")
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(RelayPageStyle.dialogTitle)
                     .foregroundStyle(RelayPalette.ink)
                 Text(coordinator.phase == .completed
                      ? "All Relay models, knowledge, credentials, helpers, and caches have been cleaned up."
@@ -810,13 +814,12 @@ struct CleanUninstallSheetView: View {
             }
             Divider().padding(.vertical, 4)
             Text("Your personal folders, Apple Notes/Mail/Messages, ~/.codex, and ~/.claude are never modified.")
-                .font(.system(size: 11.5, weight: .medium))
+                .font(RelayPageStyle.caption.weight(.medium))
                 .foregroundStyle(RelayPalette.muted)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RelayPalette.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(RelayPalette.stroke, lineWidth: 1))
+        .relayFormSection()
     }
 
     private var progressBody: some View {
@@ -846,10 +849,8 @@ struct CleanUninstallSheetView: View {
                     .foregroundStyle(RelayPalette.muted)
             }
         }
-        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RelayPalette.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(RelayPalette.stroke, lineWidth: 1))
+        .relayFormSection()
     }
 
     @ViewBuilder

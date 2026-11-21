@@ -8,13 +8,17 @@ struct MailWorkflowAccessView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "envelope.fill", color: RelayColors.accentBlue, size: 38, iconSize: 17)
+                Image(systemName: "envelope")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Apple Mail Actions")
-                        .font(.relayHeadline)
+                        .font(RelayPageStyle.sectionTitle)
                         .foregroundStyle(RelayColors.textPrimary)
                     Text("Create a plain-text draft using an existing Mail account, then review its exact sender, recipients, and contents before sending.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                 }
                 Spacer()
@@ -34,16 +38,15 @@ struct MailWorkflowAccessView: View {
             }
 
             Text("Open Apple Mail first. macOS Automation access is required. Drafts may sync through the account configured in Mail.")
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textMuted)
 
             if let status {
                 Text(status)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
             }
         }
-        .padding(20)
-        .relayGlassCard(cornerRadius: RelayTheme.radius)
+        .relayFormSection()
     }
 }

@@ -72,9 +72,9 @@ struct ConversationQuoteSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("Quote a message").font(.relayHeadline).foregroundStyle(RelayColors.textPrimary)
+                Text("Quote a message").font(RelayPageStyle.dialogTitle).foregroundStyle(RelayColors.textPrimary)
                 Spacer()
-                RelayIconButton(icon: "xmark", label: "Close quote selection", size: 28) { dismiss() }
+                RelayIconButton(icon: "xmark", label: "Close quote selection", size: 32) { dismiss() }
             }
             Text("Select the exact passage to reply to. This is historical conversation text, not current app state.")
                 .font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
@@ -102,9 +102,9 @@ struct ConversationQuoteSheet: View {
                 .disabled(!hasQuote || saving)
             }
         }
-        .padding(20)
+        .padding(24)
         .frame(width: 560)
-        .background(RelayColors.canvas)
+        .relayPageBackground()
         .foregroundStyle(RelayColors.textPrimary)
         .preferredColorScheme(themeManager.appearanceMode.colorScheme)
         .relayPreferredAppearance()

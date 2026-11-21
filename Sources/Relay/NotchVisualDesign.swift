@@ -320,8 +320,8 @@ struct NotchBlackCrown: View {
     }
 }
 
-/// Dark obsidian surface with subtle static or slowly drifting sapphire/violet/amber underlight
-/// masked toward the lower curve of the shell.
+/// The expanded Sidekick shares the workspace's static teal atmosphere. The
+/// hardware camera band is still protected by NotchBlackCrown above this surface.
 struct NotchUnderlightSurface: View {
     let shape: NotchShape
     let animated: Bool
@@ -330,84 +330,27 @@ struct NotchUnderlightSurface: View {
     var solidBlackBase: Bool = false
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         ZStack {
-            shape.fill(
-                (blackBody || solidBlackBase)
-                    ? NotchVisualTokens.closedShellFill
-                    : (reduceTransparency ? NotchVisualTokens.solidFallbackFill : NotchVisualTokens.openShellFill)
-            )
-            if !blackBody && !reduceTransparency && lightingStrength > 0 {
-                colorWash(paused: !animated || reduceMotion)
-                    .mask {
-                        LinearGradient(
-                            stops: [
-                                .init(color: .clear, location: 0.22),
-                                .init(color: .white.opacity(0.22), location: 0.52),
-                                .init(color: .white, location: 1.0),
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    }
-                    .clipShape(shape)
-                    .opacity(lightingStrength)
-            }
-        }
-        .allowsHitTesting(false)
-    }
-
-    @ViewBuilder
-    private func colorWash(paused: Bool) -> some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: paused)) { ctx in
-            let t = paused ? 0.6 : ctx.date.timeIntervalSinceReferenceDate * 2 * .pi / 12.0
-            GeometryReader { geo in
-                let w = max(geo.size.width, 1)
-                let h = max(geo.size.height, 1)
-                ZStack {
-                    bloom(
-                        Color(red: 0.22, green: 0.74, blue: 0.97),
-                        opacity: 0.36,
-                        x: 0.18 + 0.12 * sin(t),
-                        y: 0.80 + 0.10 * cos(t),
-                        width: w,
-                        height: h
-                    )
-                    bloom(
-                        Color(red: 0.39, green: 0.40, blue: 0.95),
-                        opacity: 0.30,
-                        x: 0.72 + 0.14 * cos(t),
-                        y: 0.66 + 0.16 * sin(t),
-                        width: w,
-                        height: h
-                    )
-                    bloom(
-                        Color(red: 0.18, green: 0.83, blue: 0.75),
-                        opacity: 0.26,
-                        x: 0.48 + 0.20 * sin(t + 1.5),
-                        y: 0.14 + 0.12 * cos(t),
-                        width: w,
-                        height: h
-                    )
+            shape.fill(blackBody || solidBlackBase
+                       ? NotchVisualTokens.closedShellFill
+                       : NotchVisualTokens.solidFallbackFill)
+            if !blackBody {
+                if !reduceTransparency && contrast != .increased && lightingStrength > 0 {
+                    RelayWorkspaceBackdrop()
+                        .environment(\.colorScheme, .dark)
+                        .clipShape(shape)
+                        .opacity(0.22)
+                } else {
+                    shape.fill(NotchVisualTokens.solidFallbackFill)
                 }
             }
         }
-    }
-
-    private func bloom(_ color: Color, opacity: Double, x: Double, y: Double, width: CGFloat, height: CGFloat) -> some View {
-        Ellipse()
-            .fill(
-                RadialGradient(
-                    colors: [color.opacity(opacity), color.opacity(opacity * 0.5), .clear],
-                    center: .center,
-                    startRadius: 0,
-                    endRadius: width * 0.38
-                )
-            )
-            .frame(width: width * 1.1, height: max(height * 2.6, width * 0.75))
-            .position(x: width * x, y: height * y)
+        .clipShape(shape)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 

@@ -134,13 +134,11 @@ struct SettingsView: View {
 
     var body: some View {
         ZStack {
-            RelayTheme.background.ignoresSafeArea()
+            Color.clear.ignoresSafeArea()
             HStack(spacing: 0) {
                 navigation
-                Rectangle().fill(RelayColors.borderSubtle.opacity(0.5)).frame(width: 1)
                 VStack(spacing: 0) {
                     contentHeader
-                    Divider().overlay(RelayColors.borderSubtle.opacity(0.5))
 
                     ScrollView {
                         VStack(alignment: .leading, spacing: 24) {
@@ -171,9 +169,10 @@ struct SettingsView: View {
                                 }
                             }
                         }
-                        .frame(maxWidth: 860, alignment: .topLeading)
-                        .padding(.horizontal, 32)
-                        .padding(.vertical, 28)
+                        .frame(maxWidth: 760, alignment: .topLeading)
+                        .padding(.horizontal, 28)
+                        .padding(.top, 20)
+                        .padding(.bottom, 28)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
                     .id(isSearching ? "search" : tab.rawValue)
@@ -184,9 +183,10 @@ struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 860, idealWidth: 1040, minHeight: 620, idealHeight: 740)
+        .frame(minWidth: 820, idealWidth: 980, minHeight: 620, idealHeight: 740)
+        .relayPageBackground()
         .foregroundStyle(RelayTheme.ink)
-        .font(.relayBody)
+        .font(RelayPageStyle.body)
         .tint(RelayColors.workbenchAccent)
         .relayPreferredAppearance()
         .disclosureGroupStyle(RelayDisclosureGroupStyle())
@@ -226,25 +226,17 @@ struct SettingsView: View {
 
     private var contentHeader: some View {
         HStack(spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: tab.icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(RelayColors.textSecondary)
-                Text(isSearching ? "FIND A SETTING" : "PREFERENCES / \(tab.title.uppercased())")
-                    .font(.relayEyebrow)
-                    .foregroundStyle(RelayColors.textSecondary)
-            }
-
+            Text(isSearching ? "Search settings" : "Settings")
+                .font(RelayPageStyle.body.weight(.medium))
+                .foregroundStyle(RelayColors.textSecondary)
             Spacer()
-
-            RelayIconButton(icon: "xmark", label: "Close settings", size: 32) {
+            RelayIconButton(icon: "xmark", label: "Close settings", size: 32, iconSize: 14, circular: false) {
                 dismiss()
             }
             .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 28)
         .frame(height: 48)
-        .background(RelayColors.canvas.opacity(0.65))
     }
 
     // MARK: - Sidebar Navigation
@@ -252,16 +244,15 @@ struct SettingsView: View {
     private var navigation: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
-                RelayMark(size: 20)
-                Text("Settings")
-                    .font(.relayHeadline)
+                RelayMark(size: 18)
+                Text("Relay")
+                    .font(RelayPageStyle.body.weight(.medium))
                     .foregroundStyle(RelayColors.textPrimary)
                 Spacer()
             }
             .padding(.horizontal, 18)
             .frame(height: 48)
 
-            Divider().overlay(RelayColors.borderSubtle.opacity(0.5))
 
             HStack(spacing: 8) {
                 Button { searchFocused = true } label: {
@@ -281,11 +272,11 @@ struct SettingsView: View {
                         .accessibilityLabel("Clear settings search")
                 }
             }
-            .font(.relayCallout)
+            .font(RelayPageStyle.body)
             .padding(10)
             .background(RelayColors.surfaceElevated, in: RoundedRectangle(cornerRadius: 9))
             .padding(.horizontal, 12)
-            .padding(.top, 16)
+            .padding(.top, 10)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -306,10 +297,10 @@ struct SettingsView: View {
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "sparkles")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(RelayColors.accentBlue)
+                            .font(RelayPageStyle.symbol)
+                            .foregroundStyle(RelayColors.textSecondary)
                         Text("Run Setup Assistant")
-                            .font(.relayCallout.weight(.medium))
+                            .font(RelayPageStyle.body.weight(.medium))
                             .foregroundStyle(RelayColors.textSecondary)
                         Spacer()
                     }
@@ -321,19 +312,21 @@ struct SettingsView: View {
                 .accessibilityLabel("Run setup assistant")
             }
         }
-        .frame(width: 232)
+        .frame(width: 216)
         .frame(maxHeight: .infinity)
-        .background(RelayTheme.sidebar)
+        .background(RelayColors.pitch.opacity(0.78))
     }
 
     private func navigationGroup(_ title: String, tabs: [SettingsTab]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            RelayMonoCaps(title, size: 10, tracking: 1.4, color: RelayColors.textMuted)
+            Text(title)
+                .font(RelayPageStyle.caption.weight(.medium))
+                .foregroundStyle(RelayColors.textMuted)
                 .padding(.leading, 10)
                 .padding(.bottom, 4)
                 .accessibilityAddTraits(.isHeader)
             ForEach(tabs, id: \.self) { item in
-                SettingsSidebarTabButton(title: item.title, icon: item.icon, isSelected: tab == item) {
+                SettingsSidebarTabButton(title: item == .knowledgeSharing ? "Knowledge" : item.title, icon: item.icon, isSelected: tab == item) {
                     searchText = ""
                     tab = item
                 }
@@ -347,15 +340,15 @@ struct SettingsView: View {
             sectionTitle("Find a setting", detail: "Search by feature, app, or preference.")
             if matches.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
-                    Label("No matching settings", systemImage: "magnifyingglass").font(.relayHeadline)
+                    Label("No matching settings", systemImage: "magnifyingglass").font(RelayPageStyle.sectionTitle)
                     Text("Try “voice”, “Calendar”, “model”, or “export”.")
-                        .font(.relayBody).foregroundStyle(RelayColors.textSecondary)
+                        .font(RelayPageStyle.body).foregroundStyle(RelayColors.textSecondary)
                     Button("Clear search") { searchText = "" }.buttonStyle(RelaySecondaryButtonStyle())
                 }
                 .padding(22)
             } else {
                 Text("\(matches.count) \(matches.count == 1 ? "section" : "sections")")
-                    .font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
+                    .font(RelayPageStyle.caption).foregroundStyle(RelayColors.textSecondary)
                 ForEach(matches, id: \.self) { result in
                     Button {
                         tab = result
@@ -364,8 +357,8 @@ struct SettingsView: View {
                         HStack(spacing: 14) {
                             Image(systemName: result.icon).frame(width: 24)
                             VStack(alignment: .leading, spacing: 5) {
-                                Text(result.title).font(.relayBodyStrong)
-                                Text(result.subtitle).font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
+                                Text(result.title).font(RelayPageStyle.body.weight(.medium))
+                                Text(result.subtitle).font(RelayPageStyle.caption).foregroundStyle(RelayColors.textSecondary)
                             }
                             Spacer()
                             Image(systemName: "chevron.right").foregroundStyle(RelayColors.textMuted)
@@ -390,21 +383,20 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 18) {
                 LaunchAtLoginView()
             }
-            .padding(20)
-            .relayGlassCard(cornerRadius: RelayTheme.radius)
+            .relayFormSection()
         }
     }
 
     private var appearanceThemeCard: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: currentAppearance.iconName, color: RelayColors.accentBlue, size: 38, iconSize: 17)
+                SettingsSectionIcon(icon: currentAppearance.iconName)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Appearance")
-                        .font(.relayHeadline)
+                        .font(RelayPageStyle.sectionTitle)
                         .foregroundStyle(RelayColors.textPrimary)
                     Text("Choose a look, or follow your Mac’s appearance.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .lineSpacing(2)
                 }
@@ -423,8 +415,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .padding(20)
-        .relayGlassCard(cornerRadius: RelayTheme.radius)
+        .relayFormSection()
     }
 
     // MARK: - Pane 1: AI Models & Accounts
@@ -433,13 +424,13 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .top, spacing: 12) {
-                    RelayIconBadge(icon: "cpu.fill", color: RelayColors.accentBlue, size: 38, iconSize: 17)
+                    SettingsSectionIcon(icon: "cpu.fill")
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Workspace model")
-                            .font(.relayHeadline)
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
                         Text("Choose which provider powers Relay and Sidekick.")
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textSecondary)
                             .lineSpacing(2)
                     }
@@ -447,7 +438,7 @@ struct SettingsView: View {
                     HStack(spacing: 6) {
                         RelayHealthDot(color: store.workspaceActionsReady ? RelayColors.accentEmerald : RelayColors.accentAmber)
                         Text(store.workspaceActionsReady ? "Ready" : "Setup needed")
-                            .font(.relayCaptionStrong)
+                            .font(RelayPageStyle.caption.weight(.medium))
                             .foregroundStyle(store.workspaceActionsReady ? RelayColors.accentEmerald : RelayColors.textSecondary)
                     }
                 }
@@ -497,18 +488,18 @@ struct SettingsView: View {
             DisclosureGroup("Computer-use engine · advanced") {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(alignment: .top, spacing: 14) {
-                        RelayIconBadge(icon: "macwindow.on.rectangle", color: RelayColors.accentBlue, size: 38, iconSize: 17)
+                        SettingsSectionIcon(icon: "macwindow.on.rectangle")
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 8) {
                                 Text("Agent-Desktop Computer Use Engine")
-                                    .font(.relayHeadline)
+                                    .font(RelayPageStyle.sectionTitle)
                                     .foregroundStyle(RelayColors.textPrimary)
                                 if let status = agentDesktopStatus, status.available {
                                     RelayBadge("v\(status.version)", tint: RelayColors.accentEmerald, prominent: true)
                                 }
                             }
                             Text("Built-in native CoreGraphics + Accessibility window driver paired with agent-desktop skeleton snapshots and @ref targeting.")
-                                .font(.relayCaption)
+                                .font(RelayPageStyle.caption)
                                 .foregroundStyle(RelayColors.textSecondary)
                         }
                         Spacer()
@@ -536,14 +527,14 @@ struct SettingsView: View {
                                 status.ffiLoaded ? "FFI ABI v\(status.ffiAbiMajor) Verified" : "FFI Library Not Loaded",
                                 systemImage: status.ffiLoaded ? "checkmark.seal.fill" : "exclamationmark.triangle"
                             )
-                            .font(.relayCaptionStrong)
+                            .font(RelayPageStyle.caption.weight(.medium))
                             .foregroundStyle(status.ffiLoaded ? RelayColors.accentEmerald : RelayColors.accentGold)
 
                             Label(
                                 status.accessibilityGranted ? "AX Tree Ready" : "AX Permission Needed",
                                 systemImage: status.accessibilityGranted ? "hand.tap.fill" : "lock.fill"
                             )
-                            .font(.relayCaptionStrong)
+                            .font(RelayPageStyle.caption.weight(.medium))
                             .foregroundStyle(status.accessibilityGranted ? RelayColors.accentEmerald : RelayColors.textSecondary)
 
                             Spacer()
@@ -560,42 +551,41 @@ struct SettingsView: View {
                             .lineLimit(2)
                     }
                 }
-                .padding(20)
-                .relayGlassCard(cornerRadius: RelayTheme.radius)
+                .relayFormSection()
             }
-            .font(.relayBodyStrong)
+            .font(RelayPageStyle.body.weight(.medium))
         }
     }
 
     private var onDeviceModelsCard: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 14) {
-                RelayIconBadge(icon: "cpu.fill", color: RelayColors.accentEmerald, size: 38, iconSize: 17)
+                SettingsSectionIcon(icon: "cpu.fill")
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text("Installed On-Device Models")
-                            .font(.relayHeadline)
-                            .foregroundStyle(RelayColors.textPrimary)
-                        RelayBadge("Apple Silicon LiteRT-LM", icon: "bolt.fill", tint: RelayColors.accentEmerald, prominent: true)
-                    }
+                    Text("Installed on-device models")
+                        .font(RelayPageStyle.sectionTitle)
+                        .foregroundStyle(RelayColors.textPrimary)
+                    Text("Apple Silicon · LiteRT-LM")
+                        .font(RelayPageStyle.caption)
+                        .foregroundStyle(RelayColors.textSecondary)
                     Text("Run Gemma 4 100% locally on your Mac GPU or CPU. Choose a catalog model below or import a custom `.litertlm` package from disk.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .lineSpacing(2)
                 }
-                Spacer()
-                Button("Import model…") { store.chooseModel() }
-                    .buttonStyle(RelaySecondaryButtonStyle())
-                    .disabled(store.isPreparingModel || store.isRunning)
+                Spacer(minLength: 0)
             }
+            Button("Import model…") { store.chooseModel() }
+                .buttonStyle(RelaySecondaryButtonStyle())
+                .disabled(store.isPreparingModel || store.isRunning)
 
             if let name = importedModelName {
                 HStack(spacing: 12) {
-                    RelayIconBadge(icon: "doc.zipper", color: RelayColors.accentBlue, size: 34, iconSize: 15)
+                    SettingsSectionIcon(icon: "doc.zipper")
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
                             Text(name)
-                                .font(.relayBodyStrong)
+                                .font(RelayPageStyle.body.weight(.medium))
                                 .foregroundStyle(RelayColors.textPrimary)
                                 .lineLimit(1)
                             RelayBadge("Custom Import", tint: RelayColors.accentBlue, prominent: true)
@@ -662,7 +652,7 @@ struct SettingsView: View {
 
                 HStack(spacing: 8) {
                     Text("Compute")
-                        .font(.relayCaptionStrong)
+                        .font(RelayPageStyle.caption.weight(.medium))
                         .foregroundStyle(RelayColors.textSecondary)
                         .fixedSize(horizontal: true, vertical: false)
                     Picker("Compute", selection: Binding(get: { store.configuration.computeBackend }, set: {
@@ -695,21 +685,20 @@ struct SettingsView: View {
                 Image(systemName: store.actionsReady ? "checkmark.circle.fill" : "circle.dotted")
                     .foregroundStyle(store.actionsReady ? RelayColors.accentEmerald : RelayColors.textMuted)
                 Text(store.modelStatus)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
                     .textSelection(.enabled)
             }
 
             if let error = modelDeletionError ?? store.errorMessage {
                 Text(error)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.accentCoral)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(20)
-        .relayLitCard(accent: RelayColors.accentEmerald, cornerRadius: RelayTheme.radius)
+        .relayFormSection()
     }
 
     private var importedModelName: String? {
@@ -726,14 +715,14 @@ struct SettingsView: View {
         return VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 12) {
-                    RelayIconBadge(icon: "menubar.dock.rectangle", color: RelayColors.accentBlue, size: 38, iconSize: 17)
+                    SettingsSectionIcon(icon: "menubar.dock.rectangle")
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Sidekick Notch & Push-to-Talk")
-                            .font(.relayHeadline)
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
                             .accessibilityAddTraits(.isHeader)
                         Text("Choose how to open Sidekick and dictate a request.")
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textSecondary)
                     }
                     Spacer()
@@ -795,8 +784,7 @@ struct SettingsView: View {
                     .disabled(!shortcuts.holdForVoiceEnabled)
                 }
             }
-            .padding(20)
-            .relayGlassCard(cornerRadius: RelayTheme.radius)
+            .relayFormSection()
 
             quickAccessSettings
             globalStopCard
@@ -821,13 +809,13 @@ struct SettingsView: View {
     private var globalStopCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "hand.raised.fill", color: RelayColors.accentCoral, size: 38, iconSize: 17)
+                SettingsSectionIcon(icon: "hand.raised.fill")
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Global Stop Shortcut · ⌘⇧Esc")
-                        .font(.relayHeadline)
+                        .font(RelayPageStyle.sectionTitle)
                         .foregroundStyle(RelayColors.textPrimary)
                     Text("Stops new actions and cancels pending work immediately from any app. No keyboard recording.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .lineSpacing(2)
                 }
@@ -841,13 +829,12 @@ struct SettingsView: View {
                 .foregroundStyle(RelayColors.textMuted)
             if let error = store.globalStop.errorMessage {
                 Text(error)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.accentCoral)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
-        .relayGlassCard(cornerRadius: RelayTheme.radius)
+        .relayFormSection()
     }
 
     // MARK: - Pane 3: Magic Reply
@@ -874,25 +861,25 @@ struct SettingsView: View {
         let collector = store.writingStyleCollector
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "pencil.and.outline", color: RelayColors.accentEmerald, size: 38, iconSize: 17)
+                SettingsSectionIcon(icon: "pencil.and.outline")
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         Text("Saved writing examples")
-                            .font(.relayHeadline)
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
                         if collector.hasSnapshot {
                             RelayBadge("Protected", tint: RelayColors.accentEmerald, prominent: true)
                         }
                     }
                     Text("Collected at most once from opted-in 1:1 outgoing messages and emails. Editable in Markdown and never overwritten automatically.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                 }
                 Spacer()
             }
 
             Text(collector.status)
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textSecondary)
                 .textSelection(.enabled)
 
@@ -920,8 +907,7 @@ struct SettingsView: View {
                 Spacer()
             }
         }
-        .padding(20)
-        .relayGlassCard(cornerRadius: RelayTheme.radius)
+        .relayFormSection()
     }
 
     // MARK: - Pane 4: Sources & Connectors
@@ -947,11 +933,11 @@ struct SettingsView: View {
     private var calendarSourceCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "calendar", color: RelayColors.accentGold, size: 38, iconSize: 17)
+                SettingsSectionIcon(icon: "calendar")
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 6) {
                         Text("Apple Calendar")
-                            .font(.relayHeadline)
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
                         RelayBadge(
                             store.calendarSource.hasAccess ? "Calendar allowed" : "Permission needed",
@@ -961,11 +947,14 @@ struct SettingsView: View {
                         )
                     }
                     Text(CalendarSource.permissionExplanation)
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer()
+                Spacer(minLength: 0)
+            }
+            HStack {
                 if !store.calendarSource.hasAccess {
                     Button("Request Calendar Access") {
                         Task { await store.calendarSource.requestAccess() }
@@ -984,13 +973,13 @@ struct SettingsView: View {
             }
 
             Text(store.calendarSource.status)
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textSecondary)
                 .textSelection(.enabled)
 
             if let calendarError = store.calendarSource.errorMessage {
                 Text(calendarError)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.accentCoral)
                     .textSelection(.enabled)
             }
@@ -999,30 +988,29 @@ struct SettingsView: View {
                 CalendarSelectionView(calendar: store.calendarSource, taskBusy: store.isRunning)
             }
         }
-        .padding(20)
-        .relayGlassCard(cornerRadius: RelayTheme.radius)
+        .relayFormSection()
     }
 
     private var authorizedFoldersCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "folder.badge.gearshape", color: RelayColors.accentBlue, size: 38, iconSize: 17)
+                SettingsSectionIcon(icon: "folder.badge.gearshape")
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Authorized Files & Folders")
-                        .font(.relayHeadline)
+                        .font(RelayPageStyle.sectionTitle)
                         .foregroundStyle(RelayColors.textPrimary)
                     Text("Grant read or write access only to specific folders and files for your tasks.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                 }
-                Spacer()
-                HStack(spacing: 8) {
-                    Button("Add files…", systemImage: "doc.badge.plus") { store.chooseFiles() }
-                    Button("Add folder…", systemImage: "folder.badge.plus") { store.chooseFolder() }
-                }
-                .buttonStyle(RelaySecondaryButtonStyle())
-                .controlSize(.regular)
+                Spacer(minLength: 0)
             }
+            HStack(spacing: 8) {
+                Button("Add files…", systemImage: "doc.badge.plus") { store.chooseFiles() }
+                Button("Add folder…", systemImage: "folder.badge.plus") { store.chooseFolder() }
+            }
+            .buttonStyle(RelaySecondaryButtonStyle())
+            .controlSize(.regular)
 
             if store.grants.isEmpty {
                 note("No files or folders selected yet. Add them above or use the attachment button in Home.", icon: "folder")
@@ -1030,13 +1018,13 @@ struct SettingsView: View {
                 VStack(spacing: 0) {
                     ForEach($store.grants) { $grant in
                         HStack(alignment: .center, spacing: 12) {
-                            RelayIconBadge(icon: "folder.fill", color: RelayColors.accentBlue, size: 32, iconSize: 14)
+                            SettingsSectionIcon(icon: "folder.fill")
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(URL(fileURLWithPath: grant.path).lastPathComponent)
-                                    .font(.relayBodyStrong)
+                                    .font(RelayPageStyle.body.weight(.medium))
                                     .foregroundStyle(RelayColors.textPrimary)
                                 Text(grant.path)
-                                    .font(.relayCaption)
+                                    .font(RelayPageStyle.caption)
                                     .foregroundStyle(RelayColors.textSecondary)
                                     .lineLimit(2)
                                     .textSelection(.enabled)
@@ -1044,7 +1032,7 @@ struct SettingsView: View {
                             Spacer()
                             Toggle("Write", isOn: $grant.writable)
                                 .toggleStyle(.checkbox)
-                                .font(.relayCaptionStrong)
+                                .font(RelayPageStyle.caption.weight(.medium))
                                 .onChange(of: grant.writable) { _, _ in store.saveConfiguration() }
                             RelayIconButton(
                                 icon: "xmark",
@@ -1060,8 +1048,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .padding(20)
-        .relayGlassCard(cornerRadius: RelayTheme.radius)
+        .relayFormSection()
     }
 
     // MARK: - Pane 5: Knowledge & Memory
@@ -1080,11 +1067,11 @@ struct SettingsView: View {
         let vault = store.semanticVault
         return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "books.vertical.fill", color: RelayColors.accentBlue, size: 38, iconSize: 17)
+                SettingsSectionIcon(icon: "books.vertical.fill")
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         Text("Semantic Knowledge Vault")
-                            .font(.relayHeadline)
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
                         if vault.canResume {
                             RelayBadge("Resumable", tint: RelayColors.accentAmber, prominent: true)
@@ -1093,7 +1080,7 @@ struct SettingsView: View {
                         }
                     }
                     Text("Organize your approved sources into linked Markdown notes about people, projects, plans, and preferences. Manual edits are preserved.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                 }
                 Spacer()
@@ -1105,7 +1092,7 @@ struct SettingsView: View {
             }
 
             Text(vault.status)
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textSecondary)
                 .textSelection(.enabled)
 
@@ -1130,8 +1117,7 @@ struct SettingsView: View {
                 Spacer()
             }
         }
-        .padding(20)
-        .relayGlassCard(cornerRadius: RelayTheme.radius)
+        .relayFormSection()
     }
 
     // MARK: - Pane 6: Automation & Schedule
@@ -1140,19 +1126,19 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 12) {
-                    RelayIconBadge(icon: "sparkles.rectangle.stack.fill", color: RelayColors.accentGold, size: 38, iconSize: 17)
+                    SettingsSectionIcon(icon: "sparkles.rectangle.stack.fill")
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Suggestions on Home")
-                            .font(.relayHeadline)
+                        Text("Morning Brief suggestions")
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
-                        Text("Show follow-ups, meeting preparation, and draft ideas from your selected sources. Choose when to prepare them in Background preparation below.")
-                            .font(.relayCaption)
+                        Text("Prepare follow-ups, meeting notes, and draft ideas for Morning Brief from your selected sources.")
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textSecondary)
                             .lineSpacing(2)
                     }
                     Spacer()
                     Toggle(
-                        "Show suggestions on Home",
+                        "Show Morning Brief suggestions",
                         isOn: Binding(
                             get: { store.proactiveEngine.enabled },
                             set: { store.setSuggestionsEnabled($0) }
@@ -1164,14 +1150,13 @@ struct SettingsView: View {
                 }
 
                 Text(store.proactiveEngine.status)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
                     .textSelection(.enabled)
 
 
             }
-            .padding(20)
-            .relayLitCard(accent: RelayColors.accentGold, cornerRadius: RelayTheme.radius)
+            .relayFormSection()
 
             PreparationScheduleView(
                 scheduler: store.preparation,
@@ -1186,15 +1171,15 @@ struct SettingsView: View {
     private var screenRecordingSettings: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "rectangle.inset.filled", color: RelayColors.accentBlue, size: 38, iconSize: 17)
+                SettingsSectionIcon(icon: "rectangle.inset.filled")
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Screen Recording").font(.relayHeadline)
+                    Text("Screen Recording").font(RelayPageStyle.sectionTitle)
                     Text("Let Relay understand visual content in a selected window. macOS manages this permission.")
-                        .font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
+                        .font(RelayPageStyle.caption).foregroundStyle(RelayColors.textSecondary)
                 }
                 Spacer()
                 Text(screenCaptureGranted ? "Allowed" : "Not enabled")
-                    .font(.relayCaptionStrong)
+                    .font(RelayPageStyle.caption.weight(.medium))
                     .foregroundStyle(screenCaptureGranted ? RelayColors.accentEmerald : RelayColors.textSecondary)
             }
             HStack(spacing: 10) {
@@ -1205,33 +1190,31 @@ struct SettingsView: View {
             }
             .buttonStyle(RelaySecondaryButtonStyle())
         }
-        .padding(20)
-        .relayGlassCard(cornerRadius: RelayTheme.radius)
+        .relayFormSection()
         .onAppear { screenCaptureGranted = CGPreflightScreenCaptureAccess() }
     }
 
     private var voicePermissionSettings: some View {
         VStack(alignment: .leading, spacing: 14) {
             Label("Microphone & speech recognition", systemImage: "mic")
-                .font(.relayHeadline)
+                .font(RelayPageStyle.sectionTitle)
                 .accessibilityAddTraits(.isHeader)
             Text("Dictation needs both permissions. Relay asks when you first start recording; transcription uses on-device speech recognition when available for your language.")
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textSecondary)
             VStack(alignment: .leading, spacing: 10) {
                 Label("Microphone: \(microphonePermissionDescription)", systemImage: microphoneAuthorization == .authorized ? "checkmark.circle" : "mic.slash")
                 Label("Speech recognition: \(speechPermissionDescription)", systemImage: speechAuthorization == .authorized ? "checkmark.circle" : "waveform")
             }
-            .font(.relayCaptionStrong)
-            HStack(spacing: 10) {
+            .font(RelayPageStyle.caption.weight(.medium))
+            RelayChipFlow(spacing: 8, alignment: .leading) {
                 Button("Microphone settings") { openPrivacySettings("Privacy_Microphone") }
                 Button("Speech recognition settings") { openPrivacySettings("Privacy_SpeechRecognition") }
                 Button("Check again") { refreshPermissions() }
             }
             .buttonStyle(RelaySecondaryButtonStyle())
         }
-        .padding(20)
-        .relayGlassCard(cornerRadius: RelayTheme.radius)
+        .relayFormSection()
     }
 
     private var microphonePermissionDescription: String {
@@ -1280,21 +1263,20 @@ struct SettingsView: View {
     private var systemAndPrivacySettings: some View {
         VStack(alignment: .leading, spacing: 22) {
             AppUpdateView()
-                .padding(20)
-                .relayGlassCard(cornerRadius: RelayTheme.radius)
+                .relayFormSection()
             VStack(alignment: .leading, spacing: 18) {
                 ConversationExportView(store: store)
 
                 Divider().overlay(RelayTheme.line)
 
                 HStack(alignment: .center, spacing: 16) {
-                    RelayIconBadge(icon: "clock.arrow.circlepath", color: RelayColors.accentBlue, size: 38, iconSize: 17)
+                    SettingsSectionIcon(icon: "clock.arrow.circlepath")
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Conversation History")
-                            .font(.relayHeadline)
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
                         Text("Clear active conversation history. This does not undo created files or external changes.")
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textSecondary)
                     }
                     Spacer()
@@ -1309,8 +1291,7 @@ struct SettingsView: View {
                     DiagnosticsView(store: store).padding(.top, 12)
                 }
             }
-            .padding(20)
-            .relayGlassCard(cornerRadius: RelayTheme.radius)
+            .relayFormSection()
 
             DisclosureGroup("Reset or uninstall Relay") {
                 resetAndUninstallCard.padding(.top, 12)
@@ -1321,13 +1302,13 @@ struct SettingsView: View {
     private var accessibilityAndComputerUseCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "cursorarrow.motionlines", color: RelayColors.accentBlue, size: 38, iconSize: 17)
+                SettingsSectionIcon(icon: "cursorarrow.motionlines")
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Accessibility & app control")
-                        .font(.relayHeadline)
+                        .font(RelayPageStyle.sectionTitle)
                         .foregroundStyle(RelayColors.textPrimary)
                     Text("Read controls in your apps, enter text, and carry out reviewed actions. Secure fields and security dialogs are excluded.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .lineSpacing(2)
                 }
@@ -1353,12 +1334,12 @@ struct SettingsView: View {
 
             Toggle("Enable App Window Control (Computer Use)", isOn: $nativeWindowControlEnabled)
                 .toggleStyle(.switch)
-                .font(.relayBodyStrong)
+                .font(RelayPageStyle.body.weight(.medium))
                 .disabled(store.isRunning)
                 .accessibilityIdentifier("nativeWindowControl.enabled")
 
             Text("Requires Accessibility permission and a ready workspace model. Actions follow the approval setting below; consequential changes still require review.")
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textSecondary)
                 .lineSpacing(3)
 
@@ -1370,12 +1351,12 @@ struct SettingsView: View {
                 )
             )
             .toggleStyle(.switch)
-            .font(.relayBodyStrong)
+            .font(RelayPageStyle.body.weight(.medium))
             .disabled(store.isRunning || !nativeWindowControlEnabled)
             .accessibilityIdentifier("nativeWindowControl.autoApproveRoutine")
 
             Text("Skip confirmation prompts for ordinary browser navigation, tab switches, and routine UI clicks. Sends, calendar commits, file moves, overwrites, and sensitive fields still require approval.")
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textSecondary)
                 .lineSpacing(3)
 
@@ -1384,7 +1365,7 @@ struct SettingsView: View {
             DisclosureGroup("Self-Test & Diagnostic Probes") {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Verifies synthetic pointer/text actuation and screen capture inside an isolated Relay test fixture window without touching other apps.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .lineSpacing(2)
 
@@ -1429,14 +1410,14 @@ struct SettingsView: View {
                     }
 
                     Text(store.accessibilityCheckStatus)
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityLabel("Accessibility check status: \(store.accessibilityCheckStatus)")
 
                     Text(store.screenCaptureCheckStatus.summary)
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1444,22 +1425,21 @@ struct SettingsView: View {
                 }
                 .padding(.top, 8)
             }
-            .font(.relayBodyStrong)
+            .font(RelayPageStyle.body.weight(.medium))
         }
-        .padding(20)
-        .relayGlassCard(cornerRadius: RelayTheme.radius)
+        .relayFormSection()
     }
 
     private var resetAndUninstallCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "trash.slash.fill", color: RelayColors.accentCoral, size: 38, iconSize: 17)
+                SettingsSectionIcon(icon: "trash.slash.fill")
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Factory Reset & Clean Uninstall")
-                        .font(.relayHeadline)
+                        .font(RelayPageStyle.sectionTitle)
                         .foregroundStyle(RelayColors.textPrimary)
                     Text("Reset Relay back to first-launch setup (optionally keeping downloaded multi-gigabyte Gemma models), or completely remove Relay, its Keychain items, Knowledge Vault, and scheduled wake helper from this Mac. External developer setups (`~/.codex`, `~/.claude`) and your personal files are never touched.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .lineSpacing(2)
                 }
@@ -1486,8 +1466,7 @@ struct SettingsView: View {
                 Spacer()
             }
         }
-        .padding(20)
-        .relayLitCard(accent: RelayColors.accentCoral, cornerRadius: RelayTheme.radius)
+        .relayFormSection()
     }
 
     // MARK: - Shared Subsections
@@ -1506,10 +1485,10 @@ struct SettingsView: View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.relayBodyStrong)
+                    .font(RelayPageStyle.body.weight(.medium))
                     .foregroundStyle(RelayColors.textPrimary)
                 Text(detail)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1522,21 +1501,21 @@ struct SettingsView: View {
     private var sidekickInstructionsSettings: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "text.bubble.fill", color: RelayColors.accentAmethyst, size: 38, iconSize: 17)
+                SettingsSectionIcon(icon: "text.bubble.fill")
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Sidekick Custom Instructions")
-                        .font(.relayHeadline)
+                        .font(RelayPageStyle.sectionTitle)
                         .foregroundStyle(RelayColors.textPrimary)
                         .accessibilityAddTraits(.isHeader)
                     Text("Tell Sidekick how you like to work. These preferences apply to tasks using your workspace model.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                 }
                 Spacer()
             }
 
             TextEditor(text: $sidekickInstructions)
-                .font(.relayBody)
+                .font(RelayPageStyle.body)
                 .foregroundStyle(RelayColors.textPrimary)
                 .scrollContentBackground(.hidden)
                 .padding(12)
@@ -1554,23 +1533,22 @@ struct SettingsView: View {
                     }
                 }
             Text("Saved automatically · \(sidekickInstructions.utf8.count.formatted()) of \(SidekickTaskContext.instructionByteLimit.formatted()) bytes")
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textSecondary)
         }
-        .padding(20)
-        .relayGlassCard(cornerRadius: RelayTheme.radius)
+        .relayFormSection()
     }
 
     private var quickAccessSettings: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "command.square.fill", color: RelayColors.accentBlue, size: 38, iconSize: 17)
+                SettingsSectionIcon(icon: "command.square.fill")
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Quick Access Shortcut")
-                        .font(.relayHeadline)
+                        .font(RelayPageStyle.sectionTitle)
                         .foregroundStyle(RelayColors.textPrimary)
                     Text("Brings Relay forward instantly from any application using ⌘⇧Space.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                 }
                 Spacer()
@@ -1584,10 +1562,10 @@ struct SettingsView: View {
             HStack(alignment: .center, spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Include selected text in reply draft")
-                        .font(.relayBodyStrong)
+                        .font(RelayPageStyle.body.weight(.medium))
                         .foregroundStyle(RelayColors.textPrimary)
                     Text("When triggered, copies selected text into a draft with the source app name. Password fields are automatically excluded.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                 }
                 Spacer()
@@ -1602,31 +1580,30 @@ struct SettingsView: View {
                 .foregroundStyle(RelayColors.textMuted)
             if let error = store.quickAccess.errorMessage {
                 Text(error)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.accentCoral)
             }
             if store.selectionCaptureEnabled {
                 Text(store.selectionStatus)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
-        .relayGlassCard(cornerRadius: RelayTheme.radius)
+        .relayFormSection()
     }
 
     private var memorySettings: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "brain.head.profile", color: RelayColors.accentEmerald, size: 38, iconSize: 17)
+                SettingsSectionIcon(icon: "brain.head.profile")
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Local Memory & Preferences")
-                        .font(.relayHeadline)
+                        .font(RelayPageStyle.sectionTitle)
                         .foregroundStyle(RelayColors.textPrimary)
                         .accessibilityAddTraits(.isHeader)
                     Text("Add preferences for future conversations. Existing memories save as you edit; approve a new preference below to add it.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                 }
                 Spacer()
@@ -1641,7 +1618,7 @@ struct SettingsView: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(RelayColors.accentEmerald)
                     TextField("Approved memory", text: $memory.text, axis: .vertical)
-                        .font(.relayBody)
+                        .font(RelayPageStyle.body)
                         .foregroundStyle(RelayColors.textPrimary)
                         .textFieldStyle(.plain)
                         .onChange(of: memory.text) { _, _ in store.approvedMemoryEdited() }
@@ -1672,7 +1649,7 @@ struct SettingsView: View {
                 )
                 .lineLimit(2...4)
                 .textFieldStyle(.plain)
-                .font(.relayBody)
+                .font(RelayPageStyle.body)
                 .relayTextFieldPrompt("e.g. Always format terminal commands in code blocks", when: memoryText.isEmpty, font: .relayBody)
                 .foregroundStyle(RelayColors.textPrimary)
                 .accessibilityLabel("New memory instruction")
@@ -1685,7 +1662,7 @@ struct SettingsView: View {
 
                 HStack {
                     Text("Saved strictly on your Mac.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textMuted)
                     Spacer()
                     Button("Approve & remember") {
@@ -1697,8 +1674,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .padding(20)
-        .relayGlassCard(cornerRadius: RelayTheme.radius)
+        .relayFormSection()
     }
 
     // MARK: - Helpers
@@ -1706,11 +1682,11 @@ struct SettingsView: View {
     private func sectionTitle(_ title: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
-                .font(.relayWorkbenchTitle)
+                .font(RelayPageStyle.title)
                 .foregroundStyle(RelayColors.textPrimary)
                 .accessibilityAddTraits(.isHeader)
             Text(detail)
-                .font(.relayBody)
+                .font(RelayPageStyle.body)
                 .foregroundStyle(RelayColors.textSecondary)
                 .lineSpacing(3)
         }
@@ -1719,16 +1695,16 @@ struct SettingsView: View {
     private func note(_ text: String, icon: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
-                .foregroundStyle(RelayColors.accentBlue)
+                .font(RelayPageStyle.symbol)
+                .foregroundStyle(RelayColors.textSecondary)
                 .padding(.top, 1)
             Text(text)
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textSecondary)
                 .lineSpacing(3)
         }
-        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .relayGlassCard(cornerRadius: 10)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func saveAndRefresh() {
@@ -1887,22 +1863,24 @@ private struct WorkspaceProviderRow: View {
         Button(action: action) {
             HStack(spacing: RelaySpace.sm) {
                 Image(systemName: descriptor.icon)
-                    .font(.relayBodyStrong)
-                    .foregroundStyle(isSelected ? RelayColors.accentBlue : RelayColors.textSecondary)
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(isSelected ? RelayColors.workbenchAccent : RelayColors.textSecondary)
                     .frame(width: 24)
 
                 VStack(alignment: .leading, spacing: RelaySpace.xxs) {
                     Text(descriptor.title)
-                        .font(.relayBodyStrong)
+                        .font(RelayPageStyle.body.weight(.medium))
                         .foregroundStyle(RelayColors.textPrimary)
-                    Text(descriptor.subtitle)
-                        .font(.relayCaption)
-                        .foregroundStyle(RelayColors.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if isSelected {
+                        Text(descriptor.subtitle)
+                            .font(RelayPageStyle.caption)
+                            .foregroundStyle(RelayColors.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         RelayHealthDot(color: isReady ? RelayColors.accentEmerald : RelayColors.textMuted)
                         Text(statusHint)
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textSecondary)
                             .lineLimit(2)
                             .truncationMode(.middle)
@@ -1912,8 +1890,8 @@ private struct WorkspaceProviderRow: View {
                 Spacer(minLength: RelaySpace.sm)
 
                 Image(systemName: "checkmark")
-                    .font(.relayCaptionStrong)
-                    .foregroundStyle(RelayColors.accentBlue)
+                    .font(RelayPageStyle.caption.weight(.medium))
+                    .foregroundStyle(RelayColors.workbenchAccent)
                     .opacity(isSelected ? 1 : 0)
                     .accessibilityHidden(true)
                     .frame(width: 16)
@@ -1986,23 +1964,18 @@ private struct OnDeviceCatalogModelCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 14) {
-                RelayIconBadge(
-                    icon: isE4B ? "memorychip.fill" : "cpu",
-                    color: isSelected ? RelayColors.accentEmerald : RelayColors.accentBlue,
-                    size: 38,
-                    iconSize: 17
-                )
+                SettingsSectionIcon(icon: isE4B ? "memorychip" : "cpu")
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(manifest.displayName)
-                        .font(.relayBodyStrong)
+                        .font(RelayPageStyle.body.weight(.medium))
                         .foregroundStyle(RelayColors.textPrimary)
                     Text(parameterSpec)
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
 
                     Text(summaryText)
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -2101,7 +2074,7 @@ private struct OnDeviceCatalogModelCard: View {
 
             if let errorMessage = downloader.errorMessage {
                 Text(errorMessage)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.accentCoral)
                     .textSelection(.enabled)
             }
@@ -2146,17 +2119,17 @@ private struct AppearanceModeOptionCard: View {
 
     private var previewBackground: Color {
         switch mode {
-        case .dark: return Color(red: 0.04, green: 0.045, blue: 0.06)
-        case .light: return Color(red: 0.96, green: 0.965, blue: 0.98)
-        case .system: return Color(red: 0.14, green: 0.16, blue: 0.22)
+        case .dark: return Color(red: 0.055, green: 0.068, blue: 0.075)
+        case .light: return Color(red: 0.969, green: 0.977, blue: 0.976)
+        case .system: return Color(red: 0.16, green: 0.20, blue: 0.20)
         }
     }
 
     private var previewCard: Color {
         switch mode {
-        case .dark: return Color(red: 0.10, green: 0.11, blue: 0.14)
+        case .dark: return Color(red: 0.10, green: 0.125, blue: 0.13)
         case .light: return Color.white
-        case .system: return Color(red: 0.22, green: 0.25, blue: 0.32)
+        case .system: return Color(red: 0.23, green: 0.28, blue: 0.28)
         }
     }
 
@@ -2198,7 +2171,7 @@ private struct AppearanceModeOptionCard: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(isSelected ? RelayColors.textPrimary : RelayColors.textSecondary)
                     Text(mode.displayName)
-                        .font(.relayBodyStrong)
+                        .font(RelayPageStyle.body.weight(.medium))
                         .foregroundStyle(RelayColors.textPrimary)
                     Spacer()
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
@@ -2207,7 +2180,7 @@ private struct AppearanceModeOptionCard: View {
                 }
 
                 Text(mode.subtitle)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
                     .lineLimit(1)
             }
@@ -2242,11 +2215,11 @@ private struct SettingsSidebarTabButton: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                    .font(RelayPageStyle.symbol)
                     .foregroundStyle(isSelected ? RelayColors.textPrimary : (isHovered ? RelayColors.textPrimary : RelayColors.textSecondary))
                     .frame(width: 20)
                 Text(title)
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                    .font(RelayPageStyle.body.weight(isSelected ? .medium : .regular))
                     .foregroundStyle(isSelected ? RelayColors.textPrimary : (isHovered ? RelayColors.textBright : RelayColors.textSecondary))
                     .lineLimit(1)
                 Spacer(minLength: 0)
@@ -2268,5 +2241,31 @@ private struct SettingsSidebarTabButton: View {
         .buttonStyle(RelayPressStyle())
         .onHover { isHovered = $0 }
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+private struct SettingsSectionIcon: View {
+    let icon: String
+
+    private var outlineSymbol: String {
+        switch icon {
+        case "cpu.fill": "cpu"
+        case "folder.fill": "folder"
+        case "hand.raised.fill": "hand.raised"
+        case "books.vertical.fill": "books.vertical"
+        case "sparkles.rectangle.stack.fill": "rectangle.stack"
+        case "trash.slash.fill": "trash"
+        case "text.bubble.fill": "text.bubble"
+        case "command.square.fill": "command"
+        default: icon
+        }
+    }
+
+    var body: some View {
+        Image(systemName: outlineSymbol)
+            .font(RelayPageStyle.symbol)
+            .foregroundStyle(RelayColors.textSecondary)
+            .frame(width: 24, height: 24)
+            .accessibilityHidden(true)
     }
 }

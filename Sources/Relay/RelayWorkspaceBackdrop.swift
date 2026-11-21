@@ -1,77 +1,115 @@
 import SwiftUI
 
-/// Static atmosphere stays at the window edge; conversation content has no
-/// animated or high-contrast color behind it. Increased Contrast gets a flat canvas.
+/// Light belongs to the edge of the workspace. The reading surface stays neutral,
+/// and the atmosphere has no timer, interaction, or accessibility footprint.
 struct RelayWorkspaceBackdrop: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     private var isDark: Bool { scheme == .dark }
+    private var canvas: Color { RelayColors.canvas }
 
     var body: some View {
         GeometryReader { geometry in
-            ZStack(alignment: .top) {
-                (isDark ? Color(red: 0.035, green: 0.043, blue: 0.055) : RelayColors.canvas)
+            ZStack {
+                canvas
                 if contrast != .increased && !reduceTransparency {
-                    ZStack(alignment: .topLeading) {
-                        light(Color(red: 0.15, green: 0.38, blue: 0.70),
-                              opacity: isDark ? 0.44 : 0.065,
-                              width: min(520, geometry.size.width * 0.50))
-                            .position(x: geometry.size.width * 0.10, y: -24)
-                        light(Color(red: 0.66, green: 0.18, blue: 0.28),
-                              opacity: isDark ? 0.32 : 0.045,
-                              width: min(560, geometry.size.width * 0.48))
-                            .position(x: geometry.size.width * 0.51, y: -48)
-                        light(Color(red: 0.68, green: 0.48, blue: 0.21),
-                              opacity: isDark ? 0.40 : 0.065,
-                              width: min(640, geometry.size.width * 0.55))
-                            .position(x: geometry.size.width * 0.91, y: -26)
-                        Ellipse().fill(Color(red: 0.68, green: 0.48, blue: 0.21).opacity(isDark ? 0.10 : 0.025))
-                            .frame(width: 300, height: 150).blur(radius: 48)
-                            .position(x: geometry.size.width * 0.73, y: geometry.size.height + 48)
-                    }
-                    .clipped()
+                    atmosphere(in: geometry.size)
                 }
             }
+            .clipped()
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
 
-    private func light(_ color: Color, opacity: Double, width: CGFloat) -> some View {
+    private func atmosphere(in size: CGSize) -> some View {
+        ZStack {
+            // Relay uses one quiet teal field, shared with Settings and Knowledge.
+            // The offset light is deliberately distinct from a multicolor crown.
+            light(Color(red: 0.19, green: 0.47, blue: 0.42),
+                  opacity: isDark ? 0.19 : 0.05,
+                  width: min(1000, max(600, size.width * 0.8)),
+                  height: 580, blur: 120)
+                .rotationEffect(.degrees(-30))
+                .position(x: size.width * -0.06, y: size.height * 0.18)
+            light(Color(red: 0.24, green: 0.34, blue: 0.41),
+                  opacity: isDark ? 0.09 : 0.025,
+                  width: 760, height: 340, blur: 120)
+                .position(x: size.width * 0.88, y: -120)
+        }
+    }
+
+    private func light(_ color: Color, opacity: Double, width: CGFloat, height: CGFloat, blur: CGFloat) -> some View {
         Ellipse()
             .fill(color.opacity(opacity))
-            .frame(width: width, height: 240)
-            .blur(radius: 64)
+            .frame(width: width, height: height)
+            .blur(radius: blur)
     }
 }
 
 private struct RelayWorkspaceSurface: ViewModifier {
     let cornerRadius: CGFloat
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    private var isDark: Bool { scheme == .dark }
+    private var needsSolidSurface: Bool { reduceTransparency || contrast == .increased }
+    private var solidFill: Color { RelayColors.cardBG }
+    private var edge: Color {
+        if contrast == .increased {
+            return isDark ? .white.opacity(0.52) : .black.opacity(0.36)
+        }
+        return isDark ? .white.opacity(0.105) : .black.opacity(0.085)
+    }
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        content
+            .background {
+                if needsSolidSurface {
+                    shape.fill(solidFill)
+                } else {
+                    shape.fill(.ultraThinMaterial)
+                        .overlay(shape.fill(isDark ? .black.opacity(0.30) : .white.opacity(0.42)))
+                }
+            }
+            .overlay {
+                shape.strokeBorder(edge, lineWidth: contrast == .increased ? 1 : 0.65)
+                    .allowsHitTesting(false)
+            }
+            .shadow(color: .black.opacity(isDark ? 0.14 : 0.035), radius: 18, y: 7)
+    }
+}
+
+private struct RelayWorkspaceSidebarSurface: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
 
     func body(content: Content) -> some View {
-        content
-            .background {
-                if reduceTransparency || contrast == .increased {
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).fill(RelayColors.cardBG)
-                } else {
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).fill(.ultraThinMaterial)
-                }
+        content.background {
+            if reduceTransparency || contrast == .increased {
+                scheme == .dark ? Color(white: 0.055) : Color(white: 0.975)
+            } else {
+                Rectangle().fill(.ultraThinMaterial)
+                    .overlay(scheme == .dark ? Color.black.opacity(0.36) : Color.white.opacity(0.48))
             }
-            .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(RelayColors.borderDefault, lineWidth: 0.7)
-                    .allowsHitTesting(false)
-            }
+        }
     }
 }
 
 extension View {
-    func relayWorkspaceSurface(cornerRadius: CGFloat = 18) -> some View {
+    func relayWorkspaceSurface(cornerRadius: CGFloat = 16) -> some View {
         modifier(RelayWorkspaceSurface(cornerRadius: cornerRadius))
+    }
+
+    /// Supplementary history shares the atmosphere instead of masking it with
+    /// the opaque panel color used by document-oriented workspaces.
+    func relayWorkspaceSidebarSurface() -> some View {
+        modifier(RelayWorkspaceSidebarSurface())
     }
 }

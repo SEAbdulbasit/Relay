@@ -66,7 +66,11 @@ struct LaunchAtLoginView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "power.circle.fill", color: RelayColors.accentEmerald, size: 38, iconSize: 17)
+                Image(systemName: "power")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Open Relay at Login")
                         .font(.relayHeadline)

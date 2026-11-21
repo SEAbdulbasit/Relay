@@ -18,13 +18,17 @@ struct PreparationScheduleView: View {
 
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 12) {
-                    RelayIconBadge(icon: "sun.horizon.fill", color: RelayColors.accentGold, size: 38, iconSize: 17)
+                    Image(systemName: "sun.horizon")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Daily Morning Brief Schedule")
-                            .font(.relayHeadline)
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
                         Text(suggestionsEnabled ? "Relay prepares your daily brief locally at the scheduled hour while the app is open." : "Turn on proactive suggestions above to schedule a daily Morning Brief.")
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textSecondary)
                     }
                     Spacer()
@@ -76,12 +80,7 @@ struct PreparationScheduleView: View {
 
                     scheduleStatus
                 }
-                .padding(14)
-                .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
-                )
+                .padding(.vertical, 4)
 
                 DisclosureGroup("Morning Brief options & wake schedule") {
                     VStack(alignment: .leading, spacing: 16) {
@@ -111,8 +110,7 @@ struct PreparationScheduleView: View {
                 .foregroundStyle(RelayColors.textPrimary)
                 .disclosureGroupStyle(RelayDisclosureGroupStyle(accent: RelayColors.accentGold))
             }
-            .padding(20)
-            .relayGlassCard(cornerRadius: RelayTheme.radius)
+            .relayFormSection()
         }
     }
 
@@ -129,7 +127,7 @@ struct PreparationScheduleView: View {
                 detail("Last prepared \(date.formatted(date: .abbreviated, time: .shortened))")
             }
             if let error = scheduleError ?? scheduler.errorMessage {
-                Text(error).font(.relayCaption).foregroundStyle(RelayColors.accentCoral).textSelection(.enabled)
+                Text(error).font(RelayPageStyle.caption).foregroundStyle(RelayColors.accentCoral).textSelection(.enabled)
             }
             if scheduler.isPreparing {
                 Button("Stop preparation") { scheduler.cancelCurrentPreparation() }
@@ -159,7 +157,7 @@ struct PreparationScheduleView: View {
     }
 
     private func detail(_ value: String) -> some View {
-        Text(value).font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
+        Text(value).font(RelayPageStyle.caption).foregroundStyle(RelayColors.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -191,7 +189,7 @@ struct PreparationScheduleView: View {
                     .accessibilityIdentifier("preparation.refreshWake")
                 if let wakeFeedback { Text(wakeFeedback) }
             }
-            .font(.relayCaption)
+            .font(RelayPageStyle.caption)
             .padding(.top, 8)
         }
         .onChange(of: showsWakeSetup) { _, expanded in if expanded { refreshWakeSetup() } }
@@ -287,13 +285,17 @@ struct PluggedInAnalysisScheduleView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "bolt.batteryblock.fill", color: RelayColors.accentGold, size: 38, iconSize: 17)
+                Image(systemName: "bolt.batteryblock")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Background preparation")
-                        .font(.relayHeadline)
+                        .font(RelayPageStyle.sectionTitle)
                         .foregroundStyle(RelayColors.textPrimary)
                     Text("Sync selected sources and prepare notes while your Mac is plugged in and idle. Runs at most every 4 hours, after 4.5 minutes of inactivity. Requests a pause when you return or unplug, keeping completed work.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -326,7 +328,7 @@ struct PluggedInAnalysisScheduleView: View {
                     .accessibilityIdentifier("pluggedInAnalysis.runNow")
                 }
                 Text(scheduler.status)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("pluggedInAnalysis.status")
@@ -334,7 +336,7 @@ struct PluggedInAnalysisScheduleView: View {
 
             if let err = scheduler.lastErrorMessage {
                 Text(err)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.accentCoral)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
@@ -352,7 +354,7 @@ struct PluggedInAnalysisScheduleView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     if scheduler.recentRuns.isEmpty {
                         Text("No background analysis runs recorded yet.")
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textMuted)
                             .padding(.top, 4)
                     } else {
@@ -368,8 +370,7 @@ struct PluggedInAnalysisScheduleView: View {
             .disclosureGroupStyle(RelayDisclosureGroupStyle(accent: RelayColors.accentGold))
             .accessibilityIdentifier("pluggedInAnalysis.recentRuns")
         }
-        .padding(20)
-        .relayLitCard(accent: RelayColors.accentGold, cornerRadius: RelayTheme.radius)
+        .relayFormSection()
     }
 
     private func recentRunRow(_ run: PluggedInAnalysisScheduler.RunRecord) -> some View {
@@ -393,12 +394,12 @@ struct PluggedInAnalysisScheduleView: View {
                     Label("\(run.summary.proactiveCardsPrepared) cards", systemImage: "sun.horizon")
                 }
             }
-            .font(.relayCaption)
+            .font(RelayPageStyle.caption)
             .foregroundStyle(RelayColors.textSecondary)
 
             if let message = run.message, !message.isEmpty {
                 Text(message)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.accentCoral)
                     .lineLimit(2)
                     .textSelection(.enabled)

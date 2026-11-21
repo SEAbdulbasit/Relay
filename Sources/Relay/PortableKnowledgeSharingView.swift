@@ -12,19 +12,11 @@ struct PortableKnowledgeSharingView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "archivebox.fill", color: RelayColors.accentEmerald, size: 34, iconSize: 15)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Portable Encrypted Archive")
-                        .font(.relayBodyStrong)
-                        .foregroundStyle(RelayColors.textPrimary)
-                    Text("Save selected Markdown notes as one encrypted file. Keep its recovery code separately. A copy of Relay can open the archive on another Mac, without a server.")
-                        .font(.relayCaption)
-                        .foregroundStyle(RelayColors.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-            }
+            RelaySectionHeading(
+                title: "Portable encrypted archive",
+                detail: "Save selected Markdown notes as one encrypted file. Keep its recovery code separately. A copy of Relay can open the archive on another Mac, without a server.",
+                icon: "archivebox"
+            )
             HStack(spacing: 10) {
                 Button("Create archive…", systemImage: "lock.doc") { sheet = .create }
                     .accessibilityIdentifier("knowledge.createPortableArchive")
@@ -35,12 +27,7 @@ struct PortableKnowledgeSharingView: View {
             .buttonStyle(RelaySecondaryButtonStyle())
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
-        )
+        .relayFormSection()
         .sheet(item: $sheet) { choice in
             switch choice {
             case .create: CreateKnowledgeArchiveSheet()
@@ -62,7 +49,7 @@ private struct CreateKnowledgeArchiveSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Create encrypted archive")
-                .font(.relayTitle)
+                .font(RelayPageStyle.dialogTitle)
                 .foregroundStyle(RelayColors.textPrimary)
             if let recoveryCode {
                 Text("Keep the recovery code somewhere separate from the archive. Relay does not store it, and the file cannot be opened without it.")
@@ -149,9 +136,9 @@ private struct CreateKnowledgeArchiveSheet: View {
                 }
             }
         }
-        .padding(22)
+        .padding(24)
         .frame(width: 525)
-        .background(RelayColors.canvas)
+        .relayPageBackground()
         .relayPreferredAppearance()
         .onAppear { refreshNotes() }
     }
@@ -207,7 +194,7 @@ private struct OpenKnowledgeArchiveSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Open encrypted archive")
-                .font(.relayTitle)
+                .font(RelayPageStyle.dialogTitle)
                 .foregroundStyle(RelayColors.textPrimary)
             if notes.isEmpty {
                 Text("Choose a Relay archive and enter its recovery code. Relay opens the notes read-only in this window.")
@@ -273,9 +260,9 @@ private struct OpenKnowledgeArchiveSheet: View {
                 }
             }
         }
-        .padding(22)
+        .padding(24)
         .frame(width: 525)
-        .background(RelayColors.canvas)
+        .relayPageBackground()
         .relayPreferredAppearance()
     }
 

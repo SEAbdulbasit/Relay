@@ -9,27 +9,16 @@ struct ConversationExportView: View {
     @State private var status: String?
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "square.and.arrow.up.fill", color: RelayColors.accentBlue, size: 38, iconSize: 17)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Export Conversation")
-                        .font(.relayHeadline)
-                        .foregroundStyle(RelayColors.textPrimary)
-                    Text("Export the visible messages as a local file. This includes private text and artifact paths in clear text. Source files are not copied.")
-                        .font(.relayCaption)
-                        .foregroundStyle(RelayColors.textSecondary)
-                        .lineSpacing(2)
-                }
-                Spacer()
-                Button("Export conversation…") { export() }
-                    .buttonStyle(RelaySecondaryButtonStyle())
-                    .disabled(store.isRunning || store.voice.isBusy)
-            }
+            RelaySectionHeading(
+                title: "Export Conversation",
+                detail: "Export the visible messages as a local file. This includes private text and artifact paths in clear text. Source files are not copied.",
+                icon: "square.and.arrow.up"
+            )
 
-            HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 8) {
                     Text("Format")
-                        .font(.relayCaptionStrong)
+                        .font(RelayPageStyle.caption.weight(.medium))
                         .foregroundStyle(RelayColors.textSecondary)
                     Picker("Export format", selection: $format) {
                         Text("Markdown").tag(ConversationExport.Format.markdown)
@@ -42,25 +31,21 @@ struct ConversationExportView: View {
 
                 Toggle("Include Activity & action evidence", isOn: $includeActivity)
                     .toggleStyle(.switch)
-                    .font(.relayCaptionStrong)
+                    .font(RelayPageStyle.caption.weight(.medium))
                     .foregroundStyle(RelayColors.textPrimary)
 
-                Spacer()
             }
-            .padding(12)
-            .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
-            )
-
             Text("Activity can include source excerpts, filenames, and tool arguments. Choose a private folder; cloud-managed folders may sync exported files through macOS.")
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textMuted)
+
+            Button("Export conversation…") { export() }
+                .buttonStyle(RelaySecondaryButtonStyle())
+                .disabled(store.isRunning || store.voice.isBusy)
 
             if let status {
                 Text(status)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
                     .textSelection(.enabled)
             }

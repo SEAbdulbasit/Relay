@@ -9,16 +9,20 @@ struct OpenRouterSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "network", color: RelayColors.accentCyan, size: 38, iconSize: 17)
+                Image(systemName: "network")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 6) {
                         Text("OpenRouter Cloud API")
-                            .font(.relayHeadline)
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
                         RelayBadge("Keychain-Scoped", icon: "key.fill", tint: RelayColors.accentCyan, prominent: true)
                     }
                     Text("Optional cloud inference across frontier models. Selected conversations, admitted source content, and chosen images leave this Mac under OpenRouter and its model providers’ privacy terms.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -79,12 +83,12 @@ struct OpenRouterSettingsView: View {
                         }
                         if let keyFeedback {
                             Label(keyFeedback, systemImage: "checkmark.circle")
-                                .font(.relayCaption)
+                                .font(RelayPageStyle.caption)
                                 .foregroundStyle(RelayColors.textSecondary)
                                 .accessibilityIdentifier("settings.openRouterKeyFeedback")
                         }
                         Text("Only this provider’s Keychain item is used. Saved keys are never displayed; ChatGPT credentials are never used.")
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textMuted)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -124,12 +128,7 @@ struct OpenRouterSettingsView: View {
                     }
                 }
                 .disabled(store.isPreparingModel)
-                .padding(14)
-                .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
-                )
+                .padding(.vertical, 4)
 
                 HStack(spacing: 10) {
                     Button(store.isPreparingModel ? "Checking…" : "Check model") { Task { await store.refreshModels() } }
@@ -148,7 +147,7 @@ struct OpenRouterSettingsView: View {
             .disabled(store.isRunning && !store.isPreparingModel)
 
             Text("Checks make requests to OpenRouter and may cost credits. Model listing is not evidence of tool or image support. No request starts just by opening Settings.")
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textMuted)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -156,25 +155,24 @@ struct OpenRouterSettingsView: View {
                 Image(systemName: store.actionsReady ? "checkmark.circle.fill" : "circle.dotted")
                     .foregroundStyle(store.actionsReady ? RelayColors.accentEmerald : RelayColors.textMuted)
                 Text(store.modelStatus)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
                     .textSelection(.enabled)
             }
             if let error = store.errorMessage {
                 Text(error)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.accentCoral)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let status = store.localVisionStatus {
                 Text(status)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(20)
-        .relayLitCard(accent: RelayColors.accentCyan, cornerRadius: RelayTheme.radius)
+        .relayFormSection()
         .onAppear { modelDraft = selected?.modelID ?? "" }
         .onChange(of: selected?.modelID) { _, value in modelDraft = value ?? "" }
         .onChange(of: keyDraft) { _, value in if !value.isEmpty { keyFeedback = nil } }

@@ -28,8 +28,7 @@ struct NativeSourceConnectorsView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
-        .relayLitCard(accent: RelayColors.accentBlue, cornerRadius: RelayTheme.radius)
+        .relayFormSection()
     }
 
     // MARK: - Live Checkpointed Sources Section
@@ -37,13 +36,17 @@ struct NativeSourceConnectorsView: View {
     private var liveSourcesSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "tray.full.fill", color: RelayColors.accentBlue, size: 38, iconSize: 17)
+                Image(systemName: "tray.full")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Apps on this Mac")
-                        .font(.relayHeadline)
+                        .font(RelayPageStyle.sectionTitle)
                         .foregroundStyle(RelayColors.textPrimary)
                     Text("Choose the apps you want to include. Relay reads local copies and keeps your originals unchanged.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -93,7 +96,7 @@ struct NativeSourceConnectorsView: View {
                     ProgressView().controlSize(.mini).accessibilityHidden(true)
                 }
                 Text(live.status)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("liveSources.status")
@@ -101,7 +104,7 @@ struct NativeSourceConnectorsView: View {
 
             if let errorMessage = syncErrorMessage ?? live.lastErrorMessage {
                 Text(errorMessage)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.accentCoral)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
@@ -123,7 +126,7 @@ struct NativeSourceConnectorsView: View {
                     .font(.relayCaptionStrong)
                     .foregroundStyle(RelayColors.textPrimary)
                 Text(fda.guidanceSummary)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -213,7 +216,7 @@ struct NativeSourceConnectorsView: View {
             }
 
             Text(live.sourceStatuses[kind] ?? sourceSummary(kind))
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -269,7 +272,7 @@ struct NativeSourceConnectorsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(live.selectedMailAccountIDs.isEmpty ? "All Mail accounts included" : "\(live.selectedMailAccountIDs.count) account(s) selected")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayTheme.muted)
                     Spacer()
                     if !live.selectedMailAccountIDs.isEmpty {
@@ -279,7 +282,7 @@ struct NativeSourceConnectorsView: View {
                 }
                 if live.availableMailAccounts.isEmpty {
                     Text(live.fullDiskAccessStatus.granted ? "No Mail accounts discovered yet." : "Grant Full Disk Access to discover Mail accounts.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayTheme.muted)
                 } else {
                     ForEach(live.availableMailAccounts, id: \.id) { account in
@@ -291,7 +294,7 @@ struct NativeSourceConnectorsView: View {
                                 live.setSelectedMailAccounts(next)
                             }
                         ))
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                     }
                 }
             }
@@ -316,7 +319,7 @@ struct NativeSourceConnectorsView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(selected.isEmpty ? "All eligible conversations included" : "\(selected.count) conversation(s) selected")
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayTheme.muted)
                 Spacer()
                 if !selected.isEmpty {
@@ -326,7 +329,7 @@ struct NativeSourceConnectorsView: View {
             }
             if chats.isEmpty {
                 Text(emptyText)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayTheme.muted)
             } else {
                 ScrollView {
@@ -336,7 +339,7 @@ struct NativeSourceConnectorsView: View {
                                 get: { selected.contains(chat.id) },
                                 set: { onToggle(chat.id, $0) }
                             ))
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                         }
                     }
                 }
@@ -358,7 +361,7 @@ struct NativeSourceConnectorsView: View {
             Text("Session Highlights & Standalone Backups")
                 .font(.system(size: 14, weight: .semibold))
             Text("Select up to 8 notes or messages in the Apple app to capture for this session without Full Disk Access, or import a standalone Notes backup.")
-                .font(.relayCaption).foregroundStyle(RelayTheme.muted)
+                .font(RelayPageStyle.caption).foregroundStyle(RelayTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(NativePersonalSourceKind.allCases) { kind in
                 connector(kind)
@@ -371,7 +374,7 @@ struct NativeSourceConnectorsView: View {
                     .buttonStyle(RelaySecondaryButtonStyle())
                     .disabled(busy || sources.isCapturing)
                 Text("Choose a standalone Notes database backup outside Library folders. Plain text, folder and dates are imported; attachments and formatting are omitted. Private per-note progress is saved so the same backup can resume after interruption.")
-                    .font(.relayCaption).foregroundStyle(RelayTheme.muted)
+                    .font(RelayPageStyle.caption).foregroundStyle(RelayTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -383,7 +386,7 @@ struct NativeSourceConnectorsView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(RelayColors.textPrimary)
             Text("Ask one-off local questions over captured session highlights or standalone Messages (.db) / WhatsApp (.txt) exports without adding anything to chat history or the knowledge index.")
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -435,7 +438,7 @@ struct NativeSourceConnectorsView: View {
                 }
             }
             Text(sources.status(for: kind))
-                .font(.relayCaption).foregroundStyle(RelayTheme.muted)
+                .font(RelayPageStyle.caption).foregroundStyle(RelayTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
             if sources.canRefresh(kind) {
                 HStack(spacing: 10) {
@@ -452,7 +455,7 @@ struct NativeSourceConnectorsView: View {
                         .disabled(busy || sources.isCapturing)
                         .accessibilityIdentifier("nativeSources.refresh.\(kind.rawValue)")
                 }
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
             }
             ForEach(Array(items.prefix(8))) { item in
                 VStack(alignment: .leading, spacing: 2) {
@@ -468,12 +471,12 @@ struct NativeSourceConnectorsView: View {
                             .foregroundStyle(RelayTheme.muted)
                     }
                 }
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .textSelection(.enabled)
             }
             if items.count > 8 {
                 Text("Showing 8 of \(items.count) imported notes. Search the captured source to find another note.")
-                    .font(.relayCaption).foregroundStyle(RelayTheme.muted)
+                    .font(RelayPageStyle.caption).foregroundStyle(RelayTheme.muted)
             }
         }
     }

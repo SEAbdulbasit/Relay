@@ -18,29 +18,22 @@ struct DiagnosticsView: View {
     @State private var status: String?
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "stethoscope", color: RelayColors.accentEmerald, size: 38, iconSize: 17)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Technical Diagnostics Report")
-                        .font(.relayHeadline)
-                        .foregroundStyle(RelayColors.textPrimary)
-                    Text("Export technical status and counts as a local JSON file. Chats, source text, filenames, personal paths, and writing samples are excluded. Nothing is uploaded.")
-                        .font(.relayCaption)
-                        .foregroundStyle(RelayColors.textSecondary)
-                        .lineSpacing(2)
-                }
-                Spacer()
-                Button("Export technical report…") { export() }
-                    .buttonStyle(RelaySecondaryButtonStyle())
-            }
+            RelaySectionHeading(
+                title: "Technical Diagnostics Report",
+                detail: "Export technical status and counts as a local JSON file. Chats, source text, filenames, personal paths, and writing samples are excluded. Nothing is uploaded.",
+                icon: "stethoscope"
+            )
+            Button("Export technical report…") { export() }
+                .buttonStyle(RelaySecondaryButtonStyle())
             if let status {
                 Text(status)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
                     .textSelection(.enabled)
             }
         }
         .foregroundStyle(RelayColors.textPrimary)
+        .font(RelayPageStyle.body)
     }
     private func export() {
         let panel = NSSavePanel()

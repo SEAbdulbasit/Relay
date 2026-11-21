@@ -102,7 +102,7 @@ private struct DocumentSummaryView: View {
                 RelayMark(size: 25)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
-                        Text("Document summary").font(.relayTitle)
+                        Text("Document summary").font(RelayPageStyle.dialogTitle)
                         if let badge = provenanceLabel {
                             RelayBadge(badge)
                         }
@@ -165,11 +165,10 @@ private struct DocumentSummaryView: View {
             Text(copyStatus ?? "Closing this window clears its text.")
                 .font(.relayCaption)
                 .foregroundStyle(RelayColors.textSecondary)
-            HStack(spacing: 10) {
+            RelayChipFlow(spacing: 8, alignment: .trailing) {
                 Button("Close", action: close)
                     .buttonStyle(RelaySecondaryButtonStyle())
                     .accessibilityIdentifier("documentSummary.close")
-                Spacer(minLength: 8)
                 if session.canRetry && ![.capturing, .queued, .generating].contains(session.phase) {
                     Button("Retry", action: retry)
                         .buttonStyle(RelaySecondaryButtonStyle())
@@ -197,7 +196,7 @@ private struct DocumentSummaryView: View {
             }
         }
         .padding(24).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(RelayColors.canvas)
+        .relayPageBackground()
         .foregroundStyle(RelayTheme.ink)
         .preferredColorScheme(themeManager.appearanceMode.colorScheme)
         .relayPreferredAppearance()

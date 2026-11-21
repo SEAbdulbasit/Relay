@@ -21,11 +21,15 @@ struct CustomResponsesSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "bolt.horizontal.circle.fill", color: RelayColors.accentAmber, size: 38, iconSize: 17)
+                Image(systemName: "bolt.horizontal.circle")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 6) {
                         Text("OpenAI Responses API")
-                            .font(.relayHeadline)
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
                         RelayBadge(
                             isLoopbackEndpoint ? "Loopback HTTP" : "Endpoint-Scoped HTTPS",
@@ -36,7 +40,7 @@ struct CustomResponsesSettingsView: View {
                     Text(isLoopbackEndpoint
                         ? "Connects to a local OpenAI Responses-compatible server over loopback HTTP without changing your Codex or CLI configuration."
                         : "Sends prompts, tool schemas, and approved context over HTTPS to the selected OpenAI Responses-compatible endpoint using an endpoint-scoped Keychain key.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -74,11 +78,13 @@ struct CustomResponsesSettingsView: View {
                             )
                         }
 
-                        Spacer(minLength: 8)
-
+                        Spacer(minLength: 0)
+                    }
+                    HStack(spacing: 12) {
                         Text("Reasoning")
                             .font(.relayCaptionStrong)
                             .foregroundStyle(RelayColors.textSecondary)
+                            .frame(width: 80, alignment: .leading)
                         Picker("Reasoning", selection: $reasoningEffort) {
                             ForEach(CustomResponsesConfiguration.supportedReasoningEfforts, id: \.self) { effort in
                                 Text(effort).tag(effort)
@@ -131,7 +137,7 @@ struct CustomResponsesSettingsView: View {
 
                     if !hasAppliedBaseURL {
                         Text("Apply the URL to change upload permission, manage keys, or check models and images.")
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.accentAmber)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -258,7 +264,7 @@ struct CustomResponsesSettingsView: View {
                             .disabled(store.isPreparingModel || !hasAppliedBaseURL)
                         }
                         Text("Keys are scoped to the normalized endpoint URL in Keychain; ChatGPT/Codex CLI credentials and other providers' keys are never used.")
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textMuted)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -324,12 +330,7 @@ struct CustomResponsesSettingsView: View {
                     }
                 }
                 .disabled(store.isPreparingModel)
-                .padding(14)
-                .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
-                )
+                .padding(.vertical, 4)
 
                 HStack(spacing: 10) {
                     Button(store.isPreparingModel ? "Checking…" : "Check model") {
@@ -354,7 +355,7 @@ struct CustomResponsesSettingsView: View {
 
             if let keySavedMessage {
                 Text(keySavedMessage)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.accentEmerald)
             }
 
@@ -362,25 +363,24 @@ struct CustomResponsesSettingsView: View {
                 Image(systemName: store.actionsReady ? "checkmark.circle.fill" : "circle.dotted")
                     .foregroundStyle(store.actionsReady ? RelayColors.accentEmerald : RelayColors.textMuted)
                 Text(store.modelStatus)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
                     .textSelection(.enabled)
             }
             if let error = store.errorMessage {
                 Text(error)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.accentCoral)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let status = store.localVisionStatus {
                 Text(status)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(20)
-        .relayLitCard(accent: RelayColors.accentAmber, cornerRadius: RelayTheme.radius)
+        .relayFormSection()
         .onAppear {
             let currentURL = selected?.baseURL ?? CustomResponsesConfiguration.defaultBaseURL
             baseURL = currentURL

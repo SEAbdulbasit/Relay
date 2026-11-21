@@ -27,9 +27,9 @@ struct KnowledgeDraftRecoverySheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("Recover your draft").font(.relayWorkbenchTitle).accessibilityAddTraits(.isHeader)
+                Text("Recover your draft").font(RelayPageStyle.dialogTitle).accessibilityAddTraits(.isHeader)
                 Spacer()
-                Button("Later") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Later") { dismiss() }.buttonStyle(RelaySecondaryButtonStyle()).keyboardShortcut(.cancelAction)
             }
             Text(sourceExplanation).font(.relayBody).foregroundStyle(RelayColors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -65,7 +65,7 @@ struct KnowledgeDraftRecoverySheet: View {
         }
         .padding(24)
         .frame(minWidth: 560, idealWidth: 650, minHeight: 440, idealHeight: 560)
-        .background(RelayColors.canvas).foregroundStyle(RelayColors.textPrimary)
+        .relayPageBackground().foregroundStyle(RelayColors.textPrimary)
         .relayPreferredAppearance()
         .onAppear { refreshSourceState() }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("relay.willEraseLocalData"))) { _ in

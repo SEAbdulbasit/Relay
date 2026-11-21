@@ -18,24 +18,17 @@ struct VoiceInputView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(store.voice.isRecording ? RelayColors.accentCoral.opacity(0.16) : RelayColors.surface)
-                        .frame(width: 36, height: 36)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .strokeBorder(store.voice.isRecording ? RelayColors.accentCoral.opacity(0.42) : RelayColors.borderSubtle, lineWidth: 0.75)
-                        )
-                    Image(systemName: store.voice.isRecording ? "waveform" : "mic.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(store.voice.isRecording ? RelayColors.accentCoral : RelayColors.textPrimary)
-                }
+                Image(systemName: store.voice.isRecording ? "waveform" : "mic")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(store.voice.isRecording ? RelayColors.accentCoral : RelayColors.textSecondary)
+                    .frame(width: 24, height: 32)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Voice Input")
-                        .font(.system(size: 18, weight: .semibold))
+                        .font(RelayPageStyle.title)
                         .foregroundStyle(RelayColors.textPrimary)
                     Text("On-device macOS speech recognition · Never uploaded for transcription")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                 }
                 Spacer()
@@ -48,7 +41,7 @@ struct VoiceInputView: View {
                         )
                         .frame(width: 7, height: 7)
                     Text(store.voice.isRecording ? "Listening" : (hasTranscript ? "Ready" : "Standby"))
-                        .font(.relayCaptionStrong)
+                        .font(RelayPageStyle.caption.weight(.medium))
                         .foregroundStyle(RelayColors.textSecondary)
                 }
                 .padding(.horizontal, 10)
@@ -72,11 +65,10 @@ struct VoiceInputView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Speak. Review. Send.")
-                            .font(.system(size: 24, weight: .semibold))
-                            .tracking(-0.5)
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
                         Text("Dictate directly on this Mac, then add your words to the workspace composer or send immediately.")
-                            .font(.relayBody)
+                            .font(RelayPageStyle.body)
                             .foregroundStyle(RelayColors.textSecondary)
                             .lineSpacing(3)
                     }
@@ -84,7 +76,7 @@ struct VoiceInputView: View {
                     HStack(spacing: 14) {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Language")
-                                .font(.relayCaptionStrong)
+                                .font(RelayPageStyle.caption.weight(.medium))
                                 .foregroundStyle(RelayColors.textSecondary)
                             Picker("Language", selection: Binding(get: { store.voice.localeIdentifier }, set: { store.setVoiceLocale($0) })) {
                                 ForEach(languages) { language in
@@ -99,7 +91,7 @@ struct VoiceInputView: View {
 
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Recording Limit")
-                                .font(.relayCaptionStrong)
+                                .font(RelayPageStyle.caption.weight(.medium))
                                 .foregroundStyle(RelayColors.textSecondary)
                             Picker("Recording limit", selection: Binding(get: { store.voice.maximumDuration }, set: { store.voice.setMaximumDuration($0) })) {
                                 Text("10 seconds").tag(TimeInterval(10))
@@ -122,24 +114,24 @@ struct VoiceInputView: View {
                                 Circle().fill(RelayColors.accentCoral).frame(width: 8, height: 8)
                             }
                             Text(store.voice.status)
-                                .font(.relaySubheadline)
+                                .font(RelayPageStyle.body)
                                 .foregroundStyle(RelayColors.textSecondary)
                             Spacer()
                             Text("Max \(Int(store.voice.maximumDuration))s")
-                                .font(.relayCaption)
+                                .font(RelayPageStyle.caption)
                                 .foregroundStyle(RelayColors.textMuted)
                         }
 
                         if let error = store.voice.errorMessage {
                             Text(error)
-                                .font(.relaySubheadline)
+                                .font(RelayPageStyle.body)
                                 .foregroundStyle(RelayColors.accentAmber)
                                 .textSelection(.enabled)
                         }
 
                         ScrollView {
                             Text(store.voice.transcript.isEmpty ? "Your transcript will appear here as you speak…" : store.voice.transcript)
-                                .font(.system(size: 15.5, weight: .regular))
+                                .font(.system(size: 15))
                                 .foregroundStyle(store.voice.transcript.isEmpty ? RelayColors.textMuted : RelayColors.textPrimary)
                                 .lineSpacing(4)
                                 .textSelection(.enabled)
@@ -158,12 +150,12 @@ struct VoiceInputView: View {
 
                     DisclosureGroup("How local dictation works") {
                         Text("Recording stops at the selected limit; permission dialogs do not count toward the timer. On-device availability depends on your language and installed macOS speech assets.")
-                            .font(.relaySubheadline)
+                            .font(RelayPageStyle.body)
                             .foregroundStyle(RelayColors.textSecondary)
                             .lineSpacing(3)
                             .padding(.top, 6)
                     }
-                    .font(.relaySubheadline)
+                    .font(RelayPageStyle.body)
                     .foregroundStyle(RelayColors.textSecondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -205,18 +197,19 @@ struct VoiceInputView: View {
                     }
                 }
                 .buttonStyle(RelayPrimaryButtonStyle())
-                .tint(RelayColors.accentBlue)
+                .tint(RelayColors.workbenchAccent)
                 .disabled(!hasTranscript || store.isRunning || store.isClearingConversation)
                 .keyboardShortcut(.defaultAction)
             }
-            .font(.system(size: 14, weight: .medium))
+            .font(RelayPageStyle.body.weight(.medium))
         }
         .padding(24)
-        .frame(width: 600, height: 620)
-        .background(RelayColors.canvas)
+        .frame(width: 660, height: 620)
+        .font(RelayPageStyle.body)
+        .relayPageBackground()
         .foregroundStyle(RelayColors.textPrimary)
-        .tint(RelayColors.accentBlue)
-        .disclosureGroupStyle(RelayDisclosureGroupStyle(accent: RelayColors.accentCoral))
+        .tint(RelayColors.workbenchAccent)
+        .disclosureGroupStyle(RelayDisclosureGroupStyle(accent: RelayColors.workbenchAccent))
         .relayPreferredAppearance()
         .onAppear {
             store.speech.stop()

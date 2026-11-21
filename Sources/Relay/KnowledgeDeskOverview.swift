@@ -23,25 +23,20 @@ struct KnowledgeDeskOverview: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 30) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("YOUR RESEARCH DESK", systemImage: "books.vertical")
-                        .font(.relayEyebrow)
-                        .tracking(1.5)
-                        .foregroundStyle(RelayColors.workbenchAccent)
-                    Text("Your knowledge.")
-                        .font(.relayWorkbenchHero)
-                        .tracking(-1.1)
+            VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Library overview")
+                        .font(RelayPageStyle.sectionTitle)
                         .accessibilityAddTraits(.isHeader)
-                    Text("Notes you keep. Sources you choose.")
-                        .font(.system(size: 16))
+                    Text("Keep useful notes and explore the sources you choose.")
+                        .font(RelayPageStyle.body)
                         .foregroundStyle(RelayColors.textSecondary)
-                    HStack(spacing: 18) {
-                        metric(noteCount, label: noteCount == 1 ? "your note" : "your notes")
+                    HStack(spacing: 14) {
+                        metric(noteCount, label: noteCount == 1 ? "note" : "notes")
                         metric(sourceCount, label: sourceCount == 1 ? "source" : "sources")
                         metric(generatedCount, label: "generated")
                     }
-                    .padding(.top, 8)
+                    .padding(.top, 2)
                 }
 
                 Rectangle().fill(RelayColors.borderSubtle).frame(height: 1)
@@ -50,7 +45,7 @@ struct KnowledgeDeskOverview: View {
                     sectionHeading("Your notes", detail: "A place for the parts worth keeping.")
                     if notes.isEmpty {
                         Text("Start with a thought, a plan, or a useful result from a conversation.")
-                            .font(.relayBody)
+                            .font(RelayPageStyle.body)
                             .foregroundStyle(RelayColors.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                         Button("Write your first note", systemImage: "square.and.pencil", action: onNewNote)
@@ -78,15 +73,15 @@ struct KnowledgeDeskOverview: View {
                     }
                     if collections.isEmpty {
                         Text("Folders and source collections appear here as you add material.")
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textSecondary)
                     } else {
                         ForEach(collections) { item in documentRow(item) }
                     }
                 }
             }
-            .frame(maxWidth: 800, alignment: .leading)
-            .padding(32)
+            .frame(maxWidth: 720, alignment: .leading)
+            .padding(24)
             .frame(maxWidth: .infinity, alignment: .center)
         }
         .accessibilityIdentifier("knowledge.deskOverview")
@@ -94,16 +89,16 @@ struct KnowledgeDeskOverview: View {
 
     private func metric(_ value: Int, label: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 5) {
-            Text(value.formatted()).font(.system(size: 18, weight: .semibold, design: .rounded))
-            Text(label).font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
+            Text(value.formatted()).font(RelayPageStyle.caption).monospacedDigit()
+            Text(label).font(RelayPageStyle.caption).foregroundStyle(RelayColors.textSecondary)
         }
         .accessibilityElement(children: .combine)
     }
 
     private func sectionHeading(_ title: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.system(size: 17, weight: .semibold)).accessibilityAddTraits(.isHeader)
-            Text(detail).font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
+            Text(title).font(RelayPageStyle.sectionTitle).accessibilityAddTraits(.isHeader)
+            Text(detail).font(RelayPageStyle.caption).foregroundStyle(RelayColors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -112,16 +107,16 @@ struct KnowledgeDeskOverview: View {
         Button { onOpen(item.id) } label: {
             HStack(alignment: .top, spacing: 13) {
                 Image(systemName: item.icon)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(RelayColors.workbenchAccent)
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
                     .frame(width: 22)
                     .padding(.top, 2)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(item.title).font(.system(size: 14, weight: .semibold)).lineLimit(2)
-                    Text(item.detail).font(.relayEyebrow).foregroundStyle(RelayColors.textMuted)
+                    Text(item.title).font(.system(size: 13, weight: .medium)).lineLimit(2)
+                    Text(item.detail).font(RelayPageStyle.caption).foregroundStyle(RelayColors.textMuted)
                     if !item.preview.isEmpty {
-                        Text(item.preview).font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
-                            .lineLimit(2).multilineTextAlignment(.leading)
+                        Text(item.preview).font(RelayPageStyle.caption).foregroundStyle(RelayColors.textSecondary)
+                            .lineLimit(1).multilineTextAlignment(.leading)
                     }
                 }
                 Spacer(minLength: 8)
@@ -130,10 +125,12 @@ struct KnowledgeDeskOverview: View {
                     .padding(.top, 4)
             }
             .foregroundStyle(RelayColors.textPrimary)
-            .padding(.vertical, 12)
-            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .padding(.horizontal, 2)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RelayColors.workbenchTint, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(RelayColors.borderSubtle).frame(height: 0.7)
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(RelayPressStyle())

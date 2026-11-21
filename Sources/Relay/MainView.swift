@@ -23,12 +23,6 @@ struct MainView: View {
         case knowledge = "Knowledge"
     }
 
-    enum SidebarMode: String, CaseIterable, Identifiable {
-        case history = "History"
-        case activity = "Activity"
-        var id: String { rawValue }
-    }
-
     @State private var workspaceWindow = WorkspaceWindowReference()
     @State private var computerAccessReady = AXIsProcessTrusted()
     @State private var screenCaptureReady = CGPreflightScreenCaptureAccess()
@@ -71,12 +65,10 @@ struct MainView: View {
             atLatest = true
         }
     }
-    @AppStorage("relay.workspace.showLeftSidebar") private var showLeftSidebar = true
+    @AppStorage("relay.workspace.canvas.historyVisible") private var showLeftSidebar = false
     @State private var showCompactSidebar = false
-    @State private var sidebarMode: SidebarMode = .history
     @State private var historySearchQuery = ""
     @State private var currentTurnsExpanded = false
-    @State private var hoverNewThreadButton = false
     @State private var showVoiceInput = false
     @State private var showAttachPopover = false
     @State private var showComposerModelPopover = false
@@ -148,8 +140,8 @@ struct MainView: View {
         TranscriptMarkdownSegment.parseProseBlocks(proseText)
     }
 
-    private let leftSidebarWidth: CGFloat = 256
-    private let workspaceColumnWidth: CGFloat = RelayTheme.readingMaxWidth
+    private let leftSidebarWidth: CGFloat = 240
+    private let workspaceColumnWidth: CGFloat = 720
 
     private var currentAppearanceMode: RelayAppearanceMode {
         RelayAppearanceMode.fromStored(appearanceModeRaw)
@@ -164,7 +156,7 @@ struct MainView: View {
     }
 
     private var horizontalWorkspacePadding: CGFloat {
-        viewportWidth >= 1280 ? 36 : 28
+        viewportWidth >= 1280 ? 32 : 24
     }
 
     private var isUserTaskActive: Bool {
@@ -185,9 +177,6 @@ struct MainView: View {
                         computerAccessReady = AXIsProcessTrusted()
                         screenCaptureReady = CGPreflightScreenCaptureAccess()
                     }
-                if !store.messages.isEmpty || workspacePage != .workspace {
-                    Rectangle().fill(RelayColors.borderSubtle.opacity(0.45)).frame(height: 1)
-                }
 
                 switch workspacePage {
                 case .workspace:
@@ -195,8 +184,7 @@ struct MainView: View {
                         if showsLeftSidebarColumn {
                             leftSidebar
                                 .frame(width: leftSidebarWidth)
-                                .background(RelayTheme.sidebar)
-                            Rectangle().fill(RelayColors.borderSubtle.opacity(0.75)).frame(width: 1)
+                                .relayWorkspaceSidebarSurface()
                         }
 
                         VStack(spacing: 0) {
@@ -233,30 +221,26 @@ struct MainView: View {
                             if store.messages.isEmpty {
                                 GeometryReader { geometry in
                                     ScrollView {
-                                        VStack(spacing: RelaySpace.lg) {
-                                            Spacer(minLength: RelaySpace.sm)
+                                        VStack(spacing: 12) {
                                             welcome
-                                            if !store.proactiveEngine.activeCards.isEmpty || store.welcomeKeepsake.activeKeepsake != nil || store.proactiveEngine.isPreparing {
-                                                ProactiveHomeDeckView(
-                                                    store: store,
-                                                    engine: store.proactiveEngine,
-                                                    keepsakeGenerator: store.welcomeKeepsake,
-                                                    onOpenFullBrief: { showMorningBrief = true }
-                                                )
-                                            }
-                                            Spacer(minLength: RelaySpace.sm)
+                                                .frame(maxWidth: workspaceColumnWidth, alignment: .leading)
+                                                .padding(.horizontal, horizontalWorkspacePadding)
+                                                .frame(maxWidth: .infinity)
+                                            conversationDock
+                                            WorkspaceDraftSuggestions(onStartDraft: fillExample)
+                                                .frame(maxWidth: workspaceColumnWidth, alignment: .leading)
+                                                .padding(.horizontal, horizontalWorkspacePadding)
+                                                .frame(maxWidth: .infinity)
                                         }
-                                        .frame(maxWidth: RelayTheme.contentWidth)
-                                        .padding(.horizontal, horizontalWorkspacePadding)
-                                        .padding(.vertical, 24)
-                                        .frame(maxWidth: .infinity, minHeight: geometry.size.height)
+                                        .padding(.top, max(28, geometry.size.height * 0.19))
+                                        .padding(.bottom, 24)
+                                        .frame(maxWidth: .infinity)
                                     }
                                 }
                             } else {
                                 conversation
+                                conversationDock
                             }
-                            conversationDock
-                                .layoutPriority(1)
                         }
                     }
 
@@ -275,6 +259,7 @@ struct MainView: View {
                 }
             }
         }
+        .ignoresSafeArea(.container, edges: .top)
         .background(WorkspaceWindowProbe(reference: workspaceWindow).frame(width: 0, height: 0))
         .disclosureGroupStyle(RelayDisclosureGroupStyle())
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { viewportWidth = $0 }
@@ -287,7 +272,10 @@ struct MainView: View {
             }
         }
         .onChange(of: store.pendingReview?.id) { _, reviewID in
-            if reviewID != nil { workspacePage = .workspace }
+            if reviewID != nil {
+                store.showActivity = false
+                workspacePage = .workspace
+            }
         }
         .onChange(of: viewportWidth) { _, width in
             if width >= 860 { showCompactSidebar = false }
@@ -299,11 +287,11 @@ struct MainView: View {
             latestGeometryNearBottom = true
             showCompactSidebar = false
         }
-        .onChange(of: store.showActivity) { _, show in
-            if show {
-                showLeftSidebar = true
-                sidebarMode = .activity
-            }
+        .sheet(isPresented: $store.showActivity) {
+            activityPanel
+                .frame(width: 600, height: 560)
+                .background(RelayColors.canvas)
+                .relayPreferredAppearance()
         }
         .tint(RelayColors.workbenchAccent)
         .foregroundStyle(RelayTheme.ink)
@@ -470,12 +458,6 @@ struct MainView: View {
             if !store.messages.isEmpty {
                 store.syncActiveThreadSnapshot()
             }
-            if store.showActivity {
-                showLeftSidebar = true
-                sidebarMode = .activity
-            } else if store.messages.isEmpty && !isUserTaskActive {
-                store.showActivity = false
-            }
             if keyEventMonitor == nil {
                 keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                     handleLocalKeyDown(event)
@@ -526,68 +508,45 @@ struct MainView: View {
     // MARK: - Workspace header
 
     private var header: some View {
-        HStack(spacing: RelaySpace.xs) {
+        HStack(spacing: 6) {
             if workspacePage == .workspace {
                 WorkspaceHeaderButton(
-                    title: (viewportWidth < 860 ? showCompactSidebar : showLeftSidebar) ? "Hide sidebar" : "Show sidebar",
+                    title: (viewportWidth < 860 ? showCompactSidebar : showLeftSidebar) ? "Hide history" : "Show history",
                     icon: "sidebar.left",
-                    selected: false,
+                    selected: viewportWidth < 860 ? showCompactSidebar : showLeftSidebar,
                     iconOnly: true
-                ) {
-                    toggleSidebar()
-                }
+                ) { toggleSidebar() }
                 .popover(isPresented: $showCompactSidebar, arrowEdge: .bottom) {
                     leftSidebar
-                        .frame(width: 300, height: 460)
-                        .background(RelayTheme.sidebar)
+                        .frame(width: 280, height: 480)
+                        .relayWorkspaceSidebarSurface()
                         .relayPreferredAppearance()
                 }
                 .accessibilityIdentifier("workspace.sidebarToggle")
                 .accessibilityValue((viewportWidth < 860 ? showCompactSidebar : showLeftSidebar) ? "Shown" : "Hidden")
 
-                if !showsLeftSidebarColumn {
-                    WorkspaceHeaderButton(
-                        title: "New thread",
-                        icon: "square.and.pencil",
-                        iconOnly: true
-                    ) {
-                        startNewWorkspaceThread()
-                    }
-                    .disabled(store.isRunning || store.isClearingConversation)
-                    .accessibilityIdentifier("workspace.newThreadHeader")
+                WorkspaceHeaderButton(title: "New chat", icon: "square.and.pencil", iconOnly: true) {
+                    startNewWorkspaceThread()
+                }
+                .disabled(store.isRunning || store.isClearingConversation)
+                .accessibilityIdentifier("workspace.newThreadHeader")
+                Text("Relay")
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .padding(.leading, 5)
+            } else {
+                WorkspaceHeaderButton(title: "Back to chat", icon: "arrow.left", iconOnly: false) {
+                    workspacePage = .workspace
                 }
             }
 
-            Button {
-                workspacePage = .workspace
-            } label: {
-                HStack(spacing: 9) {
-                    RelayMark(size: 19)
-                    Text("Relay")
-                        .font(.system(size: 15, weight: .semibold))
-                        .tracking(-0.3)
-                        .foregroundStyle(RelayColors.textPrimary)
-                }
-                .frame(height: 28)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(RelayPressStyle())
-            .accessibilityLabel("Relay Home")
-            .accessibilityAddTraits(workspacePage == .workspace ? .isSelected : [])
-
-            Spacer(minLength: RelaySpace.sm)
+            Spacer(minLength: 12)
 
             if store.isPreparingModel || isUserTaskActive || store.pendingReview != nil || store.voice.isBusy || store.speech.isActive || store.knowledgeSearch.isBusy || store.speechDiagnostic.isBusy {
                 WorkspaceHeaderButton(title: "Stop", icon: "stop.fill") { store.stop() }
                     .help("Stop current actions (⌘.)")
             }
-
-            if !computerAccessReady && workspacePage == .workspace && (!store.messages.isEmpty || !store.workspaceActionsReady) {
-                RelayIconButton(icon: "cursorarrow.motionlines", label: "Set up Mac control access", size: 28, iconSize: 13) {
-                    settingsDestination = .access
-                }
-                .help("Mac control needs permission")
-            }
+            if workspacePage == .workspace { composerModelPicker }
 
             WorkspaceHeaderButton(title: "Search", icon: "magnifyingglass", selected: showCommandPalette, iconOnly: true) {
                 composerFocused = false
@@ -596,23 +555,24 @@ struct MainView: View {
             .help("Search Relay (⌘K)")
             .accessibilityIdentifier("workspace.commandPalette")
 
-            WorkspaceHeaderButton(title: "Morning Brief", icon: "sun.horizon", iconOnly: viewportWidth < 980) {
+            WorkspaceHeaderButton(title: "Morning Brief", icon: "sun.horizon", iconOnly: viewportWidth < 1100) {
                 showMorningBrief = true
             }
             .disabled(store.isRunning || store.pendingReview != nil)
             .accessibilityIdentifier("workspace.morningBrief")
 
-            WorkspaceHeaderButton(title: "Knowledge", icon: "books.vertical", selected: workspacePage == .knowledge, iconOnly: viewportWidth < 980) {
+            WorkspaceHeaderButton(title: "Knowledge", icon: "books.vertical", selected: workspacePage == .knowledge, iconOnly: viewportWidth < 1100) {
                 openKnowledgeWorkspace()
             }
             .disabled(store.pendingReview != nil)
-
             workspaceMenu
-
         }
-        .padding(.horizontal, 18)
-        .frame(height: 48)
-        .background(Color.clear)
+        .padding(.leading, 88)
+        .padding(.trailing, 14)
+        .frame(height: 44)
+        .background {
+            Color.clear.contentShape(Rectangle()).gesture(WindowDragGesture())
+        }
     }
 
     private var workspaceMenu: some View {
@@ -636,6 +596,18 @@ struct MainView: View {
                     showConversationSearch = true
                 }
                 .keyboardShortcut("f", modifiers: .command)
+                if currentThreadUserTurns.count > 1 {
+                    Menu("Messages in this chat", systemImage: "text.bubble") {
+                        ForEach(Array(currentThreadUserTurns.enumerated()), id: \.element.id) { index, turn in
+                            Button("\(index + 1). \(String(turn.text.prefix(60)))") {
+                                atLatest = false
+                                conversationJump = turn.id
+                            }
+                        }
+                    }
+                }
+                Button("Show activity…", systemImage: "list.bullet") { store.showActivity = true }
+                    .disabled(store.pendingReview != nil)
                 Button("Copy conversation as Markdown", systemImage: "doc.on.doc") {
                     copyThreadAsMarkdown(messages: store.messages, activity: store.activity)
                 }
@@ -649,8 +621,8 @@ struct MainView: View {
                     .disabled(store.isRunning || store.isClearingConversation)
             }
         } label: {
-            Image(systemName: "gearshape")
-                .font(.system(size: 13, weight: .regular))
+            Image(systemName: "ellipsis")
+                .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(RelayColors.textSecondary)
                 .frame(width: 32, height: 32)
                 .contentShape(Rectangle())
@@ -660,6 +632,7 @@ struct MainView: View {
         .fixedSize()
         .accessibilityLabel("Workspace menu")
         .accessibilityIdentifier("workspace.menu")
+        .tint(RelayColors.textSecondary)
         .help("Settings and workspace actions")
     }
 
@@ -668,7 +641,6 @@ struct MainView: View {
             showCompactSidebar.toggle()
         } else {
             showLeftSidebar.toggle()
-            store.showActivity = showLeftSidebar && sidebarMode == .activity
         }
     }
 
@@ -758,7 +730,7 @@ struct MainView: View {
     private var conversation: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 14) {
+                LazyVStack(alignment: .leading, spacing: 22) {
                     ForEach(store.messages) { message in
                         messageRow(message)
                             .id(message.id)
@@ -852,7 +824,7 @@ struct MainView: View {
             status: store.isPreparingModel ? "Preparing your model…" : WorkspaceTaskPresentation(phase: store.phase).status,
             detail: currentStep?.title,
             isWorking: store.isRunning,
-            inspect: { store.showActivity = true }
+            inspect: { if store.pendingReview == nil { store.showActivity = true } }
         )
     }
 
@@ -1043,11 +1015,6 @@ struct MainView: View {
                 taskRecoveryCard
             }
 
-            if store.showActivity && viewportWidth < 860 && store.pendingReview == nil {
-                // A maximum alone lets the dock compress its scroll content to zero.
-                activityPanel.frame(minHeight: 160, idealHeight: 180, maxHeight: 220)
-            }
-
             if let notice = store.historyNotice {
                 Text(notice)
                     .font(.relayCaption)
@@ -1057,7 +1024,7 @@ struct MainView: View {
             }
             composer
         }
-        .frame(maxWidth: min(RelayTheme.composerMaxWidth, 780))
+        .frame(maxWidth: workspaceColumnWidth)
         .padding(.horizontal, horizontalWorkspacePadding)
         .padding(.top, RelaySpace.sm)
         .padding(.bottom, RelaySpace.md)
@@ -1065,38 +1032,47 @@ struct MainView: View {
     }
 
     private var taskRecoveryCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label {
-                Text(store.phase == .stopped
-                     ? "Task stopped. Existing changes remain."
-                     : store.phase == .failed
-                     ? "Task couldn’t finish. Review what happened before trying again."
-                     : "Relay needs your input. Review the latest response and activity.")
-                    .font(.relayCallout)
-                    .fixedSize(horizontal: false, vertical: true)
-            } icon: {
-                Image(systemName: store.phase == .stopped ? "stop.circle" : "exclamationmark.circle")
-                    .foregroundStyle(RelayColors.accentAmber)
-            }
-            HStack(spacing: 8) {
-                Button("Inspect activity") { store.showActivity = true }
-                    .buttonStyle(RelaySecondaryButtonStyle())
-                if store.canResumeCurrentTask {
-                    Button(store.phase == .stopped ? "Resume" : "Continue") { store.resume() }
-                        .buttonStyle(RelayPrimaryButtonStyle())
-                        .disabled(store.isAuxiliaryBusy)
-                } else {
-                    Button("Write a new request") { composerFocused = true }
-                        .buttonStyle(RelaySecondaryButtonStyle())
-                }
+        HStack(spacing: 12) {
+            Image(systemName: store.phase == .stopped ? "stop.circle" : "exclamationmark.circle")
+                .font(.system(size: 14, weight: .regular))
+                .foregroundStyle(RelayColors.accentAmber)
+                .accessibilityHidden(true)
+            Text(store.phase == .stopped
+                 ? "Task stopped. Changes remain."
+                 : store.phase == .failed
+                 ? "Task couldn’t finish."
+                 : "Your input is needed.")
+                .font(.system(size: 13))
+                .foregroundStyle(RelayColors.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            Button("Activity") { store.showActivity = true }
+                .font(.system(size: 12.5))
+                .foregroundStyle(RelayColors.textSecondary)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Inspect activity")
+            if store.canResumeCurrentTask {
+                Button(store.phase == .stopped ? "Resume" : "Continue") { store.resume() }
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(RelayColors.canvas)
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .background(RelayColors.textPrimary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .buttonStyle(.plain)
+                    .disabled(store.isAuxiliaryBusy)
+            } else {
+                Button("New request") { composerFocused = true }
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(RelayColors.textPrimary)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Write a new request")
             }
         }
-        .foregroundStyle(RelayColors.textBright)
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RelayColors.cardBG, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .strokeBorder(RelayColors.accentAmber.opacity(0.28), lineWidth: 1))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(RelayColors.cardBG, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .strokeBorder(RelayColors.borderSubtle, lineWidth: 0.7))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("conversation.taskRecovery")
     }
@@ -1141,7 +1117,8 @@ struct MainView: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .bottom, spacing: 10) {
+                HStack(alignment: .center, spacing: 8) {
+                    composerActions
                     TextField(
                         "Message Relay",
                         text: $store.draft,
@@ -1196,22 +1173,16 @@ struct MainView: View {
                     }
                 }
 
-                HStack(spacing: 8) {
-                    composerActions
-                    Spacer(minLength: 8)
-                    composerModelPicker
-                }
-
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .relayWorkspaceSurface(cornerRadius: 18)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 10)
+            .relayWorkspaceSurface(cornerRadius: 16)
             .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(
                         isComposerDropTargeted
                             ? RelayColors.workbenchAccent
-                            : (composerFocused ? RelayColors.workbenchAccent.opacity(0.65) : .clear),
+                            : (composerFocused ? RelayColors.textSecondary.opacity(0.40) : .clear),
                         lineWidth: 1
                     )
                     .allowsHitTesting(false)
@@ -1381,11 +1352,12 @@ struct MainView: View {
         } label: {
             Image(systemName: "plus").font(.system(size: 15, weight: .regular))
                 .foregroundStyle(RelayColors.textSecondary)
-                .frame(width: 30, height: 28).contentShape(Rectangle())
+                .frame(width: 32, height: 32).contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         .accessibilityLabel("Add context or use a tool")
         .accessibilityIdentifier("home.composer.attach")
+        .tint(RelayColors.textSecondary)
         .help("Attach files, windows, images, or use a tool")
     }
 
@@ -1400,11 +1372,11 @@ struct MainView: View {
     private var composerModelPicker: some View {
         Button { showComposerModelPopover.toggle() } label: {
             HStack(spacing: 5) {
-                Text(compactModelName).font(.relayCaption).lineLimit(1)
+                Text(compactModelName).font(.system(size: 12, weight: .medium)).lineLimit(1).truncationMode(.middle)
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .medium))
             }
             .foregroundStyle(RelayColors.textSecondary)
-            .padding(.horizontal, 6).frame(height: 28)
+            .padding(.horizontal, 8).frame(maxWidth: 144).frame(height: 32)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1566,103 +1538,23 @@ struct MainView: View {
 
     private var leftSidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                Button {
+            HStack {
+                Text("Chats").font(.system(size: 13, weight: .semibold))
+                Spacer()
+                WorkspaceHeaderButton(title: "New chat", icon: "square.and.pencil", iconOnly: true) {
                     startNewWorkspaceThread()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "square.and.pencil")
-                            .font(.system(size: 12.5, weight: .semibold))
-                            .foregroundStyle(RelayColors.textSecondary)
-                        Text("New chat")
-                            .font(.relayCallout.weight(.medium))
-                            .foregroundStyle(RelayColors.textPrimary)
-                        Spacer()
-                        Text("⌘N")
-                            .font(.relayMonoSmall)
-                            .foregroundStyle(RelayColors.textMuted)
-                    }
-                    .padding(.horizontal, 10)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 32)
-                    .background(
-                        hoverNewThreadButton ? RelayColors.hoverFill : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    )
-                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
-                .buttonStyle(RelayPressStyle())
-                .onHover { hoverNewThreadButton = $0 }
                 .disabled(store.isRunning || store.isClearingConversation)
-                .keyboardShortcut("n", modifiers: .command)
                 .accessibilityIdentifier("workspace.sidebar.newThread")
-
-                HStack(spacing: 2) {
-                    sidebarModeTab(
-                        mode: .history,
-                        icon: "clock.arrow.circlepath"
-                    )
-                    sidebarModeTab(
-                        mode: .activity,
-                        icon: "bolt.horizontal.circle",
-                        showsLiveDot: store.isRunning
-                    )
-                }
-                .padding(2)
-                .background(
-                    RelayColors.subtleFill,
-                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                )
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 6)
-
-            if sidebarMode == .history {
-                historySidebarContent
-            } else {
-                activityPanel
-            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 8)
+            historySidebarContent
         }
         .frame(maxHeight: .infinity, alignment: .topLeading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("workspace.leftSidebar")
-    }
-
-    private func sidebarModeTab(
-        mode: SidebarMode,
-        icon: String,
-        showsLiveDot: Bool = false
-    ) -> some View {
-        let isSelected = sidebarMode == mode
-        return Button {
-            sidebarMode = mode
-            store.showActivity = (mode == .activity)
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .semibold))
-                Text(mode.rawValue)
-                    .font(.relayCaptionStrong)
-                    .lineLimit(1)
-                if showsLiveDot {
-                    Circle()
-                        .fill(RelayColors.accentEmerald)
-                        .frame(width: 6, height: 6)
-                }
-            }
-            .foregroundStyle(isSelected ? RelayColors.textPrimary : RelayColors.textSecondary)
-            .frame(maxWidth: .infinity)
-            .frame(height: 26)
-            .background(
-                isSelected ? RelayColors.surfaceElevated : Color.clear,
-                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        }
-        .buttonStyle(RelayPressStyle())
-        .accessibilityIdentifier("workspace.sidebar.mode.\(mode.rawValue.lowercased())")
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var historySidebarContent: some View {
@@ -1674,9 +1566,9 @@ struct MainView: View {
                         .foregroundStyle(RelayColors.textMuted)
                     TextField("Filter history…", text: $historySearchQuery, prompt: Text(""))
                         .textFieldStyle(.plain)
-                        .font(.relayCaption)
+                        .font(.system(size: 13))
                         .foregroundStyle(RelayColors.textPrimary)
-                        .relayTextFieldPrompt("Filter history…", when: historySearchQuery.isEmpty, font: .relayCaption)
+                        .relayTextFieldPrompt("Filter history…", when: historySearchQuery.isEmpty, font: .system(size: 13))
                         .accessibilityIdentifier("workspace.sidebar.filter")
                     if !historySearchQuery.isEmpty {
                         Button {
@@ -1698,9 +1590,8 @@ struct MainView: View {
                 .padding(.bottom, 6)
             }
 
-            if store.isRunning && !store.activity.isEmpty {
+            if store.isRunning && store.pendingReview == nil && !store.activity.isEmpty {
                 Button {
-                    sidebarMode = .activity
                     store.showActivity = true
                 } label: {
                     HStack(spacing: 8) {
@@ -1731,55 +1622,6 @@ struct MainView: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
-                    if currentThreadUserTurns.count > 1 {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Button {
-                                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.14)) {
-                                    currentTurnsExpanded.toggle()
-                                }
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Text("In this chat").font(.relayCaptionStrong).foregroundStyle(RelayColors.textSecondary)
-                                    Text("\(currentThreadUserTurns.count)")
-                                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                        .foregroundStyle(RelayColors.textSecondary)
-                                        .padding(.horizontal, 5)
-                                        .padding(.vertical, 1)
-                                        .background(RelayColors.badgeFill, in: Capsule())
-                                    Spacer()
-                                    Image(systemName: currentTurnsExpanded ? "chevron.down" : "chevron.right")
-                                        .font(.system(size: 9.5, weight: .semibold))
-                                        .foregroundStyle(RelayColors.textMuted)
-                                }
-                                .padding(.horizontal, 8)
-                                .frame(height: 28)
-                                .background(
-                                    RelayColors.subtleFill,
-                                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                )
-                                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                            }
-                            .buttonStyle(.plain)
-
-                            if currentTurnsExpanded {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    ForEach(Array(currentThreadUserTurns.enumerated()), id: \.element.id) { index, turn in
-                                        SidebarTurnRow(
-                                            turnIndex: index + 1,
-                                            isLast: index == currentThreadUserTurns.count - 1,
-                                            message: turn
-                                        ) {
-                                            workspacePage = .workspace
-                                            atLatest = false
-                                            conversationJump = turn.id
-                                        }
-                                    }
-                                }
-                                .padding(.leading, 4)
-                            }
-                        }
-                    }
-
                     if filteredThreads.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack(spacing: 6) {
@@ -1844,14 +1686,12 @@ struct MainView: View {
             if !store.threadArchive.threads.isEmpty || !store.threadArchive.trashedThreads.isEmpty {
                 Rectangle().fill(RelayColors.borderSubtle.opacity(0.75)).frame(height: 1)
                 HStack(spacing: 8) {
-                    Text("\(store.threadArchive.threads.count) \(store.threadArchive.threads.count == 1 ? "thread" : "threads")")
-                        .font(.relayMicro).foregroundStyle(RelayColors.textMuted)
                     Spacer(minLength: 4)
                     Button {
                         showConversationTrash = true
                     } label: {
                         Label(store.threadArchive.trashedThreads.isEmpty ? "Trash" : "Trash (\(store.threadArchive.trashedThreads.count))", systemImage: "trash")
-                            .font(.relayMicro)
+                            .font(.system(size: 12))
                     }
                     .buttonStyle(RelayPressStyle())
                     .accessibilityIdentifier("workspace.sidebar.trash")
@@ -1932,18 +1772,23 @@ struct MainView: View {
 
     private var activityPanel: some View {
         VStack(alignment: .leading, spacing: RelaySpace.sm) {
-            if !showsLeftSidebarColumn {
-                HStack {
+            HStack {
                     HStack(spacing: 7) {
                         Circle().fill(RelayColors.textSecondary).frame(width: 6, height: 6)
-                        Text("Activity").font(.relayBodyStrong)
+                        Text("Activity").font(RelayPageStyle.dialogTitle)
                     }
                     Spacer()
-                    RelayIconButton(icon: "xmark", label: "Close activity", size: 32, iconSize: 11.5) {
+                    if isUserTaskActive || store.isPreparingModel || store.voice.isBusy || store.speech.isActive {
+                        Button("Stop", systemImage: "stop.fill") { store.stop() }
+                            .font(.system(size: 12.5, weight: .medium))
+                            .buttonStyle(RelaySecondaryButtonStyle())
+                            .accessibilityIdentifier("activity.stop")
+                    }
+                    RelayIconButton(icon: "xmark", label: "Close activity", size: 32, iconSize: 14) {
                         store.showActivity = false
                     }
                 }
-            } else if store.phase != .idle {
+            if store.phase != .idle {
                 HStack(spacing: 8) {
                     if store.phase == .thinking || store.phase == .acting {
                         RelayActivityMark(size: 14, fast: true)
@@ -2358,10 +2203,10 @@ private struct WorkspaceHeaderButton: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: .regular))
+                    .font(.system(size: 14, weight: .regular))
                 if !iconOnly {
                     Text(title)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 12.5, weight: .medium))
                         .lineLimit(1)
                 }
             }
@@ -2973,7 +2818,7 @@ private struct TranscriptMessageRow: View {
                 HStack(alignment: .top, spacing: 8) {
                     Spacer(minLength: 24)
                     Text(message.text)
-                        .font(.relayConversation)
+                        .font(.system(size: 15))
                         .lineSpacing(RelayTheme.messageLineSpacing)
                         .foregroundStyle(RelayColors.textPrimary)
                         .textSelection(.enabled)
@@ -3354,7 +3199,7 @@ private struct ConversationSearchView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("Find in conversation")
-                    .font(.relayHeadline)
+                    .font(RelayPageStyle.dialogTitle)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
                 RelayIconButton(icon: "xmark", label: "Close conversation search", size: 32) { dismiss() }
@@ -3542,8 +3387,8 @@ private struct CommandPaletteView: View {
                 id: "action.toggleSidebar",
                 section: "Quick Actions",
                 kind: .quickAction,
-                title: "Toggle Left Sidebar",
-                subtitle: "Show or hide the History and Activity sidebar",
+                title: "Toggle History",
+                subtitle: "Show or hide your conversation history",
                 icon: "sidebar.left",
                 shortcut: "⌘⇧S",
                 action: onToggleSidebar
@@ -3646,7 +3491,7 @@ private struct CommandPaletteView: View {
                             first.action()
                         }
                     }
-                RelayIconButton(icon: "xmark", label: "Close command palette", size: 28, iconSize: 10.5) {
+                RelayIconButton(icon: "xmark", label: "Close command palette") {
                     dismiss()
                 }
                 .keyboardShortcut(.cancelAction)

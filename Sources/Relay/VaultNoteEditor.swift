@@ -41,7 +41,7 @@ struct VaultNoteEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(request.note == nil ? "New note" : "Edit note")
-                .font(.relayTitle)
+                .font(RelayPageStyle.dialogTitle)
                 .foregroundStyle(RelayColors.textPrimary)
             TextField("Title", text: $title)
                 .textFieldStyle(.plain)
@@ -115,9 +115,9 @@ struct VaultNoteEditor: View {
                     .accessibilityIdentifier("knowledge.saveNote")
             }
         }
-        .padding(20)
-        .frame(minWidth: 440)
-        .background(RelayColors.canvas)
+        .padding(24)
+        .frame(minWidth: 480)
+        .relayPageBackground()
         .relayPreferredAppearance()
         .onAppear {
             titleFocused = true

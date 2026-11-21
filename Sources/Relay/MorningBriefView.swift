@@ -45,12 +45,16 @@ struct ProactiveHomeDeckView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 10) {
                         HStack(spacing: 8) {
-                            RelayIconBadge(icon: "sun.horizon.fill", color: RelayColors.accentAmber, size: 28, iconSize: 13)
+                            Image(systemName: "sun.horizon")
+                                .font(RelayPageStyle.symbol)
+                                .foregroundStyle(RelayColors.textSecondary)
+                                .frame(width: 20, height: 24)
+                                .accessibilityHidden(true)
                             Text("Morning Cards")
-                                .font(.relaySubheadline.weight(.semibold))
+                                .font(RelayPageStyle.sectionTitle)
                                 .foregroundStyle(RelayColors.textPrimary)
                             Text("· \(clampedIndex + 1) of \(activeCards.count)")
-                                .font(.relayCaption)
+                                .font(RelayPageStyle.caption)
                                 .foregroundStyle(RelayColors.textMuted)
                         }
 
@@ -64,9 +68,9 @@ struct ProactiveHomeDeckView: View {
                                     }
                                 } label: {
                                     Image(systemName: "chevron.left")
-                                        .font(.relayCaption.weight(.semibold))
+                                        .font(RelayPageStyle.symbol)
                                         .foregroundStyle(clampedIndex == 0 ? RelayColors.textDim : RelayColors.textBright)
-                                        .frame(width: 28, height: 28)
+                                        .frame(width: 32, height: 32)
                                         .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                                         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(RelayColors.borderSubtle, lineWidth: 0.75))
                                 }
@@ -82,9 +86,9 @@ struct ProactiveHomeDeckView: View {
                                     }
                                 } label: {
                                     Image(systemName: "chevron.right")
-                                        .font(.relayCaption.weight(.semibold))
+                                        .font(RelayPageStyle.symbol)
                                         .foregroundStyle(clampedIndex >= activeCards.count - 1 ? RelayColors.textDim : RelayColors.textBright)
-                                        .frame(width: 28, height: 28)
+                                        .frame(width: 32, height: 32)
                                         .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                                         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(RelayColors.borderSubtle, lineWidth: 0.75))
                                 }
@@ -141,22 +145,22 @@ struct ProactiveHomeDeckView: View {
 
                     if let launchError {
                         Text(launchError)
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.accentCoral)
                     }
                 }
                 .padding(16)
-                .relaySurfaceCard(cornerRadius: 16)
+                .relayPagePanel(cornerRadius: 12)
             } else if engine.isPreparing {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
                     Text(engine.status)
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                     Spacer()
                 }
                 .padding(14)
-                .relaySurfaceCard(cornerRadius: 14)
+                .relayPagePanel(cornerRadius: 12)
             }
         }
         .sheet(isPresented: $showKeepsakeSheet) {
@@ -172,25 +176,25 @@ struct ProactiveHomeDeckView: View {
 
     private func keepsakeBanner(_ keepsake: WelcomeKeepsake) -> some View {
         HStack(spacing: 14) {
-            RelayIconBadge(
-                icon: "sparkles.rectangle.stack.fill",
-                color: RelayColors.accentGold,
-                size: 38
-            )
+            Image(systemName: "rectangle.stack")
+                .font(.system(size: 20, weight: .regular))
+                .foregroundStyle(RelayColors.workbenchAccent)
+                .frame(width: 28, height: 32)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(keepsake.kicker)
-                        .font(.relayCaptionStrong)
-                        .foregroundStyle(RelayColors.accentGold)
+                        .font(RelayPageStyle.caption.weight(.medium))
+                        .foregroundStyle(RelayColors.textSecondary)
                     if !keepsake.groundedNoteTitles.isEmpty {
                         Text("· \(keepsake.groundedNoteTitles.count) \(keepsake.groundedNoteTitles.count == 1 ? "source" : "sources")")
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textMuted)
                     }
                 }
                 Text(keepsake.title)
-                    .font(.relayBodyStrong)
+                    .font(RelayPageStyle.sectionTitle)
                     .foregroundStyle(RelayColors.textPrimary)
                     .lineLimit(1)
             }
@@ -203,7 +207,7 @@ struct ProactiveHomeDeckView: View {
                 HStack(spacing: 5) {
                     Text("Read Note")
                     Image(systemName: "arrow.up.right")
-                        .font(.system(size: 10.5, weight: .semibold))
+                        .font(.system(size: 12, weight: .regular))
                 }
             }
             .buttonStyle(RelaySecondaryButtonStyle())
@@ -222,7 +226,7 @@ struct ProactiveHomeDeckView: View {
             .accessibilityIdentifier("welcome-keepsake-dismiss")
         }
         .padding(16)
-        .relaySurfaceCard(cornerRadius: 16)
+        .relayPagePanel(cornerRadius: 12)
     }
 
     private func adjustIndexAfterRemoval() {
@@ -325,7 +329,7 @@ struct ProactiveMorningCardView: View {
                 RelayBadge(
                     editedArtifact.kind.displayTitle,
                     icon: editedArtifact.kind.systemImage,
-                    tint: RelayColors.accentBlue,
+                    tint: RelayColors.workbenchAccent,
                     prominent: true
                 )
 
@@ -338,14 +342,14 @@ struct ProactiveMorningCardView: View {
                 .help(card.verificationDetail)
 
                 if case .launched = card.lifecycle {
-                    RelayBadge("In progress", icon: "bolt.fill", tint: RelayColors.accentBlue, prominent: true)
+                    RelayBadge("In progress", icon: "bolt.fill", tint: RelayColors.workbenchAccent, prominent: true)
                 }
 
                 Spacer()
 
                 if !card.sourceTitles.isEmpty {
                     Text(card.sourceTitles.prefix(2).joined(separator: " · "))
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textMuted)
                         .lineLimit(1)
                 }
@@ -353,14 +357,14 @@ struct ProactiveMorningCardView: View {
 
             TextField("Card title", text: $editedTitle)
                 .textFieldStyle(.plain)
-                .font(.relayHeadline.weight(.semibold))
+                .font(RelayPageStyle.sectionTitle)
                 .foregroundStyle(RelayColors.textPrimary)
                 .onChange(of: editedTitle) { _, newValue in
                     onUpdate(newValue, editedArtifact)
                 }
 
             Text(card.whyNow)
-                .font(.relayCallout)
+                .font(RelayPageStyle.body)
                 .foregroundStyle(RelayColors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -374,7 +378,7 @@ struct ProactiveMorningCardView: View {
 
             if let note = card.lastLaunchNote {
                 Text(note)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.accentAmber)
             }
 
@@ -384,7 +388,7 @@ struct ProactiveMorningCardView: View {
                     Button("Later Today (4h)") { onSnooze(14400) }
                     Button("Tomorrow (24h)") { onSnooze(86400) }
                 }
-                .font(.relayCallout.weight(.medium))
+                .font(RelayPageStyle.body.weight(.medium))
                 .fixedSize()
                 .accessibilityIdentifier("proactiveCard.snooze")
 
@@ -401,7 +405,7 @@ struct ProactiveMorningCardView: View {
                     HStack(spacing: 5) {
                         Text(editedArtifact.kind.primaryActionLabel)
                         Image(systemName: "arrow.up.right")
-                            .font(.system(size: 10.5, weight: .semibold))
+                            .font(.system(size: 12, weight: .regular))
                     }
                 }
                 .buttonStyle(RelayPrimaryButtonStyle())
@@ -433,12 +437,7 @@ struct ProactiveArtifactFieldsEditor: View {
                 shortlistEditor(list)
             }
         }
-        .padding(10)
-        .background(RelayColors.cardBG, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
-        )
+        .padding(.vertical, 4)
     }
 
     @ViewBuilder
@@ -477,7 +476,7 @@ struct ProactiveArtifactFieldsEditor: View {
         }
         if !reply.threadContext.isEmpty {
             Text("Context: \(reply.threadContext)")
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textMuted)
                 .lineLimit(2)
         }
@@ -507,7 +506,7 @@ struct ProactiveArtifactFieldsEditor: View {
         HStack(spacing: 12) {
             HStack(spacing: 6) {
                 Text("Start")
-                    .font(.relayCaption.weight(.semibold))
+                    .font(RelayPageStyle.caption.weight(.medium))
                     .foregroundStyle(RelayColors.textMuted)
                     .frame(minWidth: 44, alignment: .leading)
                 DatePicker(
@@ -532,7 +531,7 @@ struct ProactiveArtifactFieldsEditor: View {
 
             HStack(spacing: 6) {
                 Text("End")
-                    .font(.relayCaption.weight(.semibold))
+                    .font(RelayPageStyle.caption.weight(.medium))
                     .foregroundStyle(RelayColors.textMuted)
                     .frame(minWidth: 32, alignment: .leading)
                 DatePicker(
@@ -561,7 +560,7 @@ struct ProactiveArtifactFieldsEditor: View {
             if !calendarNames.isEmpty {
                 HStack(spacing: 6) {
                     Text("Calendar")
-                        .font(.relayCaption.weight(.semibold))
+                        .font(RelayPageStyle.caption.weight(.medium))
                         .foregroundStyle(RelayColors.textMuted)
                         .frame(minWidth: 44, alignment: .leading)
                     Picker("Calendar", selection: Binding(
@@ -619,11 +618,11 @@ struct ProactiveArtifactFieldsEditor: View {
 
     @ViewBuilder
     private func actionPlanEditor(_ plan: ProactiveArtifact.ActionPlanDraft) -> some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: 8) {
             labeledField("Goal", text: Binding(
                 get: { plan.goal },
                 set: { var copy = plan; copy.goal = $0; artifact = .actionPlan(copy) }
-            ))
+            ), multiline: true)
             labeledField("App / Site", text: Binding(
                 get: { plan.targetAppOrSite },
                 set: { var copy = plan; copy.targetAppOrSite = $0; artifact = .actionPlan(copy) }
@@ -645,9 +644,10 @@ struct ProactiveArtifactFieldsEditor: View {
                                 artifact = .actionPlan(copy)
                             }
                         }
-                    ))
+                    ), axis: .vertical)
+                    .lineLimit(1...4)
                     .textFieldStyle(.plain)
-                    .font(.relayBody)
+                    .font(RelayPageStyle.body)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 4)
                     .background(RelayTheme.surface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
@@ -663,9 +663,9 @@ struct ProactiveArtifactFieldsEditor: View {
                             artifact = .actionPlan(copy)
                         } label: {
                             Image(systemName: "minus.circle")
-                                .font(.relayCaption)
+                                .font(RelayPageStyle.caption)
                                 .foregroundStyle(RelayColors.textMuted)
-                                .frame(width: 24, height: 24)
+                                .frame(width: 32, height: 32)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -677,9 +677,9 @@ struct ProactiveArtifactFieldsEditor: View {
                 copy.steps.append("")
                 artifact = .actionPlan(copy)
             }
-            .font(.relayCaption.weight(.medium))
+            .font(RelayPageStyle.caption.weight(.medium))
             .buttonStyle(.plain)
-            .foregroundStyle(RelayColors.accentBlue)
+            .foregroundStyle(RelayColors.workbenchAccent)
         }
     }
 
@@ -702,7 +702,7 @@ struct ProactiveArtifactFieldsEditor: View {
                     }
                 ))
                 .textFieldStyle(.plain)
-                .font(.relayBody.weight(.semibold))
+                .font(RelayPageStyle.body.weight(.semibold))
 
                 TextField("Summary", text: Binding(
                     get: { option.summary },
@@ -715,7 +715,7 @@ struct ProactiveArtifactFieldsEditor: View {
                     }
                 ))
                 .textFieldStyle(.plain)
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textSecondary)
             }
             .padding(7)
@@ -731,15 +731,16 @@ struct ProactiveArtifactFieldsEditor: View {
         ))
     }
 
-    private func labeledField(_ label: String, text: Binding<String>) -> some View {
-        HStack(spacing: 6) {
+    private func labeledField(_ label: String, text: Binding<String>, multiline: Bool = false) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(label)
-                .font(.relayCaption.weight(.semibold))
+                .font(RelayPageStyle.caption.weight(.medium))
                 .foregroundStyle(RelayColors.textMuted)
                 .frame(minWidth: 44, alignment: .leading)
-            TextField(label, text: text)
+            TextField(label, text: text, axis: multiline ? .vertical : .horizontal)
+                .lineLimit(1...(multiline ? 4 : 1))
                 .textFieldStyle(.plain)
-                .font(.relayBody)
+                .font(RelayPageStyle.body)
                 .foregroundStyle(RelayTheme.ink)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 4)
@@ -753,7 +754,7 @@ struct ProactiveArtifactFieldsEditor: View {
 
     private func multilineEditor(text: Binding<String>, minHeight: CGFloat) -> some View {
         TextEditor(text: text)
-            .font(.relayBody)
+            .font(RelayPageStyle.body)
             .foregroundStyle(RelayTheme.ink)
             .scrollContentBackground(.hidden)
             .padding(6)
@@ -1208,16 +1209,17 @@ struct MorningBriefView: View {
 
             if let status {
                 Text(status)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
                     .textSelection(.enabled)
             }
         }
         .padding(24)
         .frame(minWidth: 820, idealWidth: 880, minHeight: 580, idealHeight: 640)
-        .background(RelayTheme.background)
+        .relayPageBackground()
         .foregroundStyle(RelayTheme.ink)
-        .tint(RelayColors.accentBlue)
+        .font(RelayPageStyle.body)
+        .tint(RelayColors.workbenchAccent)
         .relayPreferredAppearance()
         .disclosureGroupStyle(RelayDisclosureGroupStyle())
         .onAppear {
@@ -1240,61 +1242,74 @@ struct MorningBriefView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
-            RelayIconBadge(icon: "sun.horizon", color: RelayColors.accentGold, size: 34, iconSize: 16)
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text("Morning Brief")
-                    .font(.relayDisplayTitle.weight(.semibold))
+                    .font(RelayPageStyle.title)
                     .accessibilityIdentifier("morningBrief.heading")
-                Text("Verified follow-ups and editable drafts prepared read-only from your sources and calendar.")
-                    .font(.relayCaption)
-                    .foregroundStyle(RelayColors.textSecondary)
+                Spacer()
+                Button("Done") { dismiss() }
+                    .buttonStyle(RelaySecondaryButtonStyle())
+                    .keyboardShortcut(.cancelAction)
             }
-            Spacer()
 
-            if !legacyCards.isEmpty {
-                Picker("", selection: $selectedTab) {
-                    ForEach(BriefTab.allCases, id: \.self) { tab in
-                        Text(tab.rawValue).tag(tab)
+            Text("Follow-ups and editable drafts, prepared read-only from your sources and calendar.")
+                .font(RelayPageStyle.body)
+                .foregroundStyle(RelayColors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 10) {
+                if !legacyCards.isEmpty {
+                    Picker("Brief view", selection: $selectedTab) {
+                        ForEach(BriefTab.allCases, id: \.self) { tab in
+                            Text(tab.rawValue).tag(tab)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 220)
+                }
+
+                Spacer(minLength: 12)
+
+                Button {
+                    showStandingInstructions.toggle()
+                } label: {
+                    Label {
+                        Text("Instructions")
+                    } icon: {
+                        Image(systemName: "slider.horizontal.3").font(RelayPageStyle.symbol)
                     }
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 220)
-            }
+                .buttonStyle(RelayGhostButtonStyle())
 
-            Button {
-                showStandingInstructions.toggle()
-            } label: {
-                Label("Instructions", systemImage: "slider.horizontal.3")
-            }
-            .buttonStyle(RelaySecondaryButtonStyle())
-
-            Button(proactiveEngine.isPreparing ? "Stop" : "Prepare Cards") {
-                if proactiveEngine.isPreparing {
-                    Task { await proactiveEngine.cancelAndDrain() }
-                } else {
-                    runProactivePreparation()
+                Button(proactiveEngine.isPreparing ? "Stop" : "Prepare Cards") {
+                    if proactiveEngine.isPreparing {
+                        Task { await proactiveEngine.cancelAndDrain() }
+                    } else {
+                        runProactivePreparation()
+                    }
                 }
+                .buttonStyle(RelayPrimaryButtonStyle())
+                .disabled(!proactiveEngine.isPreparing && (store.isRunning || !store.workspaceActionsReady))
+                .accessibilityIdentifier("morningBrief.prepareProactive")
             }
-            .buttonStyle(RelaySecondaryButtonStyle())
-            .disabled(!proactiveEngine.isPreparing && (store.isRunning || !store.workspaceActionsReady))
-            .accessibilityIdentifier("morningBrief.prepareProactive")
-
-            Button("Done") { dismiss() }
-                .buttonStyle(RelaySecondaryButtonStyle())
-                .keyboardShortcut(.cancelAction)
+            .font(RelayPageStyle.body)
         }
+        .padding(.bottom, 6)
     }
 
     private var standingInstructionsBar: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Standing Instructions (high priority for Morning Card selection; never overrides factual accuracy)")
-                .font(.relayCaption.weight(.semibold))
-                .foregroundStyle(RelayColors.textBright)
+            Text("Standing instructions")
+                .font(RelayPageStyle.sectionTitle)
+            Text("Prioritizes Morning Card selection; never overrides factual accuracy.")
+                .font(RelayPageStyle.caption)
+                .foregroundStyle(RelayColors.textSecondary)
             HStack(spacing: 8) {
                 TextField("e.g. Prioritize unanswered investor emails and upcoming engineering deadlines", text: $standingDraft)
                     .textFieldStyle(.plain)
-                    .font(.relayBody)
+                    .font(RelayPageStyle.body)
                     .relayTextField()
                 Button("Save") {
                     proactiveEngine.setStandingInstructions(standingDraft)
@@ -1304,12 +1319,10 @@ struct MorningBriefView: View {
                 .buttonStyle(RelayPrimaryButtonStyle())
             }
         }
-        .padding(10)
-        .background(RelayColors.cardBG, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
-        )
+        .padding(.vertical, 12)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(RelayColors.borderSubtle).frame(height: 0.7)
+        }
     }
 
     @ViewBuilder
@@ -1317,24 +1330,18 @@ struct MorningBriefView: View {
         if proactiveEngine.activeCards.isEmpty && keepsakeGenerator.activeKeepsake == nil {
             VStack(spacing: 12) {
                 Image(systemName: "sun.horizon")
-                    .font(.relayDisplayHero)
-                    .foregroundStyle(RelayColors.accentGold)
+                    .font(.system(size: 24, weight: .regular))
+                    .foregroundStyle(RelayColors.textSecondary)
                     .accessibilityHidden(true)
                 Text(proactiveEngine.isPreparing ? "Preparing Morning Cards…" : "No Morning Cards waiting")
-                    .font(.relayHeadline.weight(.semibold))
+                    .font(RelayPageStyle.sectionTitle)
                 Text(proactiveEngine.status)
-                    .font(.relayBody)
+                    .font(RelayPageStyle.body)
                     .foregroundStyle(RelayColors.textSecondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 460)
 
                 HStack(spacing: 10) {
-                    Button("Prepare Morning Cards") {
-                        runProactivePreparation()
-                    }
-                    .buttonStyle(RelayPrimaryButtonStyle())
-                    .disabled(taskBusy || !store.workspaceActionsReady)
-
                     if store.suggestions.enabled {
                         Button("Scan Quick TODOs") {
                             store.knowledge.purgeStale(grants: store.grants)
@@ -1374,13 +1381,13 @@ struct MorningBriefView: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 ForEach(proactiveEngine.droppedCandidates) { item in
                                     Text("• \(item.title) — \(item.reason)")
-                                        .font(.relayCaption)
+                                        .font(RelayPageStyle.caption)
                                         .foregroundStyle(RelayColors.textSecondary)
                                 }
                             }
                             .padding(.top, 4)
                         }
-                        .font(.relayCaption.weight(.medium))
+                        .font(RelayPageStyle.caption.weight(.medium))
                     }
                 }
             }
@@ -1457,30 +1464,26 @@ struct MorningBriefView: View {
                             Button { open(card.id) } label: {
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(card.title)
-                                        .font(.relayHeadline)
+                                        .font(RelayPageStyle.sectionTitle)
                                         .foregroundStyle(isSelected ? RelayTheme.ink : RelayColors.textBright)
                                         .lineLimit(3)
                                     HStack(spacing: 6) {
                                         if let dueDay = card.dueDay {
                                             Text("Due \(dueDay)")
-                                                .foregroundStyle(RelayColors.accentBlue)
+                                                .foregroundStyle(RelayColors.workbenchAccent)
                                                 .fixedSize(horizontal: true, vertical: false)
                                         }
                                         Text(sourceName(card))
                                             .foregroundStyle(RelayColors.textSecondary)
                                     }
-                                    .font(.relayCaption)
+                                    .font(RelayPageStyle.caption)
                                     .lineLimit(1)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(10)
                                 .background(
-                                    isSelected ? RelayTheme.surfaceElevated : RelayColors.cardBG,
+                                    isSelected ? RelayColors.workbenchTint : Color.clear,
                                     in: RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                        .strokeBorder(isSelected ? RelayColors.borderDefault : RelayTheme.line, lineWidth: 1)
                                 )
                                 .contentShape(Rectangle())
                             }
@@ -1501,7 +1504,7 @@ struct MorningBriefView: View {
                             .transition(.opacity)
                     } else {
                         Text("Choose a suggestion to see its source and review the task.")
-                            .font(.relayBody)
+                            .font(RelayPageStyle.body)
                             .foregroundStyle(RelayColors.textSecondary)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
@@ -1518,9 +1521,9 @@ struct MorningBriefView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(store.preparation.agenda, id: \.id) { event in
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(event.title).font(.relayBody.weight(.medium)).lineLimit(2)
+                            Text(event.title).font(RelayPageStyle.body.weight(.medium)).lineLimit(2)
                             Text("\(event.start.formatted(date: .abbreviated, time: .shortened)) · \(event.calendarName)")
-                                .font(.relayCaption)
+                                .font(RelayPageStyle.caption)
                                 .foregroundStyle(RelayColors.textSecondary)
                                 .lineLimit(1)
                         }
@@ -1531,21 +1534,21 @@ struct MorningBriefView: View {
             .frame(maxHeight: 92)
             .padding(.top, 6)
         }
-        .font(.relayBody.weight(.medium))
+        .font(RelayPageStyle.body.weight(.medium))
     }
 
     private var emptyLegacyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "sun.horizon")
-                .font(.relayDisplayHero)
-                .foregroundStyle(RelayColors.accentGold)
+                .font(.system(size: 24, weight: .regular))
+                .foregroundStyle(RelayColors.textSecondary)
                 .accessibilityHidden(true)
             Text("No suggestions ready")
-                .font(.relayHeadline.weight(.semibold))
+                .font(RelayPageStyle.sectionTitle)
             Text(store.suggestions.enabled
                  ? "Prepare a brief from your current index, or switch to Morning Cards."
                  : "Enable proactive suggestions in Knowledge settings to get started.")
-                .font(.relayBody)
+                .font(RelayPageStyle.body)
                 .foregroundStyle(RelayColors.textSecondary)
                 .multilineTextAlignment(.center)
             if store.suggestions.enabled {
@@ -1566,9 +1569,9 @@ struct MorningBriefView: View {
         VStack(alignment: .leading, spacing: 12) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text(card.title).font(.relayHeadline.weight(.semibold)).lineLimit(3)
+                    Text(card.title).font(RelayPageStyle.sectionTitle).lineLimit(3)
                     Text(card.sourcePaths.first ?? sourceName(card))
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -1576,13 +1579,13 @@ struct MorningBriefView: View {
                     if !card.matchingSourcePaths.isEmpty {
                         let count = card.matchingSourcePaths.count
                         Text("\(count) identical \(count == 1 ? "source copy" : "source copies") also indexed")
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textSecondary)
                             .help(card.matchingSourcePaths.prefix(5).joined(separator: "\n"))
                     }
                     ScrollView {
                         Text(card.excerpt)
-                            .font(.relayBody)
+                            .font(RelayPageStyle.body)
                             .foregroundStyle(RelayColors.textBright)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1593,9 +1596,9 @@ struct MorningBriefView: View {
                     .background(RelayTheme.surface.opacity(0.45), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(RelayTheme.line, lineWidth: 1))
 
-                    Text("Task request").font(.relayBody.weight(.medium))
+                    Text("Task request").font(RelayPageStyle.body.weight(.medium))
                     TextEditor(text: $request)
-                        .font(.relayBody)
+                        .font(RelayPageStyle.body)
                         .foregroundStyle(RelayTheme.ink)
                         .scrollContentBackground(.hidden)
                         .padding(8)
@@ -1607,7 +1610,7 @@ struct MorningBriefView: View {
                     Text(!store.actionsReady ? "Load a local model in Settings to draft or start a task."
                          : (store.workspaceUsesCodex || store.workspaceUsesCodexCLI) ? "Starting this task switches the workspace to the local model."
                          : "Relay runs the request locally and shows any action that needs review.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1628,7 +1631,7 @@ struct MorningBriefView: View {
                     Button("Snooze until tomorrow") { hide(card.id, snooze: true) }
                     Button("Dismiss suggestion") { hide(card.id, snooze: false) }
                 }
-                .font(.relayCaption.weight(.medium))
+                .font(RelayPageStyle.caption.weight(.medium))
                 .fixedSize()
                 .disabled(drafting != nil)
                 Spacer()

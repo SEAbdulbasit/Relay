@@ -62,18 +62,22 @@ struct ClaudeSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "sparkles", color: RelayColors.accentEmerald, size: 38, iconSize: 17)
+                Image(systemName: "sparkles")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         Text("Claude via Claude Code CLI")
-                            .font(.relayHeadline)
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
                         if let cliVersion {
                             RelayBadge("v\(cliVersion)", tint: RelayColors.textSecondary)
                         }
                     }
                     Text("Reuse your existing Claude subscription login (`claude -p`) for chat, Mac actions, Knowledge consolidation, Magic Reply, and Proactive briefs. No Relay account or separate API key is required.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -97,7 +101,7 @@ struct ClaudeSettingsView: View {
                             .foregroundStyle(RelayColors.accentAmber)
                             .accessibilityHidden(true)
                         Text("Your Claude OAuth access token expired or was rejected. Use Sign In with Claude below to refresh your login in one click.")
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textPrimary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -213,12 +217,7 @@ struct ClaudeSettingsView: View {
                     .font(.relayCaptionStrong)
                     .foregroundStyle(RelayColors.textPrimary)
                 }
-                .padding(14)
-                .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
-                )
+                .padding(.vertical, 4)
                 .disabled(store.isPreparingModel)
 
                 HStack(spacing: 10) {
@@ -248,7 +247,7 @@ struct ClaudeSettingsView: View {
             .disabled(store.isRunning && !store.isPreparingModel)
 
             Text("Selected prompts, admitted source excerpts, and checked images are sent to Anthropic under your Claude account’s privacy terms and usage limits. Native Claude Code shell, file, and MCP tools stay disabled; Relay validates every structured action locally.")
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textMuted)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -256,26 +255,25 @@ struct ClaudeSettingsView: View {
                 Image(systemName: store.actionsReady ? "checkmark.circle.fill" : "circle.dotted")
                     .foregroundStyle(store.actionsReady ? RelayColors.accentEmerald : RelayColors.textMuted)
                 Text(store.modelStatus)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
                     .textSelection(.enabled)
             }
 
             if let error = store.errorMessage {
                 Text(error)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.accentCoral)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let status = store.localVisionStatus {
                 Text(status)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(20)
-        .relayLitCard(accent: RelayColors.accentEmerald, cornerRadius: RelayTheme.radius)
+        .relayFormSection()
         .onAppear {
             customModelDraft = effective.customModelID
             tokenRejected = ClaudeCLIClient.sharedAuthTokenRejected

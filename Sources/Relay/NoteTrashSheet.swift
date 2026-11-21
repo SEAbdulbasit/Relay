@@ -11,20 +11,21 @@ struct NoteTrashSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack {
-                Text("Recently deleted notes").font(.relayWorkbenchTitle)
+                Text("Recently deleted notes").font(RelayPageStyle.dialogTitle).accessibilityAddTraits(.isHeader)
                 Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Done") { dismiss() }.buttonStyle(RelaySecondaryButtonStyle()).keyboardShortcut(.cancelAction)
             }
             Text("Restore a note to its original folder. Existing files are never replaced, and notes here are not automatically erased.")
-                .font(.relayBody).foregroundStyle(RelayColors.textSecondary)
+                .font(RelayPageStyle.body).foregroundStyle(RelayColors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
             if let error { Text(error).font(.relayCallout).foregroundStyle(RelayColors.error).textSelection(.enabled) }
             if let status { Text(status).font(.relayCallout).foregroundStyle(RelayColors.textSecondary) }
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 0) {
                     if entries.isEmpty { Text("No deleted notes.").foregroundStyle(RelayColors.textSecondary).padding(.vertical, 24) }
                     ForEach(entries) { entry in
                         HStack(spacing: 12) {
-                            Image(systemName: "doc.text").foregroundStyle(RelayColors.workbenchAccent)
+                            Image(systemName: "doc.text").font(RelayPageStyle.symbol).foregroundStyle(RelayColors.textSecondary)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(entry.title).font(.relayBodyStrong).lineLimit(2)
                                 Text(entry.deletedAt, style: .date).font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
@@ -42,15 +43,15 @@ struct NoteTrashSheet: View {
                             .buttonStyle(RelaySecondaryButtonStyle())
                             .accessibilityLabel("Restore \(entry.title)")
                         }
-                        .padding(14)
-                        .background(RelayColors.workbenchTint, in: RoundedRectangle(cornerRadius: 8))
+                        .padding(.vertical, 14)
+                        Divider()
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(24).frame(minWidth: 520, idealWidth: 600, minHeight: 360, idealHeight: 460)
-        .background(RelayColors.canvas).foregroundStyle(RelayColors.textPrimary)
+        .relayPageBackground().foregroundStyle(RelayColors.textPrimary)
         .tint(RelayColors.workbenchAccent).relayPreferredAppearance()
         .onAppear { reload() }
     }

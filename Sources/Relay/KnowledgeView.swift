@@ -17,11 +17,8 @@ struct KnowledgeView: View {
     @Bindable private var writingStyle = WritingStyleCollector.shared
     @State private var fullGalaxyMode: Bool = false
     @State private var didApplyInitialMode = false
-    @State private var expandedDomains: Set<String> = [
-        GeneratedKnowledgeNote.domain, "Your Notes",
-        "Local folder: People", "Local folder: Projects", "Local folder: Plans", "Local folder: Preferences",
-        "People", "Projects", "Plans", "Preferences"
-    ]
+    // Keep the library navigable before exposing every source and collection.
+    @State private var expandedDomains: Set<String> = ["Your Notes"]
     @State private var selectedNodeURL: URL? = nil
     @State private var readerBackStack: [URL] = []
     @State private var vaultNotes: [LocalMarkdownNote] = []
@@ -146,7 +143,7 @@ struct KnowledgeView: View {
             }
         }
         .foregroundStyle(RelayColors.textPrimary)
-        .disclosureGroupStyle(RelayDisclosureGroupStyle(accent: RelayColors.accentGold))
+        .disclosureGroupStyle(RelayDisclosureGroupStyle(accent: RelayColors.workbenchAccent))
         .onChange(of: store.knowledge.records) { _, _ in
             store.knowledgeSearch.invalidateSources()
             store.suggestions.purge(records: store.knowledge.records)
@@ -327,9 +324,9 @@ struct KnowledgeView: View {
             } else {
                 HStack(spacing: 0) {
                     vaultLeftSidebar
-                        .frame(width: 256)
+                        .frame(width: 240)
                         .frame(maxHeight: .infinity)
-                        .background(RelayColors.pitch)
+                        .background(RelayColors.pitch.opacity(0.72))
                     Rectangle().fill(RelayColors.borderSubtle).frame(width: 1)
                     vaultMiddleMarkdownPane
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -348,7 +345,7 @@ struct KnowledgeView: View {
                     .textSelection(.enabled)
             }
         }
-        .background(RelayColors.canvas)
+        .relayPageBackground()
     }
 
     private var header: some View {
@@ -356,16 +353,31 @@ struct KnowledgeView: View {
             headerContent(showCounts: true).labelStyle(.titleAndIcon)
             headerContent(showCounts: false).labelStyle(.iconOnly)
         }
-        .frame(height: 44)
-        .background(RelayColors.pitch.opacity(0.45))
+        .frame(height: 52)
+        .background(RelayColors.canvas.opacity(0.35))
     }
 
     private func headerContent(showCounts: Bool) -> some View {
         let noteCount = vaultNotes.count
         let combinedRecords = store.knowledge.records + store.nativeSources.liveSources.knowledgeRecords()
         let sourceCount = Set(combinedRecords.map(\.sourcePath)).count
-        return HStack(spacing: RelaySpace.sm) {
-            // Segmented Vault / Constellation mode switcher
+        return HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Knowledge")
+                    .font(RelayPageStyle.dialogTitle)
+                    .foregroundStyle(RelayColors.textPrimary)
+                    .lineLimit(1)
+                    .accessibilityAddTraits(.isHeader)
+                if showCounts {
+                    Text("\(sourceCount) \(sourceCount == 1 ? "source" : "sources") · \(noteCount) \(noteCount == 1 ? "note" : "notes")")
+                        .font(RelayPageStyle.caption)
+                        .foregroundStyle(RelayColors.textMuted)
+                        .lineLimit(1)
+                        .accessibilityIdentifier("knowledge.libraryCount")
+                }
+            }
+            .fixedSize(horizontal: true, vertical: false)
+            // Views share one toolbar vocabulary with the rest of Relay.
             HStack(spacing: 4) {
                 knowledgeModePill(
                     title: "Library",
@@ -379,7 +391,7 @@ struct KnowledgeView: View {
                 }
                 knowledgeModePill(
                     title: "Constellation",
-                    icon: "sparkles",
+                    icon: "point.3.connected.trianglepath.dotted",
                     isSelected: fullGalaxyMode,
                     disabled: !hasVaultContent
                 ) {
@@ -388,26 +400,15 @@ struct KnowledgeView: View {
                     }
                 }
             }
-            .padding(3)
-            .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
-            )
+            .fixedSize(horizontal: true, vertical: false)
             .accessibilityIdentifier("knowledge.toggleConstellation")
 
-            if showCounts {
-                Text("\(sourceCount) \(sourceCount == 1 ? "source" : "sources") · \(noteCount) \(noteCount == 1 ? "note" : "notes")")
-                    .font(.relayCaption)
-                    .foregroundStyle(RelayColors.textSecondary)
-                    .accessibilityIdentifier("knowledge.libraryCount")
-            }
             Spacer(minLength: RelaySpace.xs)
 
             Button("New note", systemImage: "square.and.pencil") {
                 requestGuardedReaderAction(.openNewNote)
             }
-            .buttonStyle(RelayPrimaryButtonStyle())
+            .buttonStyle(RelayGhostButtonStyle())
             .accessibilityIdentifier("knowledge.newNote")
 
             Menu {
@@ -435,17 +436,21 @@ struct KnowledgeView: View {
                 Button("Share knowledge…", systemImage: "square.and.arrow.up") { showSharingSheet = true }
                     .accessibilityIdentifier("knowledge.share")
             } label: {
-                Label("Library actions", systemImage: "ellipsis")
-                    .labelStyle(.iconOnly)
-                    .frame(width: 28, height: 28)
+                Label("More", systemImage: "ellipsis")
+                    .labelStyle(.titleAndIcon)
+                    .font(RelayPageStyle.body)
+                    .frame(minHeight: 32)
             }
             .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .tint(RelayColors.textSecondary)
             .fixedSize()
+            .accessibilityLabel("Library actions")
             .accessibilityIdentifier("knowledge.libraryActions")
 
         }
-        .padding(.horizontal, RelaySpace.lg)
-        .frame(height: 44)
+        .padding(.horizontal, 24)
+        .frame(height: 52)
     }
 
     private func knowledgeModePill(
@@ -456,30 +461,16 @@ struct KnowledgeView: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .semibold))
-                Text(title)
-                    .font(.relayCaptionStrong)
-                    .lineLimit(1)
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(RelayPageStyle.symbol)
+                Text(title).font(RelayPageStyle.body).lineLimit(1)
             }
-            .foregroundStyle(
-                disabled
-                    ? RelayColors.textDim
-                    : (isSelected ? RelayColors.textPrimary : RelayColors.textSecondary)
-            )
+            .foregroundStyle(disabled ? RelayColors.textDim : (isSelected ? RelayColors.workbenchAccent : RelayColors.textSecondary))
             .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .frame(minHeight: 24)
-            .background(
-                isSelected ? RelayColors.surfaceElevated : Color.clear,
-                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(isSelected ? RelayColors.borderDefault : Color.clear, lineWidth: 1)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .frame(height: 32)
+            .background(isSelected ? RelayColors.workbenchTint : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(RelayPressStyle())
         .disabled(disabled)
@@ -493,13 +484,13 @@ struct KnowledgeView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 7) {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 11.5, weight: .medium))
+                        .font(RelayPageStyle.symbol)
                         .foregroundStyle(RelayColors.textMuted)
                     TextField("Filter vault…", text: $vaultFilter)
                         .textFieldStyle(.plain)
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.body)
                         .foregroundStyle(RelayColors.textPrimary)
-                        .relayTextFieldPrompt("Filter vault…", when: vaultFilter.isEmpty, font: .relayCaption)
+                        .relayTextFieldPrompt("Filter vault…", when: vaultFilter.isEmpty, font: RelayPageStyle.body)
                         .accessibilityIdentifier("knowledge.filterTitles")
                     if !vaultFilter.isEmpty {
                         Button {
@@ -513,38 +504,35 @@ struct KnowledgeView: View {
                     }
                 }
                 .padding(.horizontal, 9)
-                .frame(height: 28)
+                .frame(height: 32)
                 .background(RelayColors.subtleFill, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .padding(.horizontal, 10)
                 .padding(.top, 12)
                 .padding(.bottom, 2)
 
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 5) {
-                    ForEach(VaultDomainFilter.allCases) { chip in
-                        let isSelected = selectedDomainFilter == chip
+                Menu {
+                    ForEach(VaultDomainFilter.allCases) { scope in
                         Button {
-                            selectedDomainFilter = (selectedDomainFilter == chip && chip != .all) ? .all : chip
+                            selectedDomainFilter = scope
                         } label: {
-                            Text(chip.rawValue)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(isSelected ? RelayColors.textPrimary : RelayColors.textSecondary)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3.5)
-                                .background(
-                                    isSelected ? RelayColors.surfaceElevated : RelayColors.subtleFill,
-                                    in: Capsule()
-                                )
-                                .overlay(
-                                    Capsule()
-                                        .strokeBorder(isSelected ? RelayColors.accentGold.opacity(0.65) : RelayColors.borderSubtle, lineWidth: 1)
-                                )
+                            if selectedDomainFilter == scope {
+                                Label(scope.rawValue, systemImage: "checkmark")
+                            } else {
+                                Text(scope.rawValue)
+                            }
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(isSelected ? .isSelected : [])
-                        .accessibilityIdentifier("knowledge.domainChip.\(chip.rawValue.lowercased())")
+                        .accessibilityIdentifier("knowledge.domainChip.\(scope.rawValue.lowercased())")
                     }
+                } label: {
+                    Text(selectedDomainFilter == .all ? "All collections" : "\(selectedDomainFilter.rawValue) collection")
+                        .font(RelayPageStyle.caption)
+                        .foregroundStyle(RelayColors.textSecondary)
+                        .frame(minHeight: 32)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.horizontal, 10)
+                .menuStyle(.borderlessButton)
+                .accessibilityLabel("Filter collection: \(selectedDomainFilter.rawValue)")
+                .padding(.horizontal, 16)
                 .padding(.bottom, 8)
 
                 if let graph = skyModel.graph {
@@ -745,13 +733,8 @@ struct KnowledgeView: View {
                 .accessibilityIdentifier("knowledge.generationStatus")
         }
         .buttonStyle(RelaySecondaryButtonStyle())
-        .padding(9)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RelayColors.subtleFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(RelayColors.borderSubtle, lineWidth: 0.75)
-        )
     }
 
     private func selectVaultNode(_ node: SkyNode) {
@@ -1011,7 +994,7 @@ struct KnowledgeView: View {
         VStack(alignment: .leading, spacing: 18) {
             HStack {
                 Text("Share Knowledge Vault")
-                    .font(.relayHeadline.weight(.semibold))
+                    .font(RelayPageStyle.dialogTitle)
                 Spacer()
                 Button("Done") { showSharingSheet = false }
                     .buttonStyle(RelaySecondaryButtonStyle())
@@ -1066,7 +1049,7 @@ struct KnowledgeView: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(writingStyle.hasSnapshot ? "Edit Writing Style" : "Create Writing Style")
-                        .font(.relayHeadline.weight(.semibold))
+                        .font(RelayPageStyle.dialogTitle)
                         .accessibilityIdentifier("knowledge.writingStyleTitle")
                     Text("Stored locally at KnowledgeVault/\(WritingStyleCollector.fileName). Guides Magic Reply and Morning Card drafts and is never overwritten automatically.")
                         .font(.relayCaption)
@@ -1207,20 +1190,19 @@ struct KnowledgeView: View {
                         }
 
                         VStack(alignment: .leading, spacing: 7) {
-                            Text(editableNote != nil ? "YOUR NOTE" : generated != nil ? "GENERATED HIGHLIGHTS" : relationshipKind != nil ? "LINKED CONTEXT" : node.url.host == "group" ? "COLLECTION" : "SOURCE EXCERPT")
-                                .font(.relayEyebrow)
-                                .tracking(1.2)
-                                .foregroundStyle(RelayColors.workbenchAccent)
+                            Text(editableNote != nil ? "Your note" : generated != nil ? "Generated highlights" : relationshipKind != nil ? "Linked context" : node.url.host == "group" ? "Collection" : "Source excerpt")
+                                .font(RelayPageStyle.caption)
+                                .foregroundStyle(RelayColors.textMuted)
                             if let relationshipKind {
                                 RelayBadge(
                                     relationshipKind.title,
                                     icon: relationshipKind.icon,
-                                    tint: RelayColors.accentGold,
+                                    tint: RelayColors.workbenchAccent,
                                     prominent: true
                                 )
                             }
                             Text(node.isRoot ? "Overview" : node.url.host == "group" ? collectionTitle(node.title) : node.title)
-                                .font(.relayWorkbenchTitle)
+                                .font(RelayPageStyle.title)
                                 .foregroundStyle(RelayColors.textPrimary)
                                 .accessibilityAddTraits(.isHeader)
                                 .accessibilityIdentifier(relationshipKind.map { "knowledge.linked.\($0.rawValue)" } ?? "knowledge.readerTitle")
@@ -1304,16 +1286,21 @@ struct KnowledgeView: View {
                         }
                         }
                     }
-                    .buttonStyle(RelaySecondaryButtonStyle())
-                    .padding(.horizontal, 32).padding(.top, 28).padding(.bottom, 20)
+                    .buttonStyle(RelayGhostButtonStyle())
+                    .padding(.horizontal, 28).padding(.top, 20).padding(.bottom, 12)
+                    .frame(maxWidth: 640, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .center)
 
-                    Rectangle().fill(RelayColors.borderSubtle).frame(height: 1).padding(.horizontal, 32)
+                    Rectangle().fill(RelayColors.borderSubtle).frame(height: 1)
+                        .padding(.horizontal, 28)
+                        .frame(maxWidth: 640)
+                        .frame(maxWidth: .infinity, alignment: .center)
 
                     if let editing = inlineEditingNote, editing.id == editableNote?.id {
                         VStack(alignment: .leading, spacing: 10) {
                             TextField("Note title", text: inlineTitleBinding)
                                 .textFieldStyle(.plain)
-                                .font(.relayHeadline)
+                                .font(RelayPageStyle.sectionTitle)
                                 .relayTextField(cornerRadius: 10)
                                 .accessibilityIdentifier("knowledge.inlineTitle")
 
@@ -1380,8 +1367,8 @@ struct KnowledgeView: View {
                                 }
                             }
                             .padding(.horizontal, 28).padding(.bottom, 24)
-                            .frame(maxWidth: RelayTheme.readingMaxWidth, alignment: .leading)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(maxWidth: 640, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .center)
                         }
                     }
                 }
@@ -1397,7 +1384,7 @@ struct KnowledgeView: View {
         if !outgoing.isEmpty || !backlinks.isEmpty {
             RelaySurfaceCard(padding: 18, cornerRadius: 14) {
                 VStack(alignment: .leading, spacing: 12) {
-                    RelayMonoCaps("LINKED NOTES & SOURCES", size: 10, tracking: 1.2, color: RelayColors.textMuted)
+                    Text("Linked notes and sources").font(RelayPageStyle.sectionTitle).foregroundStyle(RelayColors.textPrimary)
 
                     if !outgoing.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
@@ -1496,7 +1483,7 @@ struct KnowledgeView: View {
                     HStack(spacing: 10) {
                         Image(systemName: document.url.isFileURL ? "doc.text" : "note.text")
                             .font(.relayCallout)
-                            .foregroundStyle(RelayColors.accentGold)
+                            .foregroundStyle(RelayColors.workbenchAccent)
                         Text(document.title)
                             .font(.relayBodyStrong)
                             .foregroundStyle(RelayColors.textPrimary)
@@ -1543,7 +1530,7 @@ struct KnowledgeView: View {
             }
             ForEach(Array(note.highlights.enumerated()), id: \.offset) { _, excerpt in
                 Text(excerpt)
-                    .font(.relayBody)
+                    .font(.system(size: 15))
                     .foregroundStyle(RelayColors.textPrimary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1693,37 +1680,37 @@ struct KnowledgeView: View {
                 case .heading(let level, let text):
                     if level == 1 {
                         wikilinkHighlightedText(text, graph: graph, neighbors: neighbors)
-                            .font(.relayLargeTitle)
+                            .font(RelayPageStyle.title)
                             .foregroundStyle(RelayColors.textPrimary)
                             .padding(.bottom, 4)
                     } else if level == 2 {
                         wikilinkHighlightedText(text, graph: graph, neighbors: neighbors)
-                            .font(.relayHeadline)
-                            .foregroundStyle(RelayColors.accentGold)
+                            .font(RelayPageStyle.sectionTitle)
+                            .foregroundStyle(RelayColors.textPrimary)
                             .padding(.top, 4)
                     } else {
                         wikilinkHighlightedText(text, graph: graph, neighbors: neighbors)
-                            .font(.relaySubheadline.weight(.semibold))
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textBright)
                             .padding(.top, 2)
                     }
                 case .bullet(let text):
                     HStack(alignment: .top, spacing: 8) {
-                        Text("•").foregroundStyle(RelayColors.accentAmethyst)
+                        Text("•").foregroundStyle(RelayColors.textSecondary)
                         wikilinkHighlightedText(text, graph: graph, neighbors: neighbors)
                     }
                 case .numbered(let prefix, let text):
                     HStack(alignment: .top, spacing: 8) {
                         Text(prefix)
                             .font(.relayMonoSmall)
-                            .foregroundStyle(RelayColors.accentGold)
+                            .foregroundStyle(RelayColors.textSecondary)
                             .frame(minWidth: 18, alignment: .trailing)
                         wikilinkHighlightedText(text, graph: graph, neighbors: neighbors)
                     }
                 case .blockquote(let text):
                     HStack(alignment: .top, spacing: 10) {
                         RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                            .fill(RelayColors.accentGold.opacity(0.75))
+                            .fill(RelayColors.borderStrong)
                             .frame(width: 3)
                         wikilinkHighlightedText(text, graph: graph, neighbors: neighbors)
                             .italic()
@@ -1816,7 +1803,7 @@ struct KnowledgeView: View {
                 .accessibilityHidden(true)
 
             Text("No notes yet")
-                .font(.relayLargeTitle)
+                .font(RelayPageStyle.title)
                 .foregroundStyle(RelayColors.textPrimary)
                 .accessibilityAddTraits(.isHeader)
             Text("Create a note, or add files and folders to make them searchable on this Mac.")
@@ -1868,7 +1855,7 @@ struct KnowledgeView: View {
                 var label = AttributedString(link.label)
                 if let target = graph.linkedNode(for: link, among: neighbors) {
                     label.link = target.url
-                    label.foregroundColor = RelayColors.knowledgeLink
+                    label.foregroundColor = RelayColors.workbenchAccent
                     label.underlineStyle = .single
                 }
                 text.append(label)
@@ -1877,8 +1864,8 @@ struct KnowledgeView: View {
         }
         text.append(inlineMarkdownSegment(line[start...], allowsInlineMarkdown: allowsLinks))
         return Text(text)
-            .font(.relayBody)
-            .foregroundStyle(RelayColors.textSecondary)
+            .font(.system(size: 15))
+            .foregroundStyle(RelayColors.textPrimary)
             .lineSpacing(5)
             .textSelection(.enabled)
     }
@@ -1896,10 +1883,10 @@ struct KnowledgeView: View {
                 let fileCount = store.knowledge.records.count
                 HStack {
                     Label("\(sourceCount) authorized \(sourceCount == 1 ? "source" : "sources") · \(fileCount) indexed \(fileCount == 1 ? "file" : "files")", systemImage: "doc.text.magnifyingglass")
-                        .font(.relayHeadline)
+                        .font(RelayPageStyle.sectionTitle)
                         .foregroundStyle(RelayColors.textPrimary)
                     Spacer()
-                    RelayMonoCaps(text: "LOCAL INDEX", color: RelayColors.accentEmerald, size: 10)
+                    Text("On this Mac").font(RelayPageStyle.caption).foregroundStyle(RelayColors.textMuted)
                 }
                 Text("Indexes authorized local files and SiYuan workspaces in place (up to 200 files / 10 MB, or 1,000 SiYuan documents). Your original files are never copied or modified.")
                     .font(.relayCaption)
@@ -1919,23 +1906,23 @@ struct KnowledgeView: View {
                         }
                         .disabled(store.grants.isEmpty)
                     }
-                    Button("Refresh sources") {
-                        store.knowledge.purgeStale(grants: store.grants)
-                        store.suggestions.purge(records: store.knowledge.records)
-                        skyModel.load(records: store.knowledge.records, entrance: false)
+                    Menu("Index actions") {
+                        Button("Refresh sources", systemImage: "arrow.clockwise") {
+                            store.knowledge.purgeStale(grants: store.grants)
+                            store.suggestions.purge(records: store.knowledge.records)
+                            skyModel.load(records: store.knowledge.records, entrance: false)
+                        }
+                        if !store.knowledge.records.isEmpty {
+                            Button("Export Markdown…", systemImage: "square.and.arrow.up") { export() }
+                            Divider()
+                            Button("Clear Index…", role: .destructive) {
+                                showClearIndexConfirmation = true
+                            }
+                        }
                     }
                     .disabled(store.knowledge.isIndexing)
-
+                    .fixedSize()
                     Spacer()
-
-                    if !store.knowledge.records.isEmpty {
-                        Button("Export Markdown…") { export() }
-                            .disabled(store.knowledge.isIndexing)
-                        Button("Clear Index") {
-                            showClearIndexConfirmation = true
-                        }
-                        .disabled(store.knowledge.isIndexing)
-                    }
                 }
                 .buttonStyle(RelaySecondaryButtonStyle())
 
@@ -1950,52 +1937,56 @@ struct KnowledgeView: View {
 
                 if !store.knowledge.records.isEmpty {
                     Divider().overlay(RelayTheme.line)
-                    VStack(alignment: .leading, spacing: 8) {
-                        RelayMonoCaps(text: "INDEXED LOCAL FILES", color: RelayColors.textSecondary, size: 10)
-                        if store.knowledge.records.count > 8 {
-                            Button(showAllIndexedFiles ? "Show fewer indexed files" : "Show all \(store.knowledge.records.count) indexed files") {
-                                showAllIndexedFiles.toggle()
-                            }
-                            .buttonStyle(RelayGhostButtonStyle())
-                        }
-                        ForEach(showAllIndexedFiles ? store.knowledge.records : Array(store.knowledge.records.prefix(8))) { record in
-                            HStack(alignment: .center, spacing: 12) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(record.title)
-                                        .font(.relayBodyStrong)
-                                        .foregroundStyle(RelayColors.textPrimary)
-                                    Text(record.sourcePath)
-                                        .font(.relayCaption)
-                                        .foregroundStyle(RelayColors.textSecondary)
-                                        .lineLimit(1)
+                    DisclosureGroup("Indexed files · \(store.knowledge.records.count)") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            if store.knowledge.records.count > 8 {
+                                Button(showAllIndexedFiles ? "Show fewer indexed files" : "Show all \(store.knowledge.records.count) indexed files") {
+                                    showAllIndexedFiles.toggle()
                                 }
-                                Spacer()
-                                Button("Forget") {
-                                    store.invalidateDerivedContext(reason: "Indexed source forgotten.")
-                                    store.knowledge.removeSource(path: record.sourcePath)
-                                    skyModel.load(records: store.knowledge.records, entrance: false)
-                                }
-                                .buttonStyle(RelaySecondaryButtonStyle())
+                                .buttonStyle(RelayGhostButtonStyle())
                             }
-                            .padding(10)
-                            .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
-                            )
+                            ForEach(showAllIndexedFiles ? store.knowledge.records : Array(store.knowledge.records.prefix(8))) { record in
+                                HStack(alignment: .center, spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(record.title)
+                                            .font(.relayBodyStrong)
+                                            .foregroundStyle(RelayColors.textPrimary)
+                                        Text(record.sourcePath)
+                                            .font(.relayCaption)
+                                            .foregroundStyle(RelayColors.textSecondary)
+                                            .lineLimit(1)
+                                    }
+                                    Spacer()
+                                    Button("Forget") {
+                                        store.invalidateDerivedContext(reason: "Indexed source forgotten.")
+                                        store.knowledge.removeSource(path: record.sourcePath)
+                                        skyModel.load(records: store.knowledge.records, entrance: false)
+                                    }
+                                    .buttonStyle(RelaySecondaryButtonStyle())
+                                }
+                                .padding(.vertical, 10)
+                                .overlay(alignment: .bottom) {
+                                    Rectangle().fill(RelayColors.borderSubtle).frame(height: 0.7)
+                                }
+                            }
                         }
+                        .padding(.top, 8)
                     }
+                    .font(RelayPageStyle.body)
                 }
             }
-            .padding(20)
-            .relayGlassCard(cornerRadius: RelayTheme.radius)
+            .relayFormSection()
 
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 12) {
-                    RelayIconBadge(icon: "lock.shield.fill", color: RelayColors.accentAmethyst, size: 38, iconSize: 17)
+                    Image(systemName: "lock.shield")
+                        .font(RelayPageStyle.symbol)
+                        .foregroundStyle(RelayColors.textSecondary)
+                        .frame(width: 20, height: 24)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Vault Sharing & Encrypted Archives")
-                            .font(.relayHeadline)
+                        Text("Vault sharing and encrypted archives")
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
                         Text("Share selected notes locally via MCP, export encrypted `.relaynotes` archives, or sync through an encrypted mirror.")
                             .font(.relayCaption)
@@ -2007,8 +1998,7 @@ struct KnowledgeView: View {
                 PortableKnowledgeSharingView()
                 HostedKnowledgeMirrorSettingsView(mirror: .shared)
             }
-            .padding(20)
-            .relayGlassCard(cornerRadius: RelayTheme.radius)
+            .relayFormSection()
 
             if let exportError {
                 Text(exportError)
@@ -2070,7 +2060,6 @@ struct KnowledgeView: View {
             vaultLoadError = nil
             guard loaded != vaultNotes || folders != vaultFolders || entrance ||
                   skyModel.graph?.nodes.isEmpty != false else { return }
-            expandedDomains.formUnion(Set(folders.map(\.graphDomain)).subtracting(vaultFolders.map(\.graphDomain)))
             vaultFolders = folders
             vaultNotes = loaded
         } catch {
@@ -2141,15 +2130,14 @@ private struct FlowLayoutWikilinks: View {
                         Image(systemName: "link")
                             .font(.system(size: 9.5, weight: .semibold))
                         Text(node.title)
-                            .font(.relayMicro)
+                            .font(RelayPageStyle.caption)
                             .lineLimit(1)
                     }
-                    .foregroundStyle(RelayColors.knowledgeLink)
+                    .foregroundStyle(RelayColors.workbenchAccent)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5)
-                    .background(RelayColors.knowledgeLink.opacity(0.10), in: Capsule())
-                    .overlay(Capsule().strokeBorder(RelayColors.knowledgeLink.opacity(0.28), lineWidth: 1))
-                    .contentShape(Capsule())
+                    .background(RelayColors.workbenchTint, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
                 .buttonStyle(RelayPressStyle())
             }
@@ -2165,8 +2153,8 @@ private struct KnowledgeSidebarOverviewRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Image(systemName: "circle.circle.fill")
-                    .font(.system(size: 12, weight: .semibold))
+                Image(systemName: "square.grid.2x2")
+                    .font(RelayPageStyle.symbol)
                     .foregroundStyle(isSelected ? RelayColors.workbenchAccent : RelayColors.textSecondary)
                 Text("Overview")
                     .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
@@ -2174,7 +2162,7 @@ private struct KnowledgeSidebarOverviewRow: View {
                 Spacer(minLength: 4)
             }
             .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 30, maxHeight: 30, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 32, maxHeight: 32, alignment: .leading)
             .background(
                 isSelected ? RelayColors.activeFill : (isHovered ? RelayColors.hoverFill : Color.clear),
                 in: RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -2205,9 +2193,9 @@ private struct KnowledgeSidebarFolderRow: View {
                     .foregroundStyle(isExpanded ? RelayColors.textPrimary : RelayColors.textMuted)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     .frame(width: 12)
-                Image(systemName: relationshipKind?.icon ?? (isExpanded ? "folder.fill" : "folder"))
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(color.opacity(0.95))
+                Image(systemName: relationshipKind?.icon ?? "folder")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(isSelected ? RelayColors.workbenchAccent : RelayColors.textSecondary)
                 Text(title)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(RelayColors.textPrimary)
@@ -2218,7 +2206,7 @@ private struct KnowledgeSidebarFolderRow: View {
                     .foregroundStyle(RelayColors.textMuted)
             }
             .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 30, maxHeight: 30, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 32, maxHeight: 32, alignment: .leading)
             .background(
                 isSelected ? RelayColors.activeFill : (isHovered ? RelayColors.hoverFill : Color.clear),
                 in: RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -2244,7 +2232,7 @@ private struct KnowledgeSidebarNoteRow: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Circle()
-                    .fill(color.opacity(isSelected ? 1.0 : 0.65))
+                    .fill(isSelected ? RelayColors.workbenchAccent : RelayColors.textMuted.opacity(0.55))
                     .frame(width: 5.5, height: 5.5)
                 Text(title)
                     .font(.system(size: 13, weight: isSelected ? .medium : .regular))
@@ -2254,7 +2242,7 @@ private struct KnowledgeSidebarNoteRow: View {
             }
             .padding(.leading, 26)
             .padding(.trailing, 10)
-            .frame(maxWidth: .infinity, minHeight: 30, maxHeight: 30, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 32, maxHeight: 32, alignment: .leading)
             .background(
                 isSelected ? RelayColors.activeFill : (isHovered ? RelayColors.hoverFill : Color.clear),
                 in: RoundedRectangle(cornerRadius: 7, style: .continuous)

@@ -9,13 +9,17 @@ struct SpeechOutputView: View {
         VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 12) {
-                    RelayIconBadge(icon: "speaker.wave.2.fill", color: RelayColors.accentCoral, size: 38, iconSize: 17)
+                    Image(systemName: "speaker.wave.2")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 28)
+                    .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Read Aloud & Local Speech")
-                            .font(.relayHeadline)
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
                         Text("Adds an on-device speaker button to replies. Uses installed Apple voices and never plays automatically.")
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textSecondary)
                             .lineSpacing(2)
                     }
@@ -36,7 +40,7 @@ struct SpeechOutputView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(spacing: 12) {
                             Text("Installed voice")
-                                .font(.relayCaptionStrong)
+                                .font(RelayPageStyle.caption.weight(.medium))
                                 .foregroundStyle(RelayColors.textSecondary)
                                 .frame(width: 96, alignment: .leading)
                             Picker("Installed voice", selection: $speech.selectedVoiceID) {
@@ -61,47 +65,45 @@ struct SpeechOutputView: View {
                         .buttonStyle(RelaySecondaryButtonStyle())
 
                         Text(speech.status)
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textSecondary)
                             .textSelection(.enabled)
                     }
-                    .padding(14)
-                    .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
-                    )
+                    .padding(.top, 4)
                 }
 
                 if let error = speech.errorMessage {
                     Text(error)
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.accentCoral)
                         .textSelection(.enabled)
                 }
 
                 DisclosureGroup("About local voices") {
                     Text("Relay uses installed Apple voices, excludes Personal Voice and never requests voice downloads or a hosted fallback. Audio cannot run tools or send messages. Read aloud starts off each session. Stop (⌘.) also stops audio.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .lineSpacing(3)
                         .padding(.top, 8)
                 }
-                .font(.relayBodyStrong)
+                .font(RelayPageStyle.sectionTitle)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(20)
-            .relayLitCard(accent: RelayColors.accentCoral, cornerRadius: RelayTheme.radius)
+            .relayFormSection()
 
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 12) {
-                    RelayIconBadge(icon: "waveform", color: RelayColors.accentCoral, size: 38, iconSize: 17)
+                    Image(systemName: "waveform")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 28)
+                    .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Check Local Speech Recognition")
-                            .font(.relayHeadline)
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
                         Text("Test a generated phrase in memory. No microphone, playback, file, or chat message.")
-                            .font(.relayCaption)
+                            .font(RelayPageStyle.caption)
                             .foregroundStyle(RelayColors.textSecondary)
                             .lineSpacing(2)
                     }
@@ -121,7 +123,7 @@ struct SpeechOutputView: View {
 
                 if diagnostic.phase != .idle {
                     Text(diagnostic.status)
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .textSelection(.enabled)
                 }
@@ -136,19 +138,19 @@ struct SpeechOutputView: View {
                             Text("\(diagnostic.audioFrames) audio frames · \(elapsed, specifier: "%.1f") seconds. One synthetic phrase checks recognition support, not microphone accuracy or offline operation.")
                         }
                     }
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
                     .lineSpacing(3)
                     .padding(.top, 8)
                 }
-                .font(.relayBodyStrong)
+                .font(RelayPageStyle.sectionTitle)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(20)
-            .relayGlassCard(cornerRadius: RelayTheme.radius)
+            .relayFormSection()
         }
         .foregroundStyle(RelayTheme.ink)
-        .disclosureGroupStyle(RelayDisclosureGroupStyle(accent: RelayColors.accentCoral))
+        .font(RelayPageStyle.body)
+        .disclosureGroupStyle(RelayDisclosureGroupStyle(accent: RelayColors.workbenchAccent))
         .onChange(of: taskBusy) { _, busy in if busy { diagnostic.stop() } }
         .onDisappear { diagnostic.stop() }
     }

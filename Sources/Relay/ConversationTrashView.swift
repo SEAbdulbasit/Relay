@@ -10,9 +10,9 @@ struct ConversationTrashView: View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 7) {
-                    Text("Conversation Trash").font(.relayWorkbenchTitle).accessibilityAddTraits(.isHeader)
+                    Text("Conversation Trash").font(RelayPageStyle.dialogTitle).accessibilityAddTraits(.isHeader)
                     Text("Restore messages and their saved activity to History. Restoring a conversation does not run it.")
-                        .font(.relayBody).foregroundStyle(RelayColors.textSecondary)
+                        .font(RelayPageStyle.body).foregroundStyle(RelayColors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 16)
@@ -20,7 +20,7 @@ struct ConversationTrashView: View {
             }
             Divider()
             if let feedback {
-                Text(feedback).font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
+                Text(feedback).font(RelayPageStyle.caption).foregroundStyle(RelayColors.textSecondary)
                     .textSelection(.enabled).accessibilityIdentifier("history.trash.feedback")
             }
             if store.threadArchive.trashedThreads.isEmpty {
@@ -32,8 +32,8 @@ struct ConversationTrashView: View {
                         ForEach(store.threadArchive.trashedThreads) { thread in
                             HStack(alignment: .top, spacing: 16) {
                                 VStack(alignment: .leading, spacing: 5) {
-                                    Text(thread.title).font(.relayBodyStrong).lineLimit(2)
-                                    Text("\(thread.messages.count) saved messages").font(.relayCaption).foregroundStyle(RelayColors.textSecondary)
+                                    Text(thread.title).font(RelayPageStyle.sectionTitle).lineLimit(2)
+                                    Text("\(thread.messages.count) saved messages").font(RelayPageStyle.caption).foregroundStyle(RelayColors.textSecondary)
                                 }
                                 Spacer(minLength: 8)
                                 Button("Restore") {
@@ -54,10 +54,11 @@ struct ConversationTrashView: View {
                 }
             }
         }
-        .padding(28)
+        .padding(24)
         .frame(minWidth: 540, idealWidth: 620, minHeight: 380, idealHeight: 500)
-        .background(RelayColors.canvas)
+        .relayPageBackground()
         .foregroundStyle(RelayColors.textPrimary)
+        .font(RelayPageStyle.body)
         .tint(RelayColors.workbenchAccent)
         .accessibilityIdentifier("history.trash")
     }

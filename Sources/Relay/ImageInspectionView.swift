@@ -21,10 +21,13 @@ struct ImageInspectionView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack(alignment: .top, spacing: 12) {
-                        RelayIconBadge(icon: "viewfinder", color: RelayColors.accentBlue, size: 38, iconSize: 17)
+                        Image(systemName: "viewfinder")
+                            .font(RelayPageStyle.symbol)
+                            .foregroundStyle(RelayColors.textSecondary)
+                            .frame(width: 20, height: 22)
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Inspect an image or window")
-                                .font(.relayDisplayTitle.weight(.semibold))
+                                .font(RelayPageStyle.dialogTitle)
                                 .foregroundStyle(RelayColors.textPrimary)
                                 .accessibilityIdentifier("imageInspection.heading")
                             Text("Use your active model to describe an image or live window, then optionally hand the verified description to a task.")
@@ -33,7 +36,7 @@ struct ImageInspectionView: View {
                                 .lineSpacing(3)
                         }
                         Spacer(minLength: 8)
-                        RelayIconButton(icon: "xmark", label: "Close", size: 28, iconSize: 12) {
+                        RelayIconButton(icon: "xmark", label: "Close", size: 32, iconSize: 14) {
                             dismiss()
                         }
                         .accessibilityIdentifier("imageInspection.closeHeader")
@@ -190,10 +193,11 @@ struct ImageInspectionView: View {
             .accessibilityIdentifier("imageInspection.footer")
         }
         .padding(24)
-        .frame(width: 540, height: 640)
-        .background(RelayTheme.background)
+        .frame(width: 540)
+        .frame(minHeight: 480, idealHeight: 600, maxHeight: 640)
+        .relayPageBackground()
         .foregroundStyle(RelayTheme.ink)
-        .tint(RelayColors.accentBlue)
+        .tint(RelayColors.workbenchAccent)
         .relayPreferredAppearance()
         .disclosureGroupStyle(RelayDisclosureGroupStyle())
         .fileImporter(isPresented: $showFiles, allowedContentTypes: [.image], allowsMultipleSelection: false) { result in

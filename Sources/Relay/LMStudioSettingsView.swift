@@ -18,16 +18,20 @@ struct LMStudioSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "server.rack", color: RelayColors.accentAmethyst, size: 38, iconSize: 17)
+                Image(systemName: "server.rack")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 6) {
                         Text("LM Studio Local Server")
-                            .font(.relayHeadline)
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
                         RelayBadge("OpenAI-Compatible", tint: RelayColors.accentAmethyst, prominent: true)
                     }
                     Text("Connect to LM Studio running on this Mac. Prompts, tools, and visual attachments remain on your local machine.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -93,16 +97,11 @@ struct LMStudioSettingsView: View {
                 }
 
                 Text("A listed model may still need to be loaded in LM Studio. Choose one, then check that it can plan actions.")
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(14)
-            .background(RelayColors.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
-            )
+            .padding(.vertical, 4)
 
             HStack(spacing: 10) {
                 Button(store.isPreparingModel ? "Checking…" : "Check model") {
@@ -137,31 +136,30 @@ struct LMStudioSettingsView: View {
                 Image(systemName: store.actionsReady ? "checkmark.circle.fill" : "circle.dotted")
                     .foregroundStyle(store.actionsReady ? RelayColors.accentEmerald : RelayColors.textMuted)
                 Text(store.modelStatus)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
                     .textSelection(.enabled)
             }
 
             if let error = store.errorMessage {
                 Text(error)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.accentCoral)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let status = store.localVisionStatus {
                 Text(status)
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text("Relay checks image support with a sample before sending the image you choose. Chat and text actions use this model; Double Tap keeps its own model setting.")
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textMuted)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(20)
-        .relayLitCard(accent: RelayColors.accentAmethyst, cornerRadius: RelayTheme.radius)
+        .relayFormSection()
         .onAppear { port = String(store.configuration.lmStudio?.endpoint.port ?? 1234) }
         .onChange(of: store.configuration.lmStudio?.endpoint.port) { _, value in port = String(value ?? 1234) }
     }

@@ -8,23 +8,27 @@ struct AppUpdateView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "arrow.triangle.2.circlepath.circle.fill", color: RelayColors.accentBlue, size: 38, iconSize: 17)
+                Image(systemName: "arrow.triangle.2.circlepath.circle")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         Text("Relay Updates")
-                            .font(.relayHeadline)
+                            .font(RelayPageStyle.sectionTitle)
                             .foregroundStyle(RelayColors.textPrimary)
                         RelayBadge(installedDescription, tint: RelayColors.textSecondary)
                     }
                     Text("Checks the public GitHub releases when you ask. Download and install updates from the release page.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
             }
 
-            HStack(spacing: 10) {
+            RelayChipFlow(spacing: 8, alignment: .leading) {
                 Button("Check for updates") {
                     guard checkTask == nil else { return }
                     checkTask = Task {
@@ -52,18 +56,17 @@ struct AppUpdateView: View {
                 .buttonStyle(RelayGhostButtonStyle())
                 .accessibilityIdentifier("updates.source")
 
-                Spacer()
             }
 
             Text(statusDescription)
-                .font(.relayCaption)
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textSecondary)
                 .textSelection(.enabled)
                 .accessibilityIdentifier("updates.status")
 
             if let checked = checker.lastCheckedAt {
                 Text("Last checked \(checked.formatted(date: .abbreviated, time: .shortened))")
-                    .font(.relayCaption)
+                    .font(RelayPageStyle.caption)
                     .foregroundStyle(RelayColors.textMuted)
             }
         }

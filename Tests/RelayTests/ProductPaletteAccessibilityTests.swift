@@ -6,6 +6,19 @@ import Testing
 @Suite("Product palette readability")
 @MainActor
 struct ProductPaletteAccessibilityTests {
+    @Test func destructiveButtonInkRemainsReadableAcrossInteractionStates() throws {
+        for mode in [RelayAppearanceMode.light, .dark] {
+            let fill = try #require(RelayColors.resolvedNSColor(RelayColors.accentCoral, for: mode).usingColorSpace(.sRGB))
+            for darkening in [0.0, 0.06, 0.12] {
+                let composited = Color(red: fill.redComponent * (1 - darkening),
+                                       green: fill.greenComponent * (1 - darkening),
+                                       blue: fill.blueComponent * (1 - darkening))
+                let ratio = try contrast(RelayColors.buttonInk, composited, mode: mode)
+                #expect(ratio >= 4.5, "Destructive button contrast must reach 4.5:1 in \(mode), darkening \(darkening): \(ratio)")
+            }
+        }
+    }
+
     @Test func supportingTextAndSemanticLabelsMeetNormalTextContrast() throws {
         for mode in [RelayAppearanceMode.light, .dark] {
             for background in [RelayColors.canvas, RelayColors.pitch, RelayColors.cardBG, RelayColors.surface, RelayColors.surfaceElevated] {

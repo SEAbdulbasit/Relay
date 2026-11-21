@@ -162,37 +162,34 @@ struct OCRReadinessSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
-                RelayIconBadge(icon: "doc.text.viewfinder", color: RelayColors.accentEmerald, size: 38, iconSize: 17)
+                Image(systemName: "doc.text.viewfinder")
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Local Text Recognition (OCR)")
-                        .font(.relayHeadline)
+                        .font(RelayPageStyle.sectionTitle)
                         .foregroundStyle(RelayColors.textPrimary)
                     Text("Prepares on-device Apple Vision text recognition in the background for images, scanned PDFs, and window reads.")
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer()
-                HStack(spacing: 8) {
-                    RelayHealthDot(color: statusColor)
-                    Text(settings.statusDescription)
-                        .font(.relayCaptionStrong)
-                        .foregroundStyle(RelayColors.textPrimary)
-                        .textSelection(.enabled)
-                        .accessibilityIdentifier("settings.ocrReadinessStatus")
-                    if settings.status == .preparing {
-                        ProgressView()
-                            .controlSize(.small)
-                            .accessibilityHidden(true)
-                    }
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 8) {
+                RelayHealthDot(color: statusColor)
+                Text(settings.statusDescription)
+                    .font(.relayCaptionStrong)
+                    .foregroundStyle(RelayColors.textPrimary)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("settings.ocrReadinessStatus")
+                if settings.status == .preparing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityHidden(true)
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(RelayColors.surface, in: Capsule(style: .continuous))
-                .overlay(
-                    Capsule(style: .continuous)
-                        .strokeBorder(RelayColors.borderSubtle, lineWidth: 1)
-                )
             }
 
             if settings.status == .failed {
@@ -207,7 +204,7 @@ struct OCRReadinessSettingsView: View {
 
                 if let errorMessage = settings.errorMessage {
                     Text(errorMessage)
-                        .font(.relayCaption)
+                        .font(RelayPageStyle.caption)
                         .foregroundStyle(RelayColors.accentCoral)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
