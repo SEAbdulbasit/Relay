@@ -182,28 +182,9 @@ struct OnboardingView: View {
                     Button {
                         move(to: stepOrder[pageIndex - 1])
                     } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 10.5, weight: .semibold))
-                            Text("Back")
-                                .font(.system(size: 12.5, weight: .medium))
-                        }
-                        .foregroundStyle(RelayColors.textPrimary)
-                        .padding(.horizontal, 13)
-                        .frame(height: 32)
-                        .background(
-                            isDarkAppearance ? Color.white.opacity(0.06) : RelayColors.surface,
-                            in: Capsule()
-                        )
-                        .overlay(
-                            Capsule().strokeBorder(
-                                isDarkAppearance ? Color.white.opacity(0.12) : RelayColors.borderSubtle,
-                                lineWidth: 1
-                            )
-                        )
-                        .contentShape(Capsule())
+                        Label("Back", systemImage: "chevron.left")
                     }
-                    .buttonStyle(RelayPressStyle())
+                    .buttonStyle(RelaySecondaryButtonStyle())
                     .disabled(isNavigationBlocked)
                 } else {
                     HStack(spacing: 9) {
@@ -236,23 +217,7 @@ struct OnboardingView: View {
                 HStack(spacing: 8) {
                     if coordinator.step != 4 {
                         Button("Finish later") { coordinator.finish() }
-                            .font(.system(size: 12, weight: .medium))
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .foregroundStyle(RelayColors.textSecondary)
-                            .padding(.horizontal, 12)
-                            .frame(height: 32)
-                            .background(
-                                isDarkAppearance ? Color.white.opacity(0.04) : RelayColors.subtleFill,
-                                in: Capsule()
-                            )
-                            .overlay(
-                                Capsule().strokeBorder(
-                                    isDarkAppearance ? Color.white.opacity(0.10) : RelayColors.borderSubtle,
-                                    lineWidth: 1
-                                )
-                            )
-                            .buttonStyle(RelayPressStyle())
+                            .buttonStyle(RelayGhostButtonStyle())
                             .disabled(activeBackgroundDownload != nil || isNavigationBlocked)
                     }
                     RelayAppearanceToggleButton(showsLabel: false)
@@ -640,24 +605,11 @@ struct OnboardingView: View {
                 compact: isCompactViewport
             )
 
-            // Symmetrical 6-tab provider selector bar
-            HStack(spacing: 4) {
+            RelayChipFlow(spacing: 6, alignment: .leading) {
                 ForEach([OnboardingProviderChoice.onDeviceGemma, .chatGPTCodex, .claudeCLI, .openRouter, .lmStudio, .customLiteRT]) { choice in
                     providerTab(choice)
                 }
             }
-            .padding(4)
-            .background(
-                isDarkAppearance ? Color(red: 0.06, green: 0.068, blue: 0.095) : RelayColors.cardBG,
-                in: Capsule()
-            )
-            .overlay(
-                Capsule()
-                    .strokeBorder(
-                        isDarkAppearance ? Color.white.opacity(0.10) : RelayColors.borderSubtle,
-                        lineWidth: 1
-                    )
-            )
             .disabled(isNavigationBlocked)
 
             providerDetailCard(hasE4B: hasE4B, hasInstalledModel: hasInstalledModel)
@@ -700,7 +652,7 @@ struct OnboardingView: View {
         case .customLiteRT: "Import model"
         }
         return Button {
-            withAnimation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.82)) {
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
                 selectProvider(choice)
             }
         } label: {
@@ -708,9 +660,7 @@ struct OnboardingView: View {
                 if isActive {
                     Circle()
                         .fill(
-                            isSelected && isDarkAppearance
-                                ? Color(red: 0.08, green: 0.45, blue: 0.28)
-                                : relayEmerald
+                            relayEmerald
                         )
                         .frame(width: 5.5, height: 5.5)
                 }
@@ -720,19 +670,17 @@ struct OnboardingView: View {
                     .fixedSize(horizontal: true, vertical: false)
             }
             .foregroundStyle(
-                isSelected
-                    ? (isDarkAppearance ? Color.black.opacity(0.90) : Color.white)
-                    : RelayColors.textBright
+                isSelected ? RelayColors.workbenchAccent : RelayColors.textBright
             )
             .padding(.horizontal, 15)
             .frame(height: 32)
             .background {
                 if isSelected {
-                    Capsule()
-                        .fill(isDarkAppearance ? Color.white.opacity(0.96) : RelayColors.buttonFace)
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(RelayColors.workbenchTint)
                 }
             }
-            .contentShape(Capsule())
+            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(RelayPressStyle())
         .accessibilityLabel(choice.title)
@@ -892,8 +840,7 @@ struct OnboardingView: View {
             }
         }
         .padding(18)
-        .background { RelayPermissionAtmosphere(isDark: isDarkAppearance, cornerRadius: 16) }
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .relayFormSection()
         .onAppear {
             if let existing = selected?.modelID, !existing.isEmpty {
                 openRouterModelDraft = existing
@@ -1002,8 +949,7 @@ struct OnboardingView: View {
             }
         }
         .padding(18)
-        .background { RelayPermissionAtmosphere(isDark: isDarkAppearance, cornerRadius: 16) }
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .relayFormSection()
         .onAppear {
             lmStudioPortDraft = String(store.configuration.lmStudio?.endpoint.port ?? 1234)
         }
@@ -1019,7 +965,7 @@ struct OnboardingView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         Text(name)
-                            .font(.system(size: 20, weight: .semibold))
+                            .font(RelayPageStyle.dialogTitle)
                             .tracking(-0.3)
                             .foregroundStyle(RelayColors.textPrimary)
                         RelayBadge(
@@ -1064,6 +1010,35 @@ struct OnboardingView: View {
                 )
             }
 
+            HStack(spacing: 10) {
+                Button(
+                    coordinator.isPreparingModel
+                        ? "Checking connection…"
+                        : (isConnected ? "Refresh \(name) Session" : "Connect \(name)")
+                ) {
+                    loadModel()
+                }
+                .buttonStyle(RelayPrimaryButtonStyle())
+                .disabled(isNavigationBlocked || store.isRunning)
+
+                Button("Verify CLI Access") {
+                    loadModel()
+                }
+                .buttonStyle(RelaySecondaryButtonStyle())
+                .disabled(isNavigationBlocked || store.isRunning)
+
+                Spacer()
+
+                Text("No separate Relay subscription required.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(RelayColors.textMuted)
+            }
+
+            if let error = coordinator.modelSetupError ?? store.errorMessage {
+                inlineError(error)
+            }
+
+            DisclosureGroup("How requests are routed · preview") {
             // Interactive Context Routing Pipeline Visualizer
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
@@ -1149,33 +1124,8 @@ struct OnboardingView: View {
                     .strokeBorder(isDarkAppearance ? Color.white.opacity(0.08) : RelayColors.borderSubtle, lineWidth: 1)
             )
 
-            HStack(spacing: 10) {
-                Button(
-                    coordinator.isPreparingModel
-                        ? "Checking connection…"
-                        : (isConnected ? "Refresh \(name) Session" : "Connect \(name)")
-                ) {
-                    loadModel()
-                }
-                .buttonStyle(RelayPrimaryButtonStyle())
-                .disabled(isNavigationBlocked || store.isRunning)
-
-                Button("Verify CLI Access") {
-                    loadModel()
-                }
-                .buttonStyle(RelaySecondaryButtonStyle())
-                .disabled(isNavigationBlocked || store.isRunning)
-
-                Spacer()
-
-                Text("No separate Relay subscription required.")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(RelayColors.textMuted)
             }
-
-            if let error = coordinator.modelSetupError ?? store.errorMessage {
-                inlineError(error)
-            }
+            .font(RelayPageStyle.body.weight(.medium))
 
             DisclosureGroup("Model routing & CLI session configuration") {
                 Group {
@@ -1191,8 +1141,7 @@ struct OnboardingView: View {
         }
         .padding(18)
         .frame(maxWidth: 700)
-        .background { RelayPermissionAtmosphere(isDark: isDarkAppearance, cornerRadius: 16) }
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .relayFormSection()
     }
 
     private func routingStageNode(icon: String, title: String, subtitle: String, tint: Color) -> some View {
@@ -1317,8 +1266,7 @@ struct OnboardingView: View {
             }
         }
         .padding(16)
-        .background { RelayPermissionAtmosphere(isDark: isDarkAppearance, cornerRadius: 16) }
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .relayFormSection()
     }
 
     private func gemmaCatalogVariantCard(
@@ -1972,9 +1920,9 @@ struct OnboardingView: View {
     private func magicReplyStep(compact: Bool) -> some View {
         VStack(spacing: compact ? 8 : 12) {
             stepHeading(
-                eyebrow: "INSTANT DRAFT & COMMAND BAR",
-                "Summon Relay anywhere with Right ⌘ × 2.",
-                subtitle: "Try the shortcut with a fictional example below. Your own drafts need a connected model and the relevant Mac permissions.",
+                eyebrow: "INSTANT DRAFT · MAGIC REPLY",
+                "A reply, ready for your review.",
+                subtitle: "Double-tap \(store.focusedDraft.shortcutKey.title) to use Magic Reply. Practice below with fictional data; your own drafts need a connected model and the relevant Mac permissions.",
                 compact: compact
             )
             OnboardingMagicReplyDemoView(store: store, coordinator: coordinator, compact: compact)
@@ -2038,7 +1986,7 @@ struct OnboardingView: View {
                     HStack(spacing: 12) {
                         relaySourceCard(
                             title: "Apple Mail",
-                            subtitle: live.isEnabled(.appleMail) ? "Selected · Permission required" : "Threads, commitments & follow-ups",
+                            subtitle: live.isEnabled(.appleMail) ? "Selected for local indexing" : "Threads, commitments & follow-ups",
                             icon: "envelope.fill",
                             tint: RelayColors.accentBlue,
                             isSelected: live.isEnabled(.appleMail),
@@ -2113,7 +2061,7 @@ struct OnboardingView: View {
                         .tracking(1.8)
                         .foregroundStyle(RelayColors.textMuted)
 
-                    HStack(spacing: 8) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 155), spacing: 8)], alignment: .leading, spacing: 8) {
                         relaySourceCard(
                             title: "Apple Notes",
                             subtitle: nil,
@@ -2239,8 +2187,7 @@ struct OnboardingView: View {
             }
             .padding(16)
             .frame(maxWidth: 740)
-            .background { RelayPermissionAtmosphere(isDark: isDarkAppearance, cornerRadius: 16) }
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .relayFormSection()
         }
         .frame(maxWidth: 740)
         .sheet(isPresented: $showCalendarSourceSheet) {
@@ -2257,12 +2204,12 @@ struct OnboardingView: View {
     private func setupHandoff(selectedCount: Int) -> some View {
         HStack(alignment: .top, spacing: 14) {
             Image(systemName: store.workspaceActionsReady ? "arrow.up.right" : "slider.horizontal.3")
-                .font(.system(size: 20, weight: .medium))
+                .font(RelayPageStyle.symbol)
                 .foregroundStyle(RelayColors.workbenchAccent)
                 .frame(width: 26)
             VStack(alignment: .leading, spacing: 7) {
                 Text(store.workspaceActionsReady ? "Take your next step in Relay." : "Continue at your own pace.")
-                    .font(.system(size: 19, weight: .medium))
+                    .font(RelayPageStyle.sectionTitle)
                     .foregroundStyle(RelayColors.textPrimary)
                 Text(store.workspaceActionsReady
                     ? "\(store.workspaceProviderTitle) is selected for workspace requests. Launch Relay to try your first task; personal sources remain optional."
@@ -2277,9 +2224,8 @@ struct OnboardingView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(18)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RelayColors.workbenchTint, in: RoundedRectangle(cornerRadius: 12))
     }
 
     private var onboardingCalendarSourceSheet: some View {
@@ -2534,17 +2480,14 @@ struct OnboardingView: View {
         Button(action: action) {
             HStack(alignment: .center, spacing: featured ? 12 : 5) {
                 Image(systemName: icon)
-                    .font(.system(size: featured ? 14 : 11, weight: .semibold))
-                    .foregroundStyle(isSelected ? relayEmerald : tint)
-                    .frame(width: featured ? 32 : 18, height: featured ? 32 : 18)
-                    .background(
-                        (isSelected ? relayEmerald : tint).opacity(featured ? 0.14 : 0.12),
-                        in: RoundedRectangle(cornerRadius: featured ? 8 : 5, style: .continuous)
-                    )
+                    .font(RelayPageStyle.symbol)
+                    .foregroundStyle(isSelected ? RelayColors.workbenchAccent : RelayColors.textSecondary)
+                    .frame(width: 20, height: 24)
+                    .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.system(size: featured ? 13.5 : 11.5, weight: .semibold))
+                        .font(RelayPageStyle.body.weight(.medium))
                         .foregroundStyle(RelayColors.textPrimary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.9)
@@ -2552,7 +2495,7 @@ struct OnboardingView: View {
                         Text(subtitle)
                             .font(.system(size: 11.5))
                             .foregroundStyle(RelayColors.textSecondary)
-                            .lineLimit(1)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .layoutPriority(1)
@@ -2567,16 +2510,16 @@ struct OnboardingView: View {
             .frame(maxWidth: .infinity, minHeight: featured ? 52 : 38, alignment: .leading)
             .background(
                 isSelected
-                    ? relayEmerald.opacity(0.10)
-                    : (isDarkAppearance ? Color.white.opacity(0.03) : RelayColors.surface),
+                    ? RelayColors.workbenchTint
+                    : Color.clear,
                 in: RoundedRectangle(cornerRadius: featured ? 12 : 10, style: .continuous)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: featured ? 12 : 10, style: .continuous)
                     .strokeBorder(
                         isSelected
-                            ? relayEmerald.opacity(0.45)
-                            : (isDarkAppearance ? Color.white.opacity(0.11) : RelayColors.borderSubtle),
+                            ? RelayColors.workbenchAccent.opacity(0.45)
+                            : RelayColors.borderSubtle,
                         lineWidth: isSelected ? 1.2 : 1
                     )
             )
@@ -2614,152 +2557,66 @@ struct OnboardingView: View {
     private var analysisTimingSheet: some View {
         let loginReady = loginItem.status == .enabled
         let idleEnabled = store.pluggedInAnalysis.enabled
-        return VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text("BACKGROUND INDEXING & SCHEDULE")
-                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                    .tracking(1.8)
-                    .foregroundStyle(RelayColors.accentBlue)
-                Text("Keep your Memory Vault current")
-                    .font(.system(size: 24, weight: .semibold))
-                    .tracking(-0.4)
-                    .foregroundStyle(RelayColors.textPrimary)
-                Text("Start indexing now and pause anytime. Enable background triggers so Relay updates your local Markdown notes while your Mac is idle.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(RelayColors.textSecondary)
-                    .lineSpacing(2.5)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            VStack(spacing: 10) {
-                // Row 1: Overnight & Idle Indexing
-                HStack(alignment: .center, spacing: 14) {
-                    RelayIconBadge(icon: "moon.stars.fill", color: RelayColors.accentAmethyst, size: 40, iconSize: 17)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Idle & overnight indexing")
-                            .font(.system(size: 14.5, weight: .semibold))
-                            .foregroundStyle(RelayColors.textPrimary)
-                        Text("Refresh your Knowledge Vault while plugged into power and idle for 4.5 minutes.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(RelayColors.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 10)
-                    Group {
-                        if idleEnabled {
-                            Label("Enabled", systemImage: "checkmark.circle.fill")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(relayEmerald)
-                                .frame(width: 104, height: 30)
-                                .background(relayEmerald.opacity(0.12), in: Capsule())
-                        } else {
-                            Button("Enable") {
-                                store.pluggedInAnalysis.setEnabled(true)
-                                store.preparation.setEnabled(true)
-                            }
-                            .buttonStyle(RelaySecondaryButtonStyle())
-                            .frame(width: 104, alignment: .trailing)
-                        }
-                    }
-                }
-                .padding(15)
-                .background(
-                    isDarkAppearance ? Color.white.opacity(0.035) : RelayColors.surface,
-                    in: RoundedRectangle(cornerRadius: 13, style: .continuous)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .strokeBorder(
-                            isDarkAppearance ? Color.white.opacity(0.09) : RelayColors.borderSubtle,
-                            lineWidth: 1
-                        )
-                )
-
-                // Row 2: Launch at login
-                HStack(alignment: .center, spacing: 14) {
-                    RelayIconBadge(icon: "power", color: relayEmerald, size: 40, iconSize: 17)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Launch at login")
-                            .font(.system(size: 14.5, weight: .semibold))
-                            .foregroundStyle(RelayColors.textPrimary)
-                        Text("Keep Relay available in your menu bar and ready for Right ⌘ × 2.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(RelayColors.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 10)
-                    Group {
-                        if loginReady {
-                            Label("Enabled", systemImage: "checkmark.circle.fill")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(relayEmerald)
-                                .frame(width: 104, height: 30)
-                                .background(relayEmerald.opacity(0.12), in: Capsule())
-                        } else {
-                            Button("Turn on") {
-                                loginItem.setEnabled(true)
-                            }
-                            .buttonStyle(RelaySecondaryButtonStyle())
-                            .frame(width: 104, alignment: .trailing)
-                        }
-                    }
-                }
-                .padding(15)
-                .background(
-                    isDarkAppearance ? Color.white.opacity(0.035) : RelayColors.surface,
-                    in: RoundedRectangle(cornerRadius: 13, style: .continuous)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .strokeBorder(
-                            isDarkAppearance ? Color.white.opacity(0.09) : RelayColors.borderSubtle,
-                            lineWidth: 1
-                        )
-                )
-            }
-
-            Text("You can continue using Relay and your workspace normally while background indexing runs.")
-                .font(.system(size: 12))
+        return VStack(alignment: .leading, spacing: 20) {
+            Text("Background indexing")
+                .font(RelayPageStyle.dialogTitle)
+                .accessibilityAddTraits(.isHeader)
+            Text("Keep your local Markdown notes current while your Mac is idle. You can pause indexing and change these choices in Settings.")
+                .font(RelayPageStyle.body)
                 .foregroundStyle(RelayColors.textSecondary)
-
-            HStack {
-                Button("Close") {
-                    showAnalysisTimingSheet = false
+                .fixedSize(horizontal: false, vertical: true)
+            Divider()
+            HStack(alignment: .top, spacing: 16) {
+                RelaySectionHeading(title: "Idle & overnight indexing",
+                    detail: "Refresh your Knowledge Vault while plugged into power and idle for 4.5 minutes.", icon: "moon.stars")
+                if idleEnabled {
+                    Label("Enabled", systemImage: "checkmark.circle")
+                        .font(RelayPageStyle.caption).foregroundStyle(RelayColors.success).fixedSize()
+                } else {
+                    Button("Enable") {
+                        store.pluggedInAnalysis.setEnabled(true)
+                        store.preparation.setEnabled(true)
+                    }.buttonStyle(RelaySecondaryButtonStyle())
                 }
-                .buttonStyle(RelaySecondaryButtonStyle())
-
+            }
+            Divider()
+            HStack(alignment: .top, spacing: 16) {
+                RelaySectionHeading(title: "Launch at login",
+                    detail: "Keep Relay available in your menu bar and ready for Magic Reply.", icon: "power")
+                if loginReady {
+                    Label("Enabled", systemImage: "checkmark.circle")
+                        .font(RelayPageStyle.caption).foregroundStyle(RelayColors.success).fixedSize()
+                } else {
+                    Button("Turn on") { loginItem.setEnabled(true) }
+                        .buttonStyle(RelaySecondaryButtonStyle())
+                }
+            }
+            Text("You can continue using Relay and your workspace normally while background indexing runs.")
+                .font(RelayPageStyle.caption)
+                .foregroundStyle(RelayColors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Close") { showAnalysisTimingSheet = false }
+                    .buttonStyle(RelaySecondaryButtonStyle())
+                    .keyboardShortcut(.cancelAction)
                 Spacer()
-
-                Button {
+                Button("Start indexing & open Relay") {
                     store.pluggedInAnalysis.setEnabled(true)
-                    Task {
-                        try? await store.nativeSources.liveSources.runIncrementalIngestion()
-                    }
+                    Task { try? await store.nativeSources.liveSources.runIncrementalIngestion() }
                     showAnalysisTimingSheet = false
                     coordinator.finish()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "sparkles")
-                        Text("Start Indexing & Launch Relay")
-                    }
-                    .font(.system(size: 13.5, weight: .semibold))
-                    .padding(.horizontal, 20)
-                    .frame(height: 38)
-                    .foregroundStyle(isDarkAppearance ? Color.black : Color.white)
-                    .background(isDarkAppearance ? Color.white : RelayColors.buttonFace, in: Capsule())
-                    .shadow(color: relayIndigo.opacity(0.28), radius: 12, y: 3)
                 }
-                .buttonStyle(RelayPressStyle())
+                .buttonStyle(RelayPrimaryButtonStyle())
             }
-            .padding(.top, 4)
         }
-        .padding(26)
+        .padding(24)
         .frame(width: 560)
-        .background { RelayPermissionAtmosphere(isDark: isDarkAppearance, cornerRadius: 0) }
+        .foregroundStyle(RelayColors.textPrimary)
+        .relayPageBackground()
         .relayPreferredAppearance()
     }
 
-    // MARK: - Local MCP Knowledge Bridge Sheet (Equal-Height Step Cards)
+    // MARK: - MCP sharing setup
 
     private var mcpSharingOnboardingSheet: some View {
         let abbreviatedVaultPath = (store.knowledgeVault.vaultDirectory.path as NSString).abbreviatingWithTildeInPath
@@ -3039,10 +2896,7 @@ struct RelayOnboardingStageAtmosphere: View {
     var isDark: Bool
 
     var body: some View {
-        RelayColors.canvas
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
+        RelayWorkspaceBackdrop()
     }
 }
 

@@ -127,10 +127,11 @@ struct ProactiveHomeDeckView: View {
                         }
                     )
                     .id(card.id)
-                    .gesture(
+                    .simultaneousGesture(
                         DragGesture(minimumDistance: 32)
                             .onEnded { value in
-                                guard activeCards.count > 1 else { return }
+                                guard activeCards.count > 1,
+                                      abs(value.translation.width) > abs(value.translation.height) else { return }
                                 if value.translation.width < -40, clampedIndex + 1 < activeCards.count {
                                     withAnimation(reducedMotion ? nil : .easeOut(duration: 0.16)) {
                                         currentIndex = clampedIndex + 1
@@ -300,6 +301,7 @@ struct ProactiveMorningCardView: View {
 
     @State private var editedTitle: String
     @State private var editedArtifact: ProactiveArtifact
+    @State private var isEditingPlan = false
 
     init(
         card: ProactivePreparedCard,
@@ -355,25 +357,64 @@ struct ProactiveMorningCardView: View {
                 }
             }
 
-            TextField("Card title", text: $editedTitle)
-                .textFieldStyle(.plain)
-                .font(RelayPageStyle.sectionTitle)
-                .foregroundStyle(RelayColors.textPrimary)
-                .onChange(of: editedTitle) { _, newValue in
-                    onUpdate(newValue, editedArtifact)
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                if case .actionPlan = editedArtifact, !isEditingPlan {
+                    Text(editedTitle)
+                        .font(RelayPageStyle.sectionTitle)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    TextField("Card title", text: $editedTitle)
+                        .textFieldStyle(.plain)
+                        .font(RelayPageStyle.sectionTitle)
+                        .onChange(of: editedTitle) { _, value in onUpdate(value, editedArtifact) }
                 }
+                if case .actionPlan = editedArtifact {
+                    Spacer(minLength: 8)
+                    Button(isEditingPlan ? "Done editing" : "Edit plan",
+                           systemImage: isEditingPlan ? "checkmark" : "square.and.pencil") {
+                        isEditingPlan.toggle()
+                    }
+                    .buttonStyle(RelayGhostButtonStyle())
+                    .fixedSize()
+                    .accessibilityIdentifier("proactiveCard.editPlan")
+                }
+            }
+            .foregroundStyle(RelayColors.textPrimary)
 
             Text(card.whyNow)
                 .font(RelayPageStyle.body)
                 .foregroundStyle(RelayColors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            ProactiveArtifactFieldsEditor(
-                artifact: $editedArtifact,
-                availableCalendars: availableCalendars
-            )
-            .onChange(of: editedArtifact) { _, newValue in
-                onUpdate(editedTitle, newValue)
+            if case .actionPlan(let plan) = editedArtifact, !isEditingPlan {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text(plan.goal).font(RelayPageStyle.body.weight(.medium))
+                    if !plan.targetAppOrSite.isEmpty {
+                        Text(plan.targetAppOrSite)
+                            .font(RelayPageStyle.caption)
+                            .foregroundStyle(RelayColors.textSecondary)
+                    }
+                    ForEach(Array(plan.steps.enumerated()), id: \.offset) { index, step in
+                        HStack(alignment: .top, spacing: 12) {
+                            Text("\(index + 1).")
+                                .monospacedDigit()
+                                .foregroundStyle(RelayColors.textMuted)
+                                .frame(width: 20, alignment: .trailing)
+                            Text(step).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .font(RelayPageStyle.body)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !plan.notes.isEmpty {
+                        Text(plan.notes).font(RelayPageStyle.caption).foregroundStyle(RelayColors.textSecondary)
+                    }
+                }
+                .textSelection(.enabled)
+                .padding(.vertical, 8)
+                .accessibilityIdentifier("proactiveCard.planPreview")
+            } else {
+                ProactiveArtifactFieldsEditor(artifact: $editedArtifact, availableCalendars: availableCalendars)
+                    .onChange(of: editedArtifact) { _, value in onUpdate(editedTitle, value) }
             }
 
             if let note = card.lastLaunchNote {
@@ -1163,6 +1204,7 @@ struct MorningBriefView: View {
     @Bindable private var keepsakeGenerator = WelcomeKeepsakeGenerator.shared
 
     @State private var selectedTab: BriefTab = .morningCards
+    @FocusState private var closeButtonFocused: Bool
     @State private var showStandingInstructions = false
     @State private var standingDraft = ""
     @State private var selectedID: Suggestion.ID?
@@ -1222,6 +1264,7 @@ struct MorningBriefView: View {
         .tint(RelayColors.workbenchAccent)
         .relayPreferredAppearance()
         .disclosureGroupStyle(RelayDisclosureGroupStyle())
+        .defaultFocus($closeButtonFocused, true)
         .onAppear {
             standingDraft = proactiveEngine.standingInstructions
             store.suggestions.purge(records: store.knowledge.records)
@@ -1242,47 +1285,17 @@ struct MorningBriefView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text("Morning Brief")
                     .font(RelayPageStyle.title)
                     .accessibilityIdentifier("morningBrief.heading")
-                Spacer()
-                Button("Done") { dismiss() }
-                    .buttonStyle(RelaySecondaryButtonStyle())
-                    .keyboardShortcut(.cancelAction)
-            }
-
-            Text("Follow-ups and editable drafts, prepared read-only from your sources and calendar.")
-                .font(RelayPageStyle.body)
-                .foregroundStyle(RelayColors.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack(spacing: 10) {
-                if !legacyCards.isEmpty {
-                    Picker("Brief view", selection: $selectedTab) {
-                        ForEach(BriefTab.allCases, id: \.self) { tab in
-                            Text(tab.rawValue).tag(tab)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .frame(width: 220)
-                }
-
                 Spacer(minLength: 12)
-
-                Button {
+                Button("Instructions", systemImage: "slider.horizontal.3") {
                     showStandingInstructions.toggle()
-                } label: {
-                    Label {
-                        Text("Instructions")
-                    } icon: {
-                        Image(systemName: "slider.horizontal.3").font(RelayPageStyle.symbol)
-                    }
                 }
                 .buttonStyle(RelayGhostButtonStyle())
-
+                .fixedSize()
                 Button(proactiveEngine.isPreparing ? "Stop" : "Prepare Cards") {
                     if proactiveEngine.isPreparing {
                         Task { await proactiveEngine.cancelAndDrain() }
@@ -1291,11 +1304,28 @@ struct MorningBriefView: View {
                     }
                 }
                 .buttonStyle(RelayPrimaryButtonStyle())
+                .fixedSize()
                 .disabled(!proactiveEngine.isPreparing && (store.isRunning || !store.workspaceActionsReady))
                 .accessibilityIdentifier("morningBrief.prepareProactive")
+                Button("Done") { dismiss() }
+                    .buttonStyle(RelaySecondaryButtonStyle())
+                    .focused($closeButtonFocused)
+                    .keyboardShortcut(.cancelAction)
             }
-            .font(RelayPageStyle.body)
+            Text("Follow-ups and editable drafts, prepared read-only from your sources and calendar.")
+                .font(RelayPageStyle.body)
+                .foregroundStyle(RelayColors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if !legacyCards.isEmpty {
+                Picker("Brief view", selection: $selectedTab) {
+                    ForEach(BriefTab.allCases, id: \.self) { tab in Text(tab.rawValue).tag(tab) }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 220)
+            }
         }
+        .fixedSize(horizontal: false, vertical: true)
         .padding(.bottom, 6)
     }
 
@@ -1372,6 +1402,7 @@ struct MorningBriefView: View {
                             onStart()
                         }
                     )
+                    .fixedSize(horizontal: false, vertical: true)
 
                     if !proactiveEngine.droppedCandidates.isEmpty {
                         DisclosureGroup(
@@ -1390,8 +1421,11 @@ struct MorningBriefView: View {
                         .font(RelayPageStyle.caption.weight(.medium))
                     }
                 }
+                .padding(.vertical, 8)
             }
-            .frame(maxHeight: .infinity)
+            .defaultScrollAnchor(.top, for: .initialOffset)
+            .scrollIndicators(.visible)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 

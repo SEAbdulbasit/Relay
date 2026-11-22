@@ -11,9 +11,21 @@ A native SwiftUI personal assistant with embedded **LiteRT-LM + local Gemma**, a
 - Explicit file and folder grants, inspectable activity, and checked tool outcomes.
 - Early alpha: build from source; desktop workflows and hardware support are still being qualified.
 
-## Product videos
+## Demos
 
-Real recordings from the native development build: local arithmetic with checked results, and the five-stage onboarding flow. These are early-alpha demonstrations; the local build includes runtime changes not yet published in this repository.
+These animated previews use **fictional sample data** and Relay's actual SwiftUI components. They illustrate interface states, not live AI generation, measured response times, or completed external actions. No personal workspace, notes, messages, accounts, or desktop screenshots are used.
+
+**Magic Reply:** choose a context, review an unsent sample reply, and try a shorter tone.
+
+[![Magic Reply with fictional sample messages](docs/demos/magic-reply-fictional.gif)](docs/demos/magic-reply-fictional.gif)
+
+**Morning Brief:** review a fictional plan and compare a shorter version. Actions are disabled in this preview.
+
+[![Morning Brief with a fictional sample plan](docs/demos/morning-brief-fictional.gif)](docs/demos/morning-brief-fictional.gif)
+
+### Earlier native recordings
+
+Recordings from the 1 November development build show local arithmetic with checked results and the earlier onboarding interface. They are early-alpha demonstrations, not recordings of the latest design.
 
 | Local arithmetic | Onboarding |
 | --- | --- |

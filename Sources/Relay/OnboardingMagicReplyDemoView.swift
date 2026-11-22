@@ -741,57 +741,65 @@ struct OnboardingMagicReplyDemoView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("PRACTICE MODE · FICTIONAL DATA · NO APPS ARE CHANGED")
-                .font(.relayCaptionStrong)
+        VStack(alignment: .leading, spacing: 18) {
+            Label("Fictional practice · no apps are changed", systemImage: "info.circle")
+                .font(RelayPageStyle.caption)
                 .foregroundStyle(RelayColors.textSecondary)
-            VStack(spacing: 0) {
-                relayCommandHeaderBar
-
-                Rectangle()
-                    .fill(Color.white.opacity(0.07))
-                    .frame(height: 1)
-
-                activeWorkflowSimulatorCard
+            MagicReplyPracticeCard(
+                shortcutTitle: store.focusedDraft.shortcutKey.title,
+                senderName: selectedAppContext.senderName,
+                incomingText: selectedAppContext.incomingText,
+                selectedApp: selectedAppContext.rawValue,
+                appChoices: DemoAppContext.allCases.map(\.rawValue),
+                selectedTone: selectedRemix.rawValue,
+                toneChoices: DraftRemixPreset.allCases.map(\.rawValue),
+                stage: stage,
+                reply: String(exampleReply.prefix(revealedCharacters)),
+                onSelectApp: { raw in
+                    guard let app = DemoAppContext(rawValue: raw) else { return }
+                    selectedAppContext = app
+                    resetDemo()
+                },
+                onSelectTone: { raw in
+                    guard let tone = DraftRemixPreset(rawValue: raw) else { return }
+                    selectedRemix = tone
+                    triggerDemo()
+                },
+                onTry: triggerDemo,
+                onReset: resetDemo
+            )
+            DisclosureGroup("Other Relay actions & previews") {
+                VStack(alignment: .leading, spacing: 14) {
+                    Picker("Practice action", selection: $selectedAction) {
+                        ForEach(SelectedNotchAction.allCases) { action in
+                            Text(action == .magicReply ? "Magic Reply" : action.rawValue).tag(action)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    if selectedAction != .magicReply {
+                        activeWorkflowSimulatorCard
+                            .environment(\.colorScheme, .dark)
+                            .background(NotchVisualTokens.solidFallbackFill)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    RelayChipFlow(spacing: 8, alignment: .leading) {
+                        Button("Memory Graph & Brief…") { showConstellationBriefSheet = true }
+                        Button("Preview Command Bar") {
+                            coordinator.notchQuickAccessExplored = true
+                            NotchOverlayController.shared.previewFromOnboarding(store: store)
+                        }
+                    }
+                    .buttonStyle(RelaySecondaryButtonStyle())
+                }
+                .padding(.top, 10)
             }
-            .frame(maxWidth: .infinity)
-            .background(
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.052, green: 0.056, blue: 0.076),
-                        Color(red: 0.035, green: 0.037, blue: 0.048)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                ),
-                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [.white.opacity(0.16), .white.opacity(0.06)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        ),
-                        lineWidth: 1
-                    )
-            )
-            .shadow(color: .black.opacity(0.42), radius: 24, y: 12)
-
             if wrongSideHint {
-                Label(
-                    "Use \(store.focusedDraft.shortcutKey.title) on the right of the Spacebar, or click the Right ⌘ × 2 pill above.",
-                    systemImage: "keyboard"
-                )
-                .font(.relayCaption)
-                .foregroundStyle(RelayColors.accentAmber)
+                Label("Use \(store.focusedDraft.shortcutKey.title) on the right of the Spacebar.", systemImage: "keyboard")
+                    .font(RelayPageStyle.caption)
+                    .foregroundStyle(RelayColors.warning)
             }
         }
-        .sheet(isPresented: $showConstellationBriefSheet) {
-            memoryGraphAndMorningBriefSheet
-        }
+        .sheet(isPresented: $showConstellationBriefSheet) { memoryGraphAndMorningBriefSheet }
         .onAppear { installKeyMonitor() }
         .onDisappear { removeKeyMonitor() }
     }
@@ -2200,5 +2208,96 @@ struct OnboardingMagicReplyDemoView: View {
             secondsSinceOrdinaryInput: now - lastOrdinaryInputAt
         )
         if triggered { triggerDemo() }
+    }
+}
+
+/// Store-free presentation shared by onboarding and public, fictional demo renders.
+/// This view has no account, source, disk, network, or task-execution dependencies.
+struct MagicReplyPracticeCard: View {
+    let shortcutTitle: String
+    let senderName: String
+    let incomingText: String
+    let selectedApp: String
+    let appChoices: [String]
+    let selectedTone: String
+    let toneChoices: [String]
+    let stage: OnboardingMagicReplyDemoView.Stage
+    let reply: String
+    let onSelectApp: (String) -> Void
+    let onSelectTone: (String) -> Void
+    let onTry: () -> Void
+    let onReset: () -> Void
+
+    var body: some View {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Label("Magic Reply", systemImage: "sparkles")
+                        .font(RelayPageStyle.sectionTitle)
+                    Spacer()
+                    Button("\(shortcutTitle) × 2", action: onTry)
+                        .buttonStyle(RelayGhostButtonStyle())
+                        .accessibilityLabel("Practice the Magic Reply shortcut")
+                }
+                HStack {
+                    Text("From \(senderName)")
+                        .font(RelayPageStyle.body.weight(.medium))
+                    Spacer()
+                    Menu(selectedApp) {
+                        ForEach(appChoices, id: \.self) { app in
+                            Button(app) { onSelectApp(app) }
+                        }
+                    }
+                    .fixedSize()
+                }
+                Text(incomingText)
+                    .font(RelayPageStyle.body)
+                    .foregroundStyle(RelayColors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Divider()
+                HStack {
+                    Text(stage == .drafted ? "Your unsent reply" : "Practice a reply")
+                        .font(RelayPageStyle.sectionTitle)
+                    Spacer()
+                    Menu("Tone: \(selectedTone)") {
+                        ForEach(toneChoices, id: \.self) { tone in
+                            Button(tone) { onSelectTone(tone) }
+                        }
+                    }
+                    .fixedSize()
+                }
+                Group {
+                    if stage == .waitingForTrigger {
+                        Text("Try Magic Reply below, or double-tap \(shortcutTitle).")
+                            .foregroundStyle(RelayColors.textMuted)
+                    } else {
+                        Text(reply)
+                            .foregroundStyle(RelayColors.textPrimary)
+                            .textSelection(.enabled)
+                    }
+                }
+                .font(RelayPageStyle.body)
+                .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
+                .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 10) {
+                    if stage == .drafting {
+                        ProgressView().controlSize(.small)
+                        Text("Preparing fictional reply…").font(RelayPageStyle.caption)
+                    } else if stage == .drafted {
+                        Label("Ready for review · nothing sent", systemImage: "checkmark.circle")
+                            .font(RelayPageStyle.caption)
+                            .foregroundStyle(RelayColors.success)
+                    }
+                    Spacer()
+                    if stage == .drafted {
+                        Button("Reset example", action: onReset).buttonStyle(RelayGhostButtonStyle())
+                    }
+                    Button(stage == .drafted ? "Try again" : "Try Magic Reply", action: onTry)
+                        .buttonStyle(RelayPrimaryButtonStyle())
+                        .disabled(stage == .drafting)
+                        .accessibilityIdentifier("onboarding.magicReply.try")
+                }
+            }
+            .padding(20)
+            .relayPagePanel()
     }
 }
