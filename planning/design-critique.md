@@ -1,6 +1,6 @@
-# Independent review — Sentient-grounded revision
+# Independent review — Reference-grounded revision
 
-29 October 2026 · Reviewed the actual saved dark HTML/CSS source against the source audit in [sentient-design-reference.md](sentient-design-reference.md), pinned to Sentient commit `f064441a6d4309b7ae810de08e27b15e688f9a0b`. This replaces prior aesthetic verdicts.
+29 October 2026 · Reviewed the actual saved dark HTML/CSS source against the source audit in [reference-design-reference.md](reference-design-reference.md), pinned to Reference commit `f064441a6d4309b7ae810de08e27b15e688f9a0b`. This replaces prior aesthetic verdicts.
 
 ## Current verdict
 
@@ -16,7 +16,7 @@ The major structural divergence is corrected. The specimen now uses a black canv
 
 ## Differences that remain explicit
 
-The reference transcript is capped at 800pt separately from its 744pt composer; this specimen caps both at 744px. Sentient uses native material/glass with opaque and increased-contrast alternatives; the HTML approximates surfaces with fills and borders. Its edge lighting is a CSS approximation of Sentient's separate blurred shapes. The specimen keeps speaker labels and a smaller 12px user-bubble radius, whereas the inspected source uses an 18pt bubble and quieter per-message chrome. These are source-observable differences, not a claim that the rendered result fails.
+The reference transcript is capped at 800pt separately from its 744pt composer; this specimen caps both at 744px. Reference uses native material/glass with opaque and increased-contrast alternatives; the HTML approximates surfaces with fills and borders. Its edge lighting is a CSS approximation of Reference's separate blurred shapes. The specimen keeps speaker labels and a smaller 12px user-bubble radius, whereas the inspected source uses an 18pt bubble and quieter per-message chrome. These are source-observable differences, not a claim that the rendered result fails.
 
 Functional direction remains the revised PRD: one chat for answers/tasks/steering, optional activity and evidence, approved fact/preference memory, local models only, and user-requested internet tasks permitted. Do not inherit the reference's hosted-provider paths, proactive scheduling or automatic knowledge ingestion. Seeded examples remain clearly labeled and do not establish general execution capability.
 

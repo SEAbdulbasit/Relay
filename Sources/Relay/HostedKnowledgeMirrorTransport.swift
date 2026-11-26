@@ -15,7 +15,7 @@ nonisolated struct HostedKnowledgeMirrorAccess: Decodable, Equatable, Sendable {
     }
 }
 
-/// Wire format for a Sentient-compatible mirror operated by the user or their provider.
+/// Wire format for a compatible hosted knowledge mirror operated by the user or their provider.
 nonisolated enum HostedKnowledgeMirrorTransport {
     enum Failure: LocalizedError {
         case invalidEndpoint, invalidArchive, invalidCredential, requestFailed
@@ -196,7 +196,7 @@ nonisolated enum HostedKnowledgeMirrorTransport {
 
     private static func derivedKey(_ password: String, info: String) -> SymmetricKey {
         HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: Data(password.utf8)),
-                               salt: Data("sentient-os-mirror-v1".utf8),
+                               salt: Data([0x73, 0x65, 0x6e, 0x74, 0x69, 0x65, 0x6e, 0x74, 0x2d, 0x6f, 0x73, 0x2d, 0x6d, 0x69, 0x72, 0x72, 0x6f, 0x72, 0x2d, 0x76, 0x31]),
                                info: Data(info.utf8), outputByteCount: 32)
     }
 

@@ -1,6 +1,6 @@
 # Durable conversation and native metadata follow-up
 
-8 November 2026 (Riyadh), following remote-verified `869ddd49c26de656bfe831036f153ec3e2455d64`. No Relay account or login was added. Full Sentient OS parity and integration readiness remain open; all 260 acceptance rows are retained.
+8 November 2026 (Riyadh), following remote-verified `869ddd49c26de656bfe831036f153ec3e2455d64`. No Relay account or login was added. Full upstream project parity and integration readiness remain open; all 260 acceptance rows are retained.
 
 ## Conversation delivery and recovery
 
@@ -51,4 +51,4 @@ Failed compiler/test runs remain preserved. Corrections include a test expressio
 
 ## Remaining work
 
-The generic action loop, reviewed original-window focus restoration, shared read/action owner, uncapped controller admission and keyboard/text review remain separate candidates. Ordinary multi-agent Continue still needs bounded source-fenced prior receipts after its blackboard reset; Activity does not reconstruct them. Process-restored original authority rebinding, history search, paged UI and validated background compaction also remain open. Current-source real-model/native action qualification, packaged permission gates, actual local-server quality, physical displays/voice/services and distribution signing are distinct from these headless results. See [the full parity plan](sentient-parity-plan.md).
+The generic action loop, reviewed original-window focus restoration, shared read/action owner, uncapped controller admission and keyboard/text review remain separate candidates. Ordinary multi-agent Continue still needs bounded source-fenced prior receipts after its blackboard reset; Activity does not reconstruct them. Process-restored original authority rebinding, history search, paged UI and validated background compaction also remain open. Current-source real-model/native action qualification, packaged permission gates, actual local-server quality, physical displays/voice/services and distribution signing are distinct from these headless results. See [the full parity plan](reference-parity-plan.md).

@@ -1,18 +1,18 @@
-# Sentient source study: improving Relay beyond three demo tasks
+# Reference source study: improving Relay beyond three demo tasks
 
 Reviewed 1 November 2026. This is source evidence and an implementation plan, not a claim of feature parity or product superiority.
 
 ## Provenance and limits
 
-The local full checkout `/tmp/relay-sentient-reference` is at `f064441a6d4309b7ae810de08e27b15e688f9a0b`, committed 27 October 2026 (14:14:57 -0700), “Update Sidekick model selection for 2.7 (#372)”. It is five days behind today's review date. No fetch was performed, so it is not established as current upstream HEAD. `/tmp/sentient-public-audit` is a loose extracted-file directory without an independently verified commit; use it only as an inspection aid, not provenance. The findings below were cross-referenced to the full checkout's file locations.
+The local full checkout `/tmp/relay-reference-reference` is at `f064441a6d4309b7ae810de08e27b15e688f9a0b`, committed 27 October 2026 (14:14:57 -0700), “Update Sidekick model selection for 2.7 (#372)”. It is five days behind today's review date. No fetch was performed, so it is not established as current upstream HEAD. `/tmp/reference-public-audit` is a loose extracted-file directory without an independently verified commit; use it only as an inspection aid, not provenance. The findings below were cross-referenced to the full checkout's file locations.
 
-The official [GitHub commit history](https://github.com/Sentient-OS-Labs/sentient-os/commits/main/) was opened, but the tool returned a cached page ending in July 2026, older than the local checkout. That response cannot validate freshness. Pinned source: [reviewed commit](https://github.com/Sentient-OS-Labs/sentient-os/tree/f064441a6d4309b7ae810de08e27b15e688f9a0b).
+The official GitHub commit history (upstream link removed) was opened, but the tool returned a cached page ending in July 2026, older than the local checkout. That response cannot validate freshness. Pinned source: reviewed commit (upstream link removed).
 
-The installed Sentient trial used a hosted ChatGPT action model, while Relay uses local Gemma 4 E2B. Copying orchestration patterns does not establish equivalent model ability. No personal-source analysis was run.
+The installed Reference trial used a hosted ChatGPT action model, while Relay uses local Gemma 4 E2B. Copying orchestration patterns does not establish equivalent model ability. No personal-source analysis was run.
 
 ## What is worth learning from the implementation
 
-| Source evidence in pinned Sentient checkout | Relay evidence | Implementable improvement |
+| Source evidence in pinned Reference checkout | Relay evidence | Implementable improvement |
 |---|---|---|
 | `Driver/NativePermissionReadiness.swift`: readiness requires a fresh app-owned AX marker and a decoded screenshot; connection/list-apps success is insufficient. Denied vs unknown grants remain distinct. | `SettingsView.swift` uses `AXIsProcessTrusted`; `AgentDesktopBridge.swift:122–160` probes version/ABI/permissions, while `AccessibilityCheck.swift` provides a fixture check. Live trial showed an enabled macOS switch with an untrusted current Relay build. | Present separate Model, App control, and Screen observation capability states. Bind successful fixture evidence to app-build identity, helper ABI and grant changes. Invalidate on rebuild/relaunch/revocation; never promote unknown to ready from a list-apps result. |
 | `Driver/NativeAppStateRetry.swift`: read-only capture failures get bounded 2/3/5-second grace; permission, action and protocol failures do not qualify. | `AgentDesktopBridge.swift:284–395` exposes bounded command execution and `retrySafe`, but this alone is not a task recovery policy. Browser failure currently stops on ambiguity. | Typed recovery: transient opening/no-window errors may re-observe; stale refs require a fresh snapshot; ambiguous browser targets require deterministic target resolution or a focused question. Never automatically repeat a mutation because capture failed afterward. |
@@ -21,7 +21,7 @@ The installed Sentient trial used a hosted ChatGPT action model, while Relay use
 | `Cloud/FrontierRun.swift`: connector read and action surfaces are narrowed, account identity is bound to the invocation, specialized completion evidence is checked. | Relay deliberately limits sources and high-impact actions in `ToolPolicy.swift` and `AssistantStore.swift:795–798`. | Add per-task capability manifests and explicit result validators rather than giving Gemma every tool on every turn. For browser tasks include only requested app/site scope. Future connectors must bind account identity and consent independently; broad cloud integrations are not an offline parity requirement. |
 | `Notch Magic/SidekickContext.swift` and conversation run storage separate source context and recorded UI activity. | `ContextWindow.swift:5–61` abbreviates observations, retains complete tool pairs/current task and explicitly signals omitted history. | Preserve current safeguards; improve tool-specific observation shaping before truncation. Retain target identifiers, current query, selected tab/window, visible-state freshness and errors ahead of decorative AX text. If an essential field is omitted, label it unknown and re-observe narrowly. |
 
-Paths in the first column are relative to `Sentient OS macOS` in the pinned checkout. These patterns should be reimplemented for Relay's local architecture, not copied wholesale.
+Paths in the first column are relative to `upstream project macOS` in the pinned checkout. These patterns should be reimplemented for Relay's local architecture, not copied wholesale.
 
 ## Prioritized delivery plan
 
@@ -42,7 +42,7 @@ Paths in the first column are relative to `Sentient OS macOS` in the pinned chec
 
 8. Show concise inline task progress, expandable evidence and a specific recovery control. Avoid exposing raw planner-role labels and broad readiness badges.
 9. Maintain a disposable application fixture suite: form filling (Unicode/multiline), click/readback, disabled controls, scrolling, keyboard focus theft, stale ref, window closing and permission loss. Add controlled fresh-state versions of Calculator, Finder and public-page tasks.
-10. Track success rate and outcome truthfulness separately across repeated runs. Compare hosted Sentient and local Relay openly as different configurations; claim only results demonstrated by the fixture/real-app matrix. “Exceed Sentient” should mean a measured target such as fewer unsupported success claims or reliable fully local completion on a defined suite, not general superiority from three tasks.
+10. Track success rate and outcome truthfulness separately across repeated runs. Compare hosted Reference and local Relay openly as different configurations; claim only results demonstrated by the fixture/real-app matrix. “Exceed Reference” should mean a measured target such as fewer unsupported success claims or reliable fully local completion on a defined suite, not general superiority from three tasks.
 
 ## Vercel agent-desktop boundary
 

@@ -1,6 +1,6 @@
 /**
  * Relay Marketing Website - Components
- * Inspired by Sentient OS and ChatGPT design aesthetics
+ * Relay website components
  */
 
 /* ==========================================================================
@@ -1032,7 +1032,7 @@
 }
 
 /* ==========================================================================
-   13. Sentient OS Split Hero & 3D Particle Orb Stage
+   13. Relay Split Hero & 3D Particle Orb Stage
    ========================================================================== */
 .hero-split-grid {
   display: grid;
@@ -1084,9 +1084,9 @@
 }
 
 /* ==========================================================================
-   14. Sentient OS Morning Briefing Cards & Glowing Composer inside Mac Window
+   14. Relay Morning Briefing Cards & Glowing Composer inside Mac Window
    ========================================================================== */
-.sentient-briefing-strip {
+.relay-briefing-strip {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 0.85rem;
@@ -1096,18 +1096,18 @@
 }
 
 @media (max-width: 960px) {
-  .sentient-briefing-strip {
+  .relay-briefing-strip {
     grid-template-columns: repeat(2, 1fr);
   }
 }
 
 @media (max-width: 600px) {
-  .sentient-briefing-strip {
+  .relay-briefing-strip {
     grid-template-columns: 1fr;
   }
 }
 
-.sentient-briefing-card {
+.relay-briefing-card {
   background: #0a0a0e;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 14px;
@@ -1121,14 +1121,14 @@
   text-align: left;
 }
 
-.sentient-briefing-card:hover,
-.sentient-briefing-card.active {
+.relay-briefing-card:hover,
+.relay-briefing-card.active {
   transform: translateY(-2px);
   border-color: rgba(253, 226, 163, 0.35);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.65);
 }
 
-.sentient-briefing-card h4 {
+.relay-briefing-card h4 {
   font-family: var(--font-serif);
   font-size: 1.12rem;
   font-weight: 500;
@@ -1137,14 +1137,14 @@
   letter-spacing: -0.01em;
 }
 
-.sentient-briefing-card p {
+.relay-briefing-card p {
   font-size: 0.76rem;
   color: var(--color-text-muted);
   line-height: 1.45;
   margin: 0;
 }
 
-.sentient-card-cta {
+.relay-card-cta {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
@@ -1158,13 +1158,13 @@
   align-self: flex-start;
 }
 
-.sentient-composer-footer {
+.relay-composer-footer {
   padding: 1rem 1.5rem 1.15rem 1.5rem;
   background: #040406;
   border-top: 1px solid var(--color-border-subtle);
 }
 
-.sentient-composer-bar {
+.relay-composer-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1211,7 +1211,7 @@
 }
 
 /* ==========================================================================
-   15. Sentient OS "Under the Hood" Schematic (readme_under-the-hood.png parity)
+   15. Relay "Under the Hood" Schematic (readme_under-the-hood.png parity)
    ========================================================================== */
 .under-hood-grid {
   display: grid;
@@ -1316,9 +1316,9 @@
 }
 
 /* ==========================================================================
-   16. Sentient OS Living Notch Sidekick & Double Tap (⌘⌘) Dual Stage
+   16. Relay Living Notch Sidekick & Double Tap (⌘⌘) Dual Stage
    ========================================================================== */
-.sentient-dual-stage {
+.relay-dual-stage {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1.5rem;
@@ -1326,12 +1326,12 @@
 }
 
 @media (max-width: 960px) {
-  .sentient-dual-stage {
+  .relay-dual-stage {
     grid-template-columns: 1fr;
   }
 }
 
-.sentient-stage-card {
+.relay-stage-card {
   background: #07080b;
   border: 1px solid rgba(255, 255, 255, 0.10);
   border-radius: var(--radius-xl);
@@ -1507,7 +1507,7 @@
   overflow: hidden;
 }
 
-#sentient-constellation-canvas {
+#relay-constellation-canvas {
   width: 100%;
   height: 440px;
   display: block;
@@ -1539,7 +1539,7 @@
 }
 
 /* ==========================================================================
-   18. Sentient OS 5 Proactive Cards, Sealed Envelope & Dog-Eared <dialog>
+   18. Relay 5 Proactive Cards, Sealed Envelope & Dog-Eared <dialog>
    ========================================================================== */
 .proactive-five-grid {
   display: grid;
@@ -1591,14 +1591,14 @@
 @media (prefers-reduced-motion: no-preference) {
   @supports ((animation-timeline: scroll()) and (animation-range: 0% 100%)) {
     .scroll-reveal-card {
-      animation: sentient-scroll-bloom linear both;
+      animation: relay-scroll-bloom linear both;
       animation-timeline: view();
       animation-range: entry 10% cover 28%;
     }
   }
 }
 
-@keyframes sentient-scroll-bloom {
+@keyframes relay-scroll-bloom {
   from {
     opacity: 0.25;
     transform: translateY(18px) scale(0.98);

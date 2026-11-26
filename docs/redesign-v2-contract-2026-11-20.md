@@ -1,6 +1,6 @@
 # Relay: a quiet working canvas
 
-This is a structural redesign from checkpoint `2981ea4`, informed by the installed Sentient app, eight rendered Desktop references, its official source, and an independent Relay workflow audit. It replaces the previous editorial welcome screen and dashboard-like history shell.
+This is a structural redesign from checkpoint `2981ea4`, informed by the installed Reference app, eight rendered Desktop references, its official source, and an independent Relay workflow audit. It replaces the previous editorial welcome screen and dashboard-like history shell.
 
 ## Composition
 

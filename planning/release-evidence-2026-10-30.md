@@ -9,7 +9,7 @@ The native KV-state reuse experiment was removed after the actual SDK/model emit
 Browser URL entry now uses target-bound writable AXValue plus advertised AXConfirm; queued URL keystrokes are removed. Safari hidden-tab identity absence fails closed with recovery. Live broad-browser qualification remains open after the preserved Chrome incident and external Chrome activity. Current package/native synthetic-speech verification is recorded in the end-of-file update below; public release still needs owner Developer ID credentials and actual hardened/notarized qualification.
 
 
-30 October 2026. This is a development alpha, not a signed public release or a claim that every Sentient workflow is complete. The full requested inventory, dependency order and corner-case matrix are in [the roadmap](sentient-gap-roadmap.md).
+30 October 2026. This is a development alpha, not a signed public release or a claim that every Reference workflow is complete. The full requested inventory, dependency order and corner-case matrix are in [the roadmap](reference-gap-roadmap.md).
 
 ## Current integration status — fourth source checkpoint, third packaged candidate
 

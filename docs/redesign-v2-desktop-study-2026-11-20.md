@@ -1,12 +1,12 @@
-# Sentient rendered-reference study for Relay redesign v2
+# Reference rendered-reference study for Relay redesign v2
 
 Date: 20 November 2026. Read-only visual study by a separate agent. No Relay implementation changes, account actions, settings changes, task submission, or permission grants occurred in this lane. The native computer-use session is released.
 
 ## What was actually inspected
 
-The installed running Sentient OS app (`jesai.Sentient-OS-macOS`) was raised and its current rendered conversation/error-recovery state inspected. Its current request had failed with a provider connection error; this is useful evidence of task-state presentation, not evidence of working event creation.
+The installed running upstream project app (`jesai.upstream project-macOS`) was raised and its current rendered conversation/error-recovery state inspected. Its current request had failed with a provider connection error; this is useful evidence of task-state presentation, not evidence of working event creation.
 
-Finder opened the existing Desktop collection `Sentient OS Onboarding — 2026-11-19`. Each of these images was opened and visually read in Quick Look, not inferred from filenames:
+Finder opened the existing Desktop collection `upstream project Onboarding — 2026-11-19`. Each of these images was opened and visually read in Quick Look, not inferred from filenames:
 
 | Folder | Exact filename | Visual evidence |
 | --- | --- | --- |
@@ -25,7 +25,7 @@ Finder showed iCloud upload-quota warnings, but the inspected captures rendered 
 
 ### Main canvas
 
-Sentient Home is not a dashboard shell. Its main canvas has no permanent conversation-history column. A small brand and keyboard hint sit at upper left, while two named destinations and Settings occupy upper right. The header floats over the canvas without a horizontal bottom rule. Large areas remain visually empty. The title/greeting is a short human sentence rather than a dashboard heading or a grid of equal-weight cards.
+Reference Home is not a dashboard shell. Its main canvas has no permanent conversation-history column. A small brand and keyboard hint sit at upper left, while two named destinations and Settings occupy upper right. The header floats over the canvas without a horizontal bottom rule. Large areas remain visually empty. The title/greeting is a short human sentence rather than a dashboard heading or a grid of equal-weight cards.
 
 The default dock is one horizontal input row with mic/send controls. Suggestions sit immediately above it. The model/provider does not occupy a second footer row inside the input. No large empty attachment-acquisition panel is visible. In the live failed-task state, the dock grows to contain recovery guidance and relevant controls; that growth communicates a real state.
 
@@ -78,14 +78,14 @@ These are proposed implementation starting values, not pixel measurements claime
 ## Avoid copying the reference's weaknesses
 
 - The setup-unlock panel consumes a large part of Home and duplicates capabilities already suggested near the dock. Relay does not need that permanent marketing panel.
-- Sentient's live provider error is repeated in activity, result, and recovery. Relay can show one concise problem with optional technical detail and one clear recovery route.
-- The illustrated orbital brand and exact wording belong to Sentient; use Relay's own identity.
+- Reference's live provider error is repeated in activity, result, and recovery. Relay can show one concise problem with optional technical detail and one clear recovery route.
+- The illustrated orbital brand and exact wording belong to Reference; use Relay's own identity.
 - Empty Knowledge should explain the next real action clearly. Poetic imagery alone is insufficient when a user can create or import a note now.
 - Do not infer Light appearance, compact-window behavior, hover animation timing, or functioning integrations from these dark still images. Root must inspect Relay's actual implementations and interactions.
 
 ## Finish checks for the implementation
 
-Inspect the real new-chat and existing-chat surfaces at compact and wider window sizes. Check History open/close and search, long titles, multiline drafting, attachment/reply chips, active Stop/review/recovery, saved-note Open/Export, and keyboard/accessibility actions. The benchmark is reduced competing hierarchy and a coherent spatial structure, not simply fewer visible icons. No source code, screenshots, assets, or account state from Sentient were copied.
+Inspect the real new-chat and existing-chat surfaces at compact and wider window sizes. Check History open/close and search, long titles, multiline drafting, attachment/reply chips, active Stop/review/recovery, saved-note Open/Export, and keyboard/accessibility actions. The benchmark is reduced competing hierarchy and a coherent spatial structure, not simply fewer visible icons. No source code, screenshots, assets, or account state from Reference were copied.
 
 ## Focused typography, icon, and color study
 

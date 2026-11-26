@@ -1,6 +1,6 @@
 # Relay identity and cross-page consistency
 
-The user rejected the previous Home as too close to Sentient and identified the mismatch with Settings and other pages. This pass keeps the useful calm reading/input structure while giving Relay a distinct composition and applying one shared page language across the app.
+The user rejected the previous Home as too close to Reference and identified the mismatch with Settings and other pages. This pass keeps the useful calm reading/input structure while giving Relay a distinct composition and applying one shared page language across the app.
 
 ## Shared language
 
@@ -10,7 +10,7 @@ The shared palette and legacy surface/glass/lit-card implementations are aligned
 
 ## Composition and ownership
 
-- Home has a left-aligned Relay mark, an invitation and short explanation, the input immediately below, and draft suggestions underneath. It no longer uses Sentient's centered question/prompt/dock arrangement.
+- Home has a left-aligned Relay mark, an invitation and short explanation, the input immediately below, and draft suggestions underneath. It no longer uses Reference's centered question/prompt/dock arrangement.
 - Settings uses a quiet navigation rail, consistent page titles and grouped forms, neutral section symbols, and teal selection.
 - Knowledge retains its library/reader purpose but shares the same toolbar, controls, surfaces, metadata scale and links. Draft guards, recovery and note identity remain unchanged.
 - Morning Brief uses a title/close row and a compact action row, neutral preparation panels and readable state labels.

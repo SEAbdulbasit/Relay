@@ -4,7 +4,7 @@ Work began 7 November and continued into 8 November 2026 (Riyadh). Follow-up to 
 
 ## Simpler model settings
 
-The pinned reference's [model pane](https://github.com/Sentient-OS-Labs/sentient-os/blob/6214cc8b6bf30769f2af2272273931c41d14e744/Sentient%20OS%20macOS/Views/Settings/FrontierModelPane.swift) places the local model summary before optional provider setup. Its shared theme centralizes restrained type, spacing and surfaces. Relay's original presentation follows those priorities without copying branding or assets.
+The pinned reference's model pane (upstream link removed) places the local model summary before optional provider setup. Its shared theme centralizes restrained type, spacing and surfaces. Relay's original presentation follows those priorities without copying branding or assets.
 
 - Clear Models and Local model headings replace the longer marketing headings.
 - Installed models use plain rows, readable Ready/Selected states and one primary load control. Duplicate filenames, architecture prose and decorated nested row cards are removed from the main pane.
@@ -58,6 +58,6 @@ The preceding ordinary image-only read/artifact model tests passed their exact a
 
 The generic visual-action loop, semantic authorizer, reviewed original-window focus restoration, task-owned shared read/action session and stable accepted-proposal identity are still ignored candidates. Background reads must remain available; input needs its separate foreground fence. Executor alone may gain input in multi-agent mode. Source text, model descriptions, view IDs and screenshot geometry never create authority.
 
-The standalone SQLite candidate now has real crash/fault tests, accepted-proposal-scoped exact ID deduplication, linked steering/Resume runs, neutral delivery outcomes and artifact metadata committed with results. Its Store cutover is being qualified in an isolated real-source copy; it is not active. The narrow context invalidation fix above is active and headless-qualified. All 260 acceptance rows and packaged permission/hardware/service/signing gates remain in the [parity plan](sentient-parity-plan.md).
+The standalone SQLite candidate now has real crash/fault tests, accepted-proposal-scoped exact ID deduplication, linked steering/Resume runs, neutral delivery outcomes and artifact metadata committed with results. Its Store cutover is being qualified in an isolated real-source copy; it is not active. The narrow context invalidation fix above is active and headless-qualified. All 260 acceptance rows and packaged permission/hardware/service/signing gates remain in the [parity plan](reference-parity-plan.md).
 
 Subsequent 8 November qualification promoted the actual journal cutover and narrow enumeration helper, reran the full default/Release/signature, verified packaged delivery/Stop/history/local calculation, and fixed the Activity layout. One additional owned read-only provenance run preserved 61 zero-event oracles without exercising recovery. See [the subsequent journal/metadata record](verification-2026-11-08-journal-native-metadata.md); it supersedes the implementation status above while preserving these earlier failures and scope limits.

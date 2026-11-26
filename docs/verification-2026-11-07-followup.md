@@ -1,6 +1,6 @@
 # Native workflow and summary follow-up — 7 November 2026
 
-This record covers the follow-up to `accd4c2bb9ff814a9a8c53cb11c0d4cf34380798`. It is a scoped implementation milestone, **not full Sentient OS parity or general autonomous-Mac integration readiness**. The [260-case parity plan](sentient-parity-plan.md) remains the acceptance contract. No Relay account or login was added.
+This record covers the follow-up to `accd4c2bb9ff814a9a8c53cb11c0d4cf34380798`. It is a scoped implementation milestone, **not full upstream project parity or general autonomous-Mac integration readiness**. The [260-case parity plan](reference-parity-plan.md) remains the acceptance contract. No Relay account or login was added.
 
 ## Implemented behavior
 

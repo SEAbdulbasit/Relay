@@ -1,6 +1,6 @@
 # Local workflow milestone verification — 7 November 2026
 
-This verifies a bounded implementation milestone. **It does not establish full Sentient OS parity or production integration readiness.** The [260-item source-backed plan](sentient-parity-plan.md) remains the acceptance contract. No Relay account is required.
+This verifies a bounded implementation milestone. **It does not establish full upstream project parity or production integration readiness.** The [260-item source-backed plan](reference-parity-plan.md) remains the acceptance contract. No Relay account is required.
 
 ## Frozen regression and package
 

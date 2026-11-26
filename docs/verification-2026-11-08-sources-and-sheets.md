@@ -1,6 +1,6 @@
 # Source selection and sheet consistency — 8 November 2026
 
-These are qualified isolated candidates, separate from pushed commit `8c9e43e`. They do not establish full Sentient OS parity or actual Calendar/native-control acceptance.
+These are qualified isolated candidates, separate from pushed commit `8c9e43e`. They do not establish full upstream project parity or actual Calendar/native-control acceptance.
 
 The combined 481-input package adds explicit Calendar scope selection, Navigator filename search through the actual selected-directory producer, and consistent image/brief sheets. It passed 1,524 executed declarations with 70 opt-in skips (1,594 registered, 263 suites). Its focused gate passed 201 declarations with three opt-in skips (204 registered, 24 suites). The exact package, seven compiled hosts, logs and prior failure are frozen at `.build/calendar-navigator-test-macro-next/qualified-final/MANIFEST.json`, SHA-256 `67b109dbc04cfbe95cbfb7f9de6842dc1c6c39e49b028b1fe427ccf6be4d1abe`.
 
@@ -90,7 +90,7 @@ The active working checkout has advanced to 571 verified package inputs plus two
 ### 6. Parity Candidate Integration (Lanes 1, 2, and 3)
 - **Lane 1 (Context Compaction & Knowledge Vault)**: Integrated `ConversationCompactor`, `SidekickInstructionStore`, `KnowledgeVaultValidation`, `CorpusSlicer`, `ConversationHistoryQueryTools`, and `ConversationReplyView`. All 10 associated test suites passed.
 - **Lane 2 (Calendar Write Workflow & Mail Ingestion)**: Integrated `CalendarSnapshot`, `CalendarWriteWorkflow`, `CalendarWriteWorkflowTools`, and `MailIngestion`. All associated test suites passed.
-- **Lane 3 (Target-Bound Desktop Automation AUT-17 & Sidekick Notch)**: Integrated `TargetBoundDesktopInputAdapter` wired into `MacTools.swift`, `ComputerUseDiagnosticConsent`, and `SentientNotchOverlay`. All associated test suites passed.
+- **Lane 3 (Target-Bound Desktop Automation AUT-17 & Sidekick Notch)**: Integrated `TargetBoundDesktopInputAdapter` wired into `MacTools.swift`, `ComputerUseDiagnosticConsent`, and `ReferenceNotchOverlay`. All associated test suites passed.
 - **Qualification Verification**: All 2,022 registered test declarations across 319 suites (1,941 Swift Testing RelayTests + 58 RelayJournalTests + 23 XCTest RelayTests) pass with 0 failures across all three test runs:
   - Unrestricted Default (`unrestricted_default_suite_final.log`): **1,934 passed**, **88 opt-in skipped**, **0 failed**.
   - Opt-in MCP Loopback (`mcp_loopback_suite_final.log`): **1,942 passed**, **80 opt-in skipped**, **0 failed** (8 opt-in MCP loopback tests passed).

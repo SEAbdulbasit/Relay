@@ -13,7 +13,7 @@ The executable native alpha and setup instructions are in [the project README](.
 - [UX/design proposal](design-proposal.md)
 - [Interactive walkthrough](design-preview.html)
 - [Independent critique](design-critique.md)
-- [Sentient OS source design audit](sentient-design-reference.md) — actual reference layouts, tokens and source locations.
+- [upstream project source design audit](reference-design-reference.md) — actual reference layouts, tokens and source locations.
 
 Walkthrough content is illustrative, not executed verification. Design artifacts should be reviewed against the revised PRD and direction/amendment note.
 

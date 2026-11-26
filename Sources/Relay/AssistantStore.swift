@@ -5090,7 +5090,7 @@ final class AssistantStore {
         }
     }
 
-    // MARK: - Sentient 3.1 Integration Extensions (QAC-03, PFR-10, Plugged-In Analysis, Vault, Style, Reset & Uninstall)
+    // MARK: - Workspace Integration Extensions (QAC-03, PFR-10, Plugged-In Analysis, Vault, Style, Reset & Uninstall)
 
     nonisolated static let summaryCurrentSourceAliasName = "summarize_current_source"
 

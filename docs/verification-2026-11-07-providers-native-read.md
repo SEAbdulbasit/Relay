@@ -1,6 +1,6 @@
 # Local provider and ordinary native-read verification
 
-Follow-up to `e43459f95d674a07dabf43bf5b97f86c17dee59c`, against the unchanged Sentient OS source baseline `6214cc8b6bf30769f2af2272273931c41d14e744`. This is a scoped implementation and qualification record. **Full parity and release integration readiness remain open.** No Relay account was introduced.
+Follow-up to `e43459f95d674a07dabf43bf5b97f86c17dee59c`, against the unchanged upstream project source baseline `6214cc8b6bf30769f2af2272273931c41d14e744`. This is a scoped implementation and qualification record. **Full parity and release integration readiness remain open.** No Relay account was introduced.
 
 ## Behavior in this batch
 
@@ -106,6 +106,6 @@ Subsequent qualification found an unattributed pointer event in a separate owned
 - Native task read authority is currently memory-only. Same-process Stop/Resume retains it; process-restored tasks need an explicit fresh binding that preserves any original restrictions. Restoring history must not mint unrestricted scope or executable effects.
 - A separate ignored controller draft has qualified finite native click/drag/key mechanics and an upfront focused AX insertion capability. The raw keyboard provider lost non-layout Unicode in a real editor; its Unicode preflight now refuses before effects. Exact AX insertion separately passed decomposed accents, Chinese and emoji while preserving unmodified authored formatting and caret. That capability is still being integrated under the native FIFO/Stop/request-ID gate. It is not a completed production autonomous action loop.
 - The ignored real SQLite journal has fault/crash qualification, but Store dispatch cutover, history tools and validated completed-prefix compaction are unfinished. No primitive is counted as the complete durable conversation feature.
-- Broader providers, live sources, semantic knowledge/proactive research, browser proofreading/Undo, combined summaries/video/same-chat continuation, managed wake, hosted phone knowledge and release migration remain in the unchanged 260-row [parity plan](sentient-parity-plan.md).
+- Broader providers, live sources, semantic knowledge/proactive research, browser proofreading/Undo, combined summaries/video/same-chat continuation, managed wake, hosted phone knowledge and release migration remain in the unchanged 260-row [parity plan](reference-parity-plan.md).
 
 The next milestone must connect generic ordinary visual actions to the planner with original task scope, current target/effect review and independent outcome evidence, and put durable intent acknowledgement before every dispatch path. Successful screenshots, process exits and model narration do not prove the requested effect.

@@ -1,6 +1,6 @@
 # Standard Mac control candidate — 8 November 2026
 
-This candidate is separate from pushed commit `8c9e43e`. General native control remains disabled. Full Sentient OS parity and integration acceptance remain open; the 260 cases in `sentient-parity-plan.md` are unchanged.
+This candidate is separate from pushed commit `8c9e43e`. General native control remains disabled. Full upstream project parity and integration acceptance remain open; the 260 cases in `reference-parity-plan.md` are unchanged.
 
 The combined source candidate has 473 hashed package/source/test/Vendor inputs. Its headless regression passed 1,497 executed declarations, with 70 opt-in skips out of 1,567 registered declarations in 259 suites. The live mechanics declaration was intentionally skipped in that run. Two pure argument-parser declarations also passed separately. Frozen source, seven compiled hosts and preserved compiler failures are bound by `.build/standard-control-unified-next/qualified-final/MANIFEST.json`, SHA-256 `1019395f211c5744e7d49a9f94315b3eebf6e9ede23189a801fdf277eb80ac85`.
 
@@ -499,9 +499,9 @@ The twenty-second actual standard-control run was executed under `supervise_owne
    - **Consequence**: Store phase remained at `.needsInput`. Because line 257 threw before `mechanicsReport` was assembled (line 281), `mechanics-result.json` was not serialized for the ordinary scene, leading to `FileNotFoundError` during supervisor discovery and `failureCodes: ["reportOwnerMismatch"]`.
    - **Cleanup**: Both fixture PIDs (75960 and 75964) and test host exited cleanly; host activation policy was restored (`originalPolicy: 0`, `effectivePolicy: 1`, `restoredPolicy: 0`).
 
-### Verification-Loop Comparison: Sentient OS 2.8 vs. Relay
+### Verification-Loop Comparison: upstream project 2.8 vs. Relay
 
-| Dimension | Sentient OS 2.8 (`6214cc8b`) | Relay Autonomous Standard Control |
+| Dimension | upstream project 2.8 (`6214cc8b`) | Relay Autonomous Standard Control |
 |---|---|---|
 | **Architecture** | Delegated out-of-process via OpenAI helper (`CUAService` / `Codex Computer Use.app`). | Sovereign in-process AX & model-free owned connection. |
 | **Authentication Gate** | Requires Codex CLI or Claude CLI account. | Zero account, subscription, or login required (local first). |

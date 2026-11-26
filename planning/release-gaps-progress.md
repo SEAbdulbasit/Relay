@@ -1,6 +1,6 @@
 # Relay release-gap progress
 
-30 October 2026. This checkpoint addresses the four gaps called out after the previous alpha: conversation latency, application compatibility, voice qualification, and signed distribution. It does not declare a production release or full Sentient feature parity. Earlier evidence is preserved in [release evidence](release-evidence-2026-10-30.md); the broader backlog remains in [the gap roadmap](sentient-gap-roadmap.md).
+30 October 2026. This checkpoint addresses the four gaps called out after the previous alpha: conversation latency, application compatibility, voice qualification, and signed distribution. It does not declare a production release or full Reference feature parity. Earlier evidence is preserved in [release evidence](release-evidence-2026-10-30.md); the broader backlog remains in [the gap roadmap](reference-gap-roadmap.md).
 
 ## Current verified checkpoint
 

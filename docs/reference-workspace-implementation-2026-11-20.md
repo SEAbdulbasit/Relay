@@ -1,6 +1,6 @@
 # Relay chat declutter implementation — 20 November 2026
 
-This pass responds to the actual failed-calendar screenshot and the current Sentient source/interface comparison. It changes the working chat, not another marketing hero or palette. Root owns native app observation, calendar integration, the shared atmosphere/material helper, final compilation, and qualification.
+This pass responds to the actual failed-calendar screenshot and the current Reference source/interface comparison. It changes the working chat, not another marketing hero or palette. Root owns native app observation, calendar integration, the shared atmosphere/material helper, final compilation, and qualification.
 
 ## Changed in MainView.swift
 
@@ -21,4 +21,4 @@ No model/tool approval or task-recovery authority was changed. No calendar event
 
 Swift parser and scoped whitespace checks passed. No build or runtime test was launched in this lane, so parser success is not a claim of successful type checking or VoiceOver qualification. Root must compile and inspect idle/nonempty/streaming/review/stopped states, compact width and both appearances. Specifically check hover-hidden menu focus and named accessibility actions, saved-note Open/Export, actual attachment/cancel/failure states, and Settings/appearance navigation through the consolidated menu.
 
-Current Sentient evidence and official source links are recorded separately in [the reference audit](sentient-declutter-reference-2026-11-20.md). The design adopts hierarchy and progressive disclosure, not a claim of pixel parity.
+Current Reference evidence and official source links are recorded separately in [the reference audit](reference-declutter-reference-2026-11-20.md). The design adopts hierarchy and progressive disclosure, not a claim of pixel parity.

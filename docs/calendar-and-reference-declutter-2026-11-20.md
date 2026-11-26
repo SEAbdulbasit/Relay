@@ -1,12 +1,12 @@
-# Calendar capability and Sentient-informed chat refinement
+# Calendar capability and Reference-informed chat refinement
 
-The user reported that Codex CLI could not create a meeting and rejected Relay's crowded chat. Their screenshot showed an empty visual-context acquisition panel, repeated assistant headings, permanent response/user toolbars, and deletion icons throughout History. They specifically requested Sentient's cleaner icon treatment and gradient, and pointed to Desktop screenshots.
+The user reported that Codex CLI could not create a meeting and rejected Relay's crowded chat. Their screenshot showed an empty visual-context acquisition panel, repeated assistant headings, permanent response/user toolbars, and deletion icons throughout History. They specifically requested Reference's cleaner icon treatment and gradient, and pointed to Desktop screenshots.
 
 ## Reference inspection
 
-The installed Sentient OS app was inspected directly, without submitting tasks or changing its settings. The Desktop reference folder `Sentient OS Onboarding — 2026-11-19` was opened using Finder; screenshots `02 Home and feature examples/029-home-initial.png` and `030-home-double-tap-example.png` were read through Quick Look. Desktop terminal access was unavailable; no permission changes or workaround to bypass that restriction were made.
+The installed upstream project app was inspected directly, without submitting tasks or changing its settings. The Desktop reference folder `upstream project Onboarding — 2026-11-19` was opened using Finder; screenshots `02 Home and feature examples/029-home-initial.png` and `030-home-double-tap-example.png` were read through Quick Look. Desktop terminal access was unavailable; no permission changes or workaround to bypass that restriction were made.
 
-The reference's identity combines blue, wine, and amber light near the upper window edge, a quiet reading background, translucent surfaces, consistent outlined system symbols, a compact composer, and sparse message controls. The public official source was independently checked to distinguish current implementation from historical comparison images. See [verified reference notes](sentient-declutter-reference-2026-11-20.md).
+The reference's identity combines blue, wine, and amber light near the upper window edge, a quiet reading background, translucent surfaces, consistent outlined system symbols, a compact composer, and sparse message controls. The public official source was independently checked to distinguish current implementation from historical comparison images. See [verified reference notes](reference-declutter-reference-2026-11-20.md).
 
 ## Calendar defect and repair
 

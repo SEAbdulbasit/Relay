@@ -151,7 +151,7 @@ public final class WritingStyleCollector {
         isCollecting = false
     }
 
-    /// Sentient 3.1 lifecycle teardown entry point (`System/Uninstall.swift` / Reset).
+    /// Reference 3.1 lifecycle teardown entry point (`System/Uninstall.swift` / Reset).
     /// Cancels any in-flight `writingstyle.md` setup task and awaits drain so no late file write lands after reset.
     public func cancelSetupAndDrain() async {
         await cancelAndDrain()

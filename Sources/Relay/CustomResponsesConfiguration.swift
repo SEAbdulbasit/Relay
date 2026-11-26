@@ -324,7 +324,7 @@ nonisolated struct CustomResponsesConfiguration: Codable, Equatable, Sendable {
     }
 }
 
-/// Pure, per-invocation Codex CLI override builder matching Sentient's `CustomProvider.providerOverrides`.
+/// Pure, per-invocation Codex CLI override builder matching Reference's `CustomProvider.providerOverrides`.
 /// Never writes to `~/.codex/config.toml` or reads `~/.codex/auth.json`.
 nonisolated struct CodexCustomResponsesRecipe: Equatable, Sendable {
     static let providerID = "relay_custom"

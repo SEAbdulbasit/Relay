@@ -8,7 +8,7 @@ Keep the existing native SwiftUI architecture, system typography, neutral light/
 
 ## References and evidence
 
-- The requested “Sentinet OS” is interpreted as **Sentient OS**, verified against the installed app (`jesai.Sentient-OS-macOS`) and [official product](https://sentient-os.ai/). Its actual home screen was inspected: setup disclosure sits beside the primary composer, and starter prompts explain concrete jobs. Apply contextual discovery and honest example labeling; do not copy its decorative background.
+- The requested “Sentinet OS” is interpreted as **upstream project**, verified against the installed app (`jesai.upstream project-macOS`) and official product (upstream link removed). Its actual home screen was inspected: setup disclosure sits beside the primary composer, and starter prompts explain concrete jobs. Apply contextual discovery and honest example labeling; do not copy its decorative background.
 - The installed **Google Antigravity** (`com.google.antigravity`) was inspected at its home workspace, together with its [official product page](https://antigravity.google/). Observed: project grouping, restrained sidebar, composer-adjacent model/execution controls, clear navigation. Apply compact persistent navigation and controls near their effect. Fresh onboarding was not replayed, to preserve the installed account/workspace state.
 - [ChatGPT official overview](https://chatgpt.com/overview/) was reviewed for the conversation-first product framing. Authenticated ChatGPT settings/onboarding were not independently exercised; no claim of exact settings parity is made. Restrained conversation width is this review's recommendation, not a measured reference specification.
 - [Apple accessibility guidance](https://developer.apple.com/design/human-interface-guidelines/accessibility) and [Reduce Motion guidance](https://developer.apple.com/help/app-store-connect/manage-app-accessibility/reduced-motion-evaluation-criteria) inform semantic controls, text contrast, and honoring the OS preference.
@@ -42,7 +42,7 @@ Implementation order: truthful workflows, navigation/recovery, shared tokens/con
 
 See [workspace coverage](product-review-workspace.md), [onboarding coverage](product-review-onboarding.md), and [settings and secondary-screen coverage](product-review-settings.md). These distinguish source inspection from runtime checks; a source-reviewed screen is not a runtime pass.
 
-Root runtime baseline: Sidekick collapsed/expanded with recent conversation, main conversation with existing failure/error/activity/plan, General settings navigation/search, empty Knowledge Vault, and empty Morning Brief. Reference runtime: Sentient home and Antigravity home. No source permissions, credentials, downloads, external messages, or destructive user actions were exercised.
+Root runtime baseline: Sidekick collapsed/expanded with recent conversation, main conversation with existing failure/error/activity/plan, General settings navigation/search, empty Knowledge Vault, and empty Morning Brief. Reference runtime: Reference home and Antigravity home. No source permissions, credentials, downloads, external messages, or destructive user actions were exercised.
 
 Root code coverage: shared palette/type/spacing/surfaces/buttons, Morning Brief card navigation, Knowledge index overview. Functional regression checks cover phase presentation, setup persistence, existing activity behavior, palette contrast, provider configuration/cancellation and writing settings where runnable.
 

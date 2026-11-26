@@ -12,7 +12,7 @@ Support file search/read, supported artifact creation/editing, browser observati
 
 First-release memory consists of conversation context, current task state, explicit preferences, and user-approved reusable facts. Provide inspect/edit/delete. Sensitive task content does not automatically become memory. Folder indexing, broader searchable knowledge, project context and cross-conversation continuity are later additions, superseding the previous plan to make indexing a core alpha dependency.
 
-The [Sentient OS reference](https://github.com/Sentient-OS-Labs/sentient-os) remains inspiration for personal assistance, context, drafts and execution; it is not an implementation or provider requirement. Scheduled/overnight activity, continuous monitoring, autonomous proactive work and multiple agents controlling the same desktop are outside the first release. Proactive suggestions would require a later explicit scope decision.
+The upstream project reference (upstream link removed) remains inspiration for personal assistance, context, drafts and execution; it is not an implementation or provider requirement. Scheduled/overnight activity, continuous monitoring, autonomous proactive work and multiple agents controlling the same desktop are outside the first release. Proactive suggestions would require a later explicit scope decision.
 
 Native Mac first; no mobile implementation in current release. Possible later iOS requires a separate use case, platform feasibility and qualification, with no desktop automation parity promise. Native shell technology, model/runtime/quantization, driver, hardware floor and initial apps remain feasibility decisions.
 

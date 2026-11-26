@@ -4,7 +4,7 @@ import SQLite3
 import Testing
 @testable import Relay
 
-@MainActor @Suite(.serialized) struct Sentient31ParityTests {
+@MainActor @Suite(.serialized) struct ProviderIntegrationParityTests {
     private let sampleTool = ToolDefinition(
         name: "launch_app",
         description: "Review opening an application",
@@ -90,7 +90,7 @@ import Testing
         let workspace = URL(fileURLWithPath: "/private/tmp/relay-claude-env", isDirectory: true)
         let env = ClaudeCLIClient.sanitizedEnvironment(cli: cliURL, workspace: workspace)
 
-        // Sentient 3.1 parity: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC must be "" (never "1" or "0")
+        // Provider environment contract: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC must be "" (never "1" or "0")
         #expect(env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "")
         #expect(env["DISABLE_AUTOUPDATER"] == "1")
         #expect(env["DISABLE_TELEMETRY"] == "1")

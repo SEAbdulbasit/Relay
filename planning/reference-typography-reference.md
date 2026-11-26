@@ -1,8 +1,8 @@
-# Sentient OS typography reference
+# upstream project typography reference
 
 Inspected 31 October 2026, upstream revision `fe28c9c14ddb5b2e63902ca137594e9c4e6bfdac`.
 
-Source: https://github.com/Sentient-OS-Labs/sentient-os/tree/fe28c9c14ddb5b2e63902ca137594e9c4e6bfdac
+Source: [upstream URL removed]
 
 | Element | Verified upstream | Relay adjustment |
 | --- | --- | --- |
@@ -15,4 +15,4 @@ Source: https://github.com/Sentient-OS-Labs/sentient-os/tree/fe28c9c14ddb5b2e639
 
 No upstream implementation copied. Existing white primary text, slate canvas, Relay illustrations, sidebar and side activity remain. This aligns selected typography; it is not a pixel-identical recreation. Serif remains absent from Relay's main UI. SF system resolves through SwiftUI, not a bundled font file.
 
-Build log: /tmp/relay-sentient-type-build.log
+Build log: /tmp/relay-reference-type-build.log

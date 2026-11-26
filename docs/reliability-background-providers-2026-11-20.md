@@ -67,7 +67,7 @@ No production provider client change was needed based on this inspection. Existi
 - Managed wake: signed helper requirement, macOS approval, explicit enable/removal, privileged connection identity and confirmation before uninstalling a helper with outstanding wake/sleep responsibility.
 - Awake lease: scoped owner/token, heartbeat expiry, absolute time ceiling, external-power loss restoration, persistent recovery marker and leaving unrelated/preexisting sleep settings alone.
 
-The wake/helper mechanisms were not changed speculatively. Their existing focused suites are part of the integrated verification request: `PreparationSchedulerTests`, `PreparationWakeSetupTests`, `ManagedPreparationWakeTests`, `ManagedPreparationAwakeLeaseTests`, plus the existing plugged-in cases in `Sentient31ParityTests` and `Wave2FunctionalityTests`.
+The wake/helper mechanisms were not changed speculatively. Their existing focused suites are part of the integrated verification request: `PreparationSchedulerTests`, `PreparationWakeSetupTests`, `ManagedPreparationWakeTests`, `ManagedPreparationAwakeLeaseTests`, plus the existing plugged-in cases in `ProviderIntegrationParityTests` and `Wave2FunctionalityTests`.
 
 ## Verification status and limits
 

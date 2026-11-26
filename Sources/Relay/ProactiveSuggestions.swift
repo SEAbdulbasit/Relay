@@ -16,7 +16,7 @@ nonisolated struct Suggestion: Identifiable, Sendable {
     var dismissed: Bool
 }
 
-/// Deterministic high-risk PII backstop (Sentient OS pattern) that blocks Social Security
+/// Deterministic high-risk PII backstop (upstream project pattern) that blocks Social Security
 /// Numbers, Luhn-validated 13–19 digit payment card numbers, and passport identifiers from
 /// surfacing in proactive suggestions or unredacted summaries.
 nonisolated enum PIIScan {

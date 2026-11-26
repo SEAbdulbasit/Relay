@@ -3,7 +3,7 @@ import Security
 import Testing
 @testable import Relay
 
-/// Runs against a separately started, owned HTTPS Sentient mirror.
+/// Runs against a separately started, owned HTTPS knowledge mirror.
 @MainActor
 struct HostedKnowledgeMirrorLiveTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["RELAY_RUN_HOSTED_MIRROR_TEST"] == "1"),

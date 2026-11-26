@@ -23,7 +23,7 @@ The opt-in export produces the two GIFs plus PNG posters. It is skipped during o
 
 ## Earlier native recordings — 1 November 2026
 
-The following clips show an older native development interface. They are demonstrations, not a release or a claim of Sentient feature parity.
+The following clips show an older native development interface. They are demonstrations, not a release or a claim of Reference feature parity.
 
 ## Local arithmetic
 

@@ -766,7 +766,7 @@ nonisolated enum LiveChatWindowing {
 
 nonisolated enum LiveMessageBodyDecoder {
     /// Decodes `attributedBody` using Relay's strict `MessagesAttributedBody` parser first,
-    /// then falls back to Sentient OS 3.1's typedstream `NSString`/`NSMutableString` preamble scanner
+    /// then falls back to upstream project 3.1's typedstream `NSString`/`NSMutableString` preamble scanner
     /// so rich/multi-part messages (links, mentions, formatting runs) also decode cleanly.
     static func decode(plainText: String?, attributedBody: Data?) -> String? {
         if let plainText {

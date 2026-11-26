@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import Combine
 
-// MARK: - 1. SkyGraph (Ported from Sentient OS SkyGraph.swift)
+// MARK: - 1. SkyGraph (Ported from upstream project SkyGraph.swift)
 
 struct SkyNode: Identifiable, Equatable {
     let url: URL
@@ -215,7 +215,7 @@ struct SkyGraph {
     }
 }
 
-// MARK: - 2. SkySimulation (Ported from Sentient OS SkySimulation.swift)
+// MARK: - 2. SkySimulation (Ported from upstream project SkySimulation.swift)
 
 enum SkyTuning {
     static let ringRadius: CGFloat = 270
@@ -386,7 +386,7 @@ final class SkySimulation {
     func endDrag() { dragIndex = nil }
 }
 
-// MARK: - 3. NightSkyModel & SkyRenderer (Ported from Sentient OS NightSkyModel.swift & SkyRenderer.swift)
+// MARK: - 3. NightSkyModel & SkyRenderer (Ported from upstream project NightSkyModel.swift & SkyRenderer.swift)
 
 struct SkyCamera {
     var pan: CGPoint = .zero
@@ -986,7 +986,7 @@ struct SkyRenderer {
     }
 }
 
-// MARK: - 4. Interactive NightSkyView + SkyHoverCard + SkyDoor (Sentient OS Constellation View)
+// MARK: - 4. Interactive NightSkyView + SkyHoverCard + SkyDoor (upstream project Constellation View)
 
 struct NightSkyView: View {
     @ObservedObject var model: NightSkyModel

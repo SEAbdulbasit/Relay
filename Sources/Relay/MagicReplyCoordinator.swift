@@ -136,7 +136,7 @@ enum MagicReplyCaretLocator {
     }
 }
 
-// MARK: - Caret Swirl (Sentient 3.1 Rainbow Comets)
+// MARK: - Caret Swirl (Reference 3.1 Rainbow Comets)
 
 @MainActor
 final class MagicReplyCaretSwirl {

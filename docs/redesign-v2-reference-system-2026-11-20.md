@@ -1,6 +1,6 @@
 # Relay redesign v2: reference system study
 
-20 November 2026. Read-only study of current official Sentient source and Relay checkpoint `2981ea4`. This lane did not inspect rendered Desktop images; the Desktop lane owns that evidence. Public source was read, not copied into Relay. Source observations below describe current public `main`, which can differ from the installed reference and historical screenshots.
+20 November 2026. Read-only study of current official Reference source and Relay checkpoint `2981ea4`. This lane did not inspect rendered Desktop images; the Desktop lane owns that evidence. Public source was read, not copied into Relay. Source observations below describe current public `main`, which can differ from the installed reference and historical screenshots.
 
 ## The underlying failure in Relay
 
@@ -12,7 +12,7 @@ Removing the numbered hero and the always-open sidebar will change the compositi
 
 ### Window and navigation
 
-[HomeView.swift](https://raw.githubusercontent.com/Sentient-OS-Labs/sentient-os/main/Sentient%20OS%20macOS/Views/HomeView.swift), notably `topBar`, `emptyState`, and `bottomDock`:
+HomeView.swift (upstream link removed), notably `topBar`, `emptyState`, and `bottomDock`:
 
 - The default Home uses an open canvas rather than a permanent conversation sidebar. The 13.5 pt semibold wordmark lives in transparent chrome, padded 30 pt horizontally and 18 pt from the top. Conversation controls appear only in conversation mode; compact navigation applies below 980 pt.
 - Empty Home centers a 48 pt mark, 22 pt medium question, and 13 pt status, offset upward 35 pt. It does not use an oversized, left-aligned editorial hero.
@@ -21,7 +21,7 @@ Removing the numbered hero and the always-open sidebar will change the compositi
 
 ### Input and contextual controls
 
-[SidekickComposer.swift](https://raw.githubusercontent.com/Sentient-OS-Labs/sentient-os/main/Sentient%20OS%20macOS/Views/Sidekick/SidekickComposer.swift):
+SidekickComposer.swift (upstream link removed):
 
 - At rest, the input is one horizontal row: 15 pt text growing from one to five lines, 36 pt action controls, 14 pt spacing, and 17 pt surface padding. There is no permanent second provider/tools row.
 - Reply and recovery content expand above the input only when relevant. The 10.5 pt helper row is specific to recovery, not permanent chrome.
@@ -29,13 +29,13 @@ Removing the numbered hero and the always-open sidebar will change the compositi
 
 ### Conversation rhythm
 
-[SidekickTranscript.swift](https://raw.githubusercontent.com/Sentient-OS-Labs/sentient-os/main/Sentient%20OS%20macOS/Views/Sidekick/SidekickTranscript.swift):
+SidekickTranscript.swift (upstream link removed):
 
 - The outer transcript caps at 800 pt including 28 pt horizontal gutters: its 744 pt inner width aligns with the dock. Rows have 18 pt separation. User bubbles use 17 pt horizontal and 12 pt vertical padding with an 18 pt continuous radius; assistant content remains unboxed.
 - Incoming rows can put work disclosure before the response. Message actions live in a reserved 20 pt bottom gutter. Hover does not alter row measurement. Copy and Reply remain native contextual/accessibility actions.
 - On user scroll or selection, the view respects history reading rather than forcing the live bottom anchor. Search is a transient transcript mode, not a permanent second search field.
 
-[SidekickTranscriptLayout.swift](https://raw.githubusercontent.com/Sentient-OS-Labs/sentient-os/main/Sentient%20OS%20macOS/Views/Sidekick/SidekickTranscriptLayout.swift):
+SidekickTranscriptLayout.swift (upstream link removed):
 
 - Activity is grouped once per task, associated with the first response. A terminal task event is not rendered as another ordinary message if a response already represents it.
 - Status wording distinguishes working, waiting, stopped, failed, interrupted, and success; the finished state does not imply a verified real-world outcome without the relevant evidence.
@@ -43,19 +43,19 @@ Removing the numbered hero and the always-open sidebar will change the compositi
 
 ### Light and material
 
-[SidekickStyle.swift](https://raw.githubusercontent.com/Sentient-OS-Labs/sentient-os/main/Sentient%20OS%20macOS/Views/Sidekick/SidekickStyle.swift):
+SidekickStyle.swift (upstream link removed):
 
 - Reading space is black with neutral ink: primary white 0.93, secondary 0.53, accent 0.84. Color is localized light, not a filled reading panel.
 - The crown uses broad overlapping blurred shapes with heights around 275–290 pt, blur around 64–69 pt, placed partially above the window. A smaller warm source sits below the dock. Motion pauses for inactive/occluded, scrolling, selection, and reduced-motion states.
 - Prominent controls use native glass where supported; older-platform material is darkened. Increased contrast and reduced transparency have explicit fallbacks. The important relationship is bright ink over a restrained dark neutral material, rather than tinted fills everywhere.
 
-[Theme.swift](https://raw.githubusercontent.com/Sentient-OS-Labs/sentient-os/main/Sentient%20OS%20macOS/Views/Theme.swift):
+Theme.swift (upstream link removed):
 
 - Source design intent uses medium-weight system display type and avoids additional manual negative tracking. The dark reading surface and Knowledge navigation have distinct surface roles. The reference is dark-only; Relay must still support its existing Light and System choices.
 
 ## Proposed coherent Relay contract
 
-These are recommendations for Relay, not claims that Sentient implements them verbatim.
+These are recommendations for Relay, not claims that Reference implements them verbatim.
 
 1. **Open by default.** The reading canvas occupies the window. Keep one quiet history affordance at the left of the wordmark; history opens as a 240 pt supplementary panel or a popover on narrower windows. Keep the preference/reopen behavior deliberate rather than silently migrating every previous choice.
 2. **One input row.** Put Add, growing text, mic, and send/stop on the same baseline. A 54–60 pt resting surface is enough. Place provider selection in an explicit contextual control or popover anchored near the dock; keep a meaningful discoverable model label, not an unexplained dot. Show attachments/replies above only when present.

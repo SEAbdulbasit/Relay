@@ -14,7 +14,6 @@ class OfflineAirGapChecker:
         r"localhost",
         r"::1",
         r"https://github\.com",       # Documented links or notices only
-        r"https://sentient-os\.ai",   # Reference links only
         r"https://apple\.com",        # System documentation references
     ]
 

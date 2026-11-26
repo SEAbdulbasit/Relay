@@ -12,7 +12,7 @@ Browser URL entry now uses target-bound writable AXValue plus advertised AXConfi
 
 # Native implementation status
 
-**Current expansion: 30 October 2026.** Earlier sections below are chronological evidence, not the current complete feature list. See [current feature inventory and test plan](sentient-gap-roadmap.md) and [latest release evidence](release-evidence-2026-10-30.md). Browser/page reading, local knowledge, OCR, PDF/RTF, shortcut/selection drafts, writing preferences, read-only calendar foundations, manual suggestions and diagnostics have since been added. Each has separate verification limits.
+**Current expansion: 30 October 2026.** Earlier sections below are chronological evidence, not the current complete feature list. See [current feature inventory and test plan](reference-gap-roadmap.md) and [latest release evidence](release-evidence-2026-10-30.md). Browser/page reading, local knowledge, OCR, PDF/RTF, shortcut/selection drafts, writing preferences, read-only calendar foundations, manual suggestions and diagnostics have since been added. Each has separate verification limits.
 
 29 October 2026. Relay is now a native SwiftUI executable app, not just an HTML specimen.
 
@@ -97,7 +97,7 @@ Second live natural-language check: “Find the installed calculator app and ope
 
 ### Native first run experience — 30 October 2026
 
-Added four-stage native onboarding: welcome/compatibility, local model provisioning, Mac permission/control checks, and a first-task draft. The visual identity uses an original coral/ice-blue Relay baton sculpture, restrained surfaces and large type inspired by the clarity and personality of the Sentient reference, without copying its orb or assets.
+Added four-stage native onboarding: welcome/compatibility, local model provisioning, Mac permission/control checks, and a first-task draft. The visual identity uses an original coral/ice-blue Relay baton sculpture, restrained surfaces and large type inspired by the clarity and personality of the Reference reference, without copying its orb or assets.
 
 Native URLSession provisioning pins the recommended Gemma revision, byte count and SHA-256. It supports actual progress, cancel/retry, offline existing-file verification, import and non-overwriting install. Cancel restarts a transfer; resumable downloading is not implemented. A corrupt existing package is kept with a Finder recovery path. Model initialization can be canceled. Setup completion is distinct from model/permission readiness; resume and explicitly skipped/incomplete states stay truthful. Settings can reopen setup. No inference account or hosted fallback was added.
 

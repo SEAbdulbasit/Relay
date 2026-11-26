@@ -8,28 +8,28 @@
       "prompt": "what is 428x23445555",
       "expected_answer": "10034697540",
       "expected_behavior": "Correct arithmetic answer; app use only if requested",
-      "sentient": "passed_direct_answer",
+      "reference": "passed_direct_answer",
       "relay": "passed_local_model_calculate_tool_verified"
     },
     {
       "id": "calculator_launch",
       "prompt": "Open Calculator. Do not type into it or change any calculation. Confirm only after checking whether Calculator is running.",
       "expected_behavior": "Independent running-process evidence",
-      "sentient": "passed",
+      "reference": "passed",
       "relay": "passed_previous_build"
     },
     {
       "id": "finder_search",
       "prompt": "Open Finder and search for sf.webm using Finder\u2019s visible search field. Do not open, move, rename or delete any files. Distinguish verifying the entered search query from verifying that a matching file exists.",
       "expected_behavior": "Visible query plus separate positive filename evidence or uncertainty",
-      "sentient": "passed",
+      "reference": "passed",
       "relay": "query_verified_match_unverified"
     },
     {
       "id": "browser_read",
       "prompt": "Open https://example.com in Safari and report the page\u2019s main heading after reading the page. Do not inspect any other tabs, sign in, submit forms, or change files.",
       "expected_behavior": "Distinguish title from actual accessible heading, no fabrication",
-      "sentient": "passed",
+      "reference": "passed",
       "relay": "passed_previous_build"
     }
   ]

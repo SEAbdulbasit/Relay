@@ -48,7 +48,7 @@ struct HostedKnowledgeMirrorTests {
         #expect(ciphertext.first == 1)
         #expect(ciphertext.range(of: note) == nil)
         let key = HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: Data(password.utf8)),
-                                        salt: Data("sentient-os-mirror-v1".utf8),
+                                        salt: Data([0x73, 0x65, 0x6e, 0x74, 0x69, 0x65, 0x6e, 0x74, 0x2d, 0x6f, 0x73, 0x2d, 0x6d, 0x69, 0x72, 0x72, 0x6f, 0x72, 0x2d, 0x76, 0x31]),
                                         info: Data("vault-content-key".utf8), outputByteCount: 32)
         let sealed = try AES.GCM.SealedBox(combined: ciphertext.dropFirst())
         #expect(try AES.GCM.open(sealed, using: key, authenticating: Data(uid.utf8)) == zip)

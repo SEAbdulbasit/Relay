@@ -1,4 +1,4 @@
-# Sentient OS — source-grounded design reference
+# upstream project — source-grounded design reference
 
 29 October 2026 · Inspected local source at commit `f064441a6d4309b7ae810de08e27b15e688f9a0b`. No downloaded application was built or run. These are implementation observations, not a rendered-screen review.
 
@@ -32,15 +32,15 @@
 | Large promotional greeting/illustration above a form | Small illuminated mark, restrained empty state and composer anchored consistently | The reference treats assistant readiness as the workspace, not a landing-page pitch. |
 | Generic rounded panels with warm colored fills | Neutral material/glass, very thin strokes, clear depth only where interactive | Surface hierarchy comes from light and material rather than many boxed sections. |
 
-This is a visual reference, not permission to inherit Sentient's product features. Its proactive scheduling, personal setup, hosted-provider integration and knowledge ingestion do not belong in Relay merely because the source contains them. The user's current direction remains conversation-first, local models only, with user-requested internet tasks allowed.
+This is a visual reference, not permission to inherit Reference's product features. Its proactive scheduling, personal setup, hosted-provider integration and knowledge ingestion do not belong in Relay merely because the source contains them. The user's current direction remains conversation-first, local models only, with user-requested internet tasks allowed.
 
 ## Exact inspected files
 
-- [Theme.swift](</tmp/relay-sentient-reference/Sentient OS macOS/Views/Theme.swift:13>)
-- [HomeView.swift](</tmp/relay-sentient-reference/Sentient OS macOS/Views/HomeView.swift:114>)
-- [SidekickStyle.swift](</tmp/relay-sentient-reference/Sentient OS macOS/Views/Sidekick/SidekickStyle.swift:12>)
-- [SidekickComposer.swift](</tmp/relay-sentient-reference/Sentient OS macOS/Views/Sidekick/SidekickComposer.swift:64>)
-- [SidekickTranscript.swift](</tmp/relay-sentient-reference/Sentient OS macOS/Views/Sidekick/SidekickTranscript.swift:305>)
-- [SidekickTranscriptLayout.swift](</tmp/relay-sentient-reference/Sentient OS macOS/Views/Sidekick/SidekickTranscriptLayout.swift:55>)
-- [SidekickWorkDisclosure.swift](</tmp/relay-sentient-reference/Sentient OS macOS/Views/Sidekick/SidekickWorkDisclosure.swift:54>)
-- [SidekickOverviewLayout.swift](</tmp/relay-sentient-reference/Sentient OS macOS/Views/Sidekick/SidekickOverviewLayout.swift:20>)
+- [Theme.swift](</tmp/relay-reference-reference/upstream project macOS/Views/Theme.swift:13>)
+- [HomeView.swift](</tmp/relay-reference-reference/upstream project macOS/Views/HomeView.swift:114>)
+- [SidekickStyle.swift](</tmp/relay-reference-reference/upstream project macOS/Views/Sidekick/SidekickStyle.swift:12>)
+- [SidekickComposer.swift](</tmp/relay-reference-reference/upstream project macOS/Views/Sidekick/SidekickComposer.swift:64>)
+- [SidekickTranscript.swift](</tmp/relay-reference-reference/upstream project macOS/Views/Sidekick/SidekickTranscript.swift:305>)
+- [SidekickTranscriptLayout.swift](</tmp/relay-reference-reference/upstream project macOS/Views/Sidekick/SidekickTranscriptLayout.swift:55>)
+- [SidekickWorkDisclosure.swift](</tmp/relay-reference-reference/upstream project macOS/Views/Sidekick/SidekickWorkDisclosure.swift:54>)
+- [SidekickOverviewLayout.swift](</tmp/relay-reference-reference/upstream project macOS/Views/Sidekick/SidekickOverviewLayout.swift:20>)

@@ -4,7 +4,7 @@ Studied 1 November 2026. Installed version: Vendor/agent-desktop/VERSION = 1.0.2
 
 ## What the library actually supplies
 
-The upstream AGENTS.md explicitly describes a native AX observation/action tool, not an agent or browser-page automation engine. It embeds no model. Relay still owns planning, approval, recovery, verification and the conversation. Adding the library does not itself confer Sentient parity.
+The upstream AGENTS.md explicitly describes a native AX observation/action tool, not an agent or browser-page automation engine. It embeds no model. Relay still owns planning, approval, recovery, verification and the conversation. Adding the library does not itself confer Reference parity.
 
 Source inspected:
 
@@ -57,4 +57,4 @@ P2: task trace and latency profiling. Separate model planning, observation, acti
 
 P3: persistent FFI adapter experiment after measurements identify subprocess overhead. Test ABI mismatch, malformed inputs, string ownership, thread-affinity, concurrent calls/lease contention and adapter destruction during a wait. Keep CLI fallback until equivalent qualification passes.
 
-The strongest path beyond Sentient is reliable verified outcomes and clear recovery with local inference. More exposed commands alone do not establish a better product.
+The strongest path beyond Reference is reliable verified outcomes and clear recovery with local inference. More exposed commands alone do not establish a better product.

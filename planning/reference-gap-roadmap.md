@@ -2,7 +2,7 @@
 
 Updated 30 October 2026. Execution backlog for the user's request to build the missing personal-assistant experience, with local inference, optional task networking, white readable text, independent critique, and parallel implementation. This document does not certify universal task completion or feature parity.
 
-Reference: [Sentient advertised features](https://sentient-os.ai/), inspected 30 October 2026. Its advertised categories include computer use, contextual reply drafting, personal knowledge, proactive preparation, local inference, and team integrations. Its offline mode already exists; Relay must compete on a specific, measured experience. Advertising is not an independent benchmark of the reference product.
+Reference: Reference advertised features (upstream link removed), inspected 30 October 2026. Its advertised categories include computer use, contextual reply drafting, personal knowledge, proactive preparation, local inference, and team integrations. Its offline mode already exists; Relay must compete on a specific, measured experience. Advertising is not an independent benchmark of the reference product.
 
 ## Product contract
 

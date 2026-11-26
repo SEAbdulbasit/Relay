@@ -1,6 +1,6 @@
 # Relay parity follow-up — 6 November 2026
 
-Reference: installed Sentient OS 2.7.6 (23). [Reference observations](sentientos-reference-2026-11-06.md) · [Earlier native acceptance](relay-parity-verification-2026-11-06.md). This follows the real macOS behaviors and keeps Relay’s default inference on the Mac.
+Reference: installed upstream project 2.7.6 (23). [Reference observations](referenceos-reference-2026-11-06.md) · [Earlier native acceptance](relay-parity-verification-2026-11-06.md). This follows the real macOS behaviors and keeps Relay’s default inference on the Mac.
 
 | Capability | Delivered in this pass | Acceptance and boundary |
 |---|---|---|

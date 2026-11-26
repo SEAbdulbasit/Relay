@@ -1,18 +1,18 @@
-# Sentient feature parity matrix and local-only delivery plan
+# Reference feature parity matrix and local-only delivery plan
 
-Reviewed 1 November 2026. This is a source inventory, not runtime qualification. “Implemented” means a concrete Relay implementation exists; it does not mean every app, hardware configuration or edge case passes. “Partial” means the user outcome is narrower than Sentient's. UI names and decorative components are not evidence of the underlying capability.
+Reviewed 1 November 2026. This is a source inventory, not runtime qualification. “Implemented” means a concrete Relay implementation exists; it does not mean every app, hardware configuration or edge case passes. “Partial” means the user outcome is narrower than Reference's. UI names and decorative components are not evidence of the underlying capability.
 
 ## Exact source baseline
 
-A fresh official Git clone was created in `/tmp/sentient-parity-current-20261101` without modifying the earlier checkout or Relay. `git ls-remote … HEAD` and the clone both resolved to **fe28c9c14ddb5b2e63902ca137594e9c4e6bfdac**, committed **30 October 2026 01:18:44 -0700**, “Publish Sentient OS 2.7.1 readiness and Double Tap fixes (#374)”. This is HEAD observed during this review, not a promise that upstream will remain there. The installed app now reports 2.7.5 (21); public source and installed version are therefore not assumed identical.
+A fresh official Git clone was created in `/tmp/reference-parity-current-20261101` without modifying the earlier checkout or Relay. `git ls-remote … HEAD` and the clone both resolved to **fe28c9c14ddb5b2e63902ca137594e9c4e6bfdac**, committed **30 October 2026 01:18:44 -0700**, “Publish upstream project 2.7.1 readiness and Double Tap fixes (#374)”. This is HEAD observed during this review, not a promise that upstream will remain there. The installed app now reports 2.7.5 (21); public source and installed version are therefore not assumed identical.
 
-[Official pinned source](https://github.com/Sentient-OS-Labs/sentient-os/tree/fe28c9c14ddb5b2e63902ca137594e9c4e6bfdac). Sentient paths below are relative to `Sentient OS macOS/`; Relay paths are relative to `Sources/Relay/`. The README supplies intended scenarios, while the listed implementation files establish relevant code surfaces. Source presence alone does not demonstrate all marketed scenarios succeed.
+Official pinned source (upstream link removed). Reference paths below are relative to `upstream project macOS/`; Relay paths are relative to `Sources/Relay/`. The README supplies intended scenarios, while the listed implementation files establish relevant code surfaces. Source presence alone does not demonstrate all marketed scenarios succeed.
 
 Local-only requirement: all model inference stays on the Mac. Downloads and explicit browser/service requests may use the internet. Hosted inference, cloud knowledge upload, account relays and personal-source access must not be silently introduced as a shortcut to parity.
 
 ## Core assistant and computer interaction
 
-| Capability | Sentient source | Relay status and evidence | Next acceptance gate | Priority |
+| Capability | Reference source | Relay status and evidence | Next acceptance gate | Priority |
 |---|---|---|---|---|
 | Interactive multi-turn assistant | `Notch Magic/SidekickConversationRun.swift`, `SidekickContext.swift`, `Cloud/FrontierRun.swift` | **Implemented, narrower.** `AssistantStore.swift`, `ContextWindow.swift`, `LocalModelClient.swift`; local task loop, generation checks and tool evidence. | Conversation over several tasks; follow-up pronouns, changed constraints, interruption, context exhaustion, stale late result. Never reuse omitted approvals. | P0 |
 | App discovery and opening | `Driver/NativeComputerUseServer.swift` | **Implemented.** `MacTools.swift` installed-app matching/aliases and launch evidence; Calculator live test passed. | Exact app, alias Voice Recorder→Voice Memos, duplicates, missing app, failed launch, already running. | P0 |
@@ -28,14 +28,14 @@ Local-only requirement: all model inference stays on the Mac. Downloads and expl
 
 ## Personal knowledge, sources and preparation
 
-| Capability | Sentient source | Relay status and evidence | Local-only adaptation and acceptance gate | Priority |
+| Capability | Reference source | Relay status and evidence | Local-only adaptation and acceptance gate | Priority |
 |---|---|---|---|---|
 | Explicit local file indexing and search | `Sources/FilesSource.swift`, `Ingestion/Connectors/FilesConnector.swift` | **Implemented, bounded.** `LocalKnowledge.swift`, `KnowledgeSearchCoordinator.swift` explicit scan and content hashes. | Maintain approved scope, symlink escape rejection, unreadable file, removed grant, 200-file/byte caps disclosed; no implicit home scan. | P0 |
 | Semantic search | Vault context and source pipeline | **Implemented, opt-in.** `SemanticKnowledgeSearch.swift` Apple local embedding backend, coverage/fallback. | Missing language asset, unavailable embedding, cancellation, freshness mismatch, lexical fallback; no network inference. | P1 |
 | Image/screenshot understanding | `Engine/Engine.swift`, `Engine/Triage.swift` vision pipeline | **Partial.** `LocalOCR.swift` text recognition exists; no equivalent general image reasoning established. | OCR of rotated/low-quality/multilingual fixtures; charts and nontext UI require an explicit locally supported vision path with memory budget. | P1 |
 | Incremental resumable source triage | `Ingestion/IterativeRun.swift`, connector pipeline and cycle store | **Missing equivalent.** `LocalKnowledge.swift` atomically replaces a bounded explicit index; model-assisted iterative triage not equivalent. | Per-source/item checkpoints, hash changes, deletion, crash, starvation fairness, resume without duplicate summaries; retain explicit source consent. | P1 |
 | Connected people/project knowledge in ordinary Markdown | `Vault/VaultGenerator.swift`, `CorpusSlicer.swift`, `VaultSliceCheckpoint.swift` | **Partial.** Knowledge records/search/constellation exist; index is `knowledge.json`, no equivalent generated editable Markdown vault with consolidation proven. | Build local provenance-linked Markdown notes, conflict/edit preservation, incremental consolidation, source revocation purge and no invented facts. | P1 |
-| Knowledge reader and constellation | `Views/Knowledge/VaultTree.swift`, Knowledge views | **Partial.** `KnowledgeView.swift`, `SentientConstellationView.swift`, `SemanticSearchView.swift`. | Empty/large graph, keyboard navigation, selected node source, disconnected source, stale content; graph edges require evidence. | P2 |
+| Knowledge reader and constellation | `Views/Knowledge/VaultTree.swift`, Knowledge views | **Partial.** `KnowledgeView.swift`, `KnowledgeConstellationView.swift`, `SemanticSearchView.swift`. | Empty/large graph, keyboard navigation, selected node source, disconnected source, stale content; graph edges require evidence. | P2 |
 | Approved preference memory | Vault notes / Sidekick context | **Implemented, narrower.** `AssistantStore.swift` approved memory and invalidation. | User correction/forget, prompt injection in source, profile vs fact separation, purge from next inference window. | P1 |
 | Apple Calendar local source | `Sources/AppleCalendarSource.swift`, calendar ingestion connector | **Implemented, scoped read.** `CalendarSource.swift`, read_calendar. | Selected calendars, denied access, all-day/DST/recurrence/time zone, revoked selection, stale events. | P1 |
 | Apple Mail synchronized local source | `Sources/AppleMailSource.swift`, `AppleMailMIME.swift`, `AppleMailResearch.swift` | **Partial.** `MailExportReader.swift` handles explicit exports, not equivalent native synced-mail ingestion/research. | Prefer explicit export first; native access requires opt-in account/folder scope, MIME/attachments/quoted text, identity and freshness tests. | P1 |
@@ -49,9 +49,9 @@ Local-only requirement: all model inference stays on the Mac. Downloads and expl
 
 ## Input, drafting, output and lifecycle
 
-| Capability | Sentient source | Relay status and evidence | Acceptance gate / adaptation | Priority |
+| Capability | Reference source | Relay status and evidence | Acceptance gate / adaptation | Priority |
 |---|---|---|---|---|
-| Global quick access / notch | `System/Shortcuts`, Notch Magic views | **Partial.** `QuickAccess.swift`, `MenuBarView.swift`, `SentientNotchOverlay.swift`; opt-in Cmd-Shift-Space and selected text. | Bring forward without losing draft; shortcut conflict; password exclusion; multiple displays/notch/menu bar, reduce motion. | P2 |
+| Global quick access / notch | `System/Shortcuts`, Notch Magic views | **Partial.** `QuickAccess.swift`, `MenuBarView.swift`, `SidekickNotchOverlay.swift`; opt-in Cmd-Shift-Space and selected text. | Bring forward without losing draft; shortcut conflict; password exclusion; multiple displays/notch/menu bar, reduce motion. | P2 |
 | Double Tap draft directly in focused field | `Double Tap/DoubleTap.swift`, `CaretLocator.swift`, `DoubleTapInference.swift` | **Missing equivalent.** Selected text enters Relay draft; it does not synthesize and insert an unsent reply at the original caret. | Local model only; capture bounded visible thread and approved style, return to exact field, no send, lost focus protection, noneditable/secure fields, cancellation and stale thread. | P1 |
 | Learned writing examples | `Vault/WritingStyle.swift`, `Double Tap/WritingStyleSetupView.swift`, `Sources/LocalWritingSamples.swift` | **Partial.** `WritingProfile.swift` stores samples/preferences but explicitly does not promote raw samples to inference; preference injection exists. | Opt-in local style extraction, editable derived profile, example deletion, injection resistance, no identity/fact invention. | P1 |
 | Voice prompt / local dictation and speech output | Notch shortcut/provider interaction | **Partial.** `LocalVoiceInput.swift`, `LocalSpeechOutput.swift`, diagnostic and controls. No full qualification implied. | On-device Speech available/offline, denied mic/Speech, silence, audio interruption, 10-second limit/cancellation, transcript review before send. Fresh mic approval for live capture. | P1 |
@@ -60,7 +60,7 @@ Local-only requirement: all model inference stays on the Mac. Downloads and expl
 | Persistent conversation, export and reset | `Notch Magic/SidekickConversationRun.swift`, conversation storage | **Implemented, narrower.** `ConversationExport*.swift`, local state, AssistantStore history. | Export Unicode/attachments/partial results, corruption recovery, reset all derived context, stale process result after reset. | P1 |
 | Model setup/download/resume | `Engine/ModelDownload.swift`, engine locator/setup | **Implemented, narrower.** `ModelDownload.swift`, checkpoint/resume protocol, local Gemma E2B. | Interrupted/range download, changed ETag, checksum mismatch, disk full, path validation, cancellation, imported bad package, CPU/GPU failure. | P0 |
 | Local vision-capable larger model / provider routing | `Cloud/ModelBackend.swift`, `Engine/Engine.swift`, `Double Tap/DoubleTapProvider.swift` | **Partial.** Single LiteRT-LM local model config; no equivalent separate local reasoning/vision/drafting routing demonstrated. | Optional compatible local-only backends; ability probe must test advertised modality/tool protocol, memory pressure and honest unavailable state; no hosted fallback. | P2 |
-| Signed distribution, updater, runtime compatibility | `Updates/UpdateController.swift`, `SentientUpdateDriver.swift`, Driver setup | **Partial.** `scripts/release-app.py`, `build-app.sh`, diagnostics; current development app ad hoc signed. | Developer ID/notarization, fresh Mac launch, durable TCC identity across update, signed helper ABI, rollback/update integrity, runtime license packaging. No claim shipped without signed artifact. | P0 |
+| Signed distribution, updater, runtime compatibility | `Updates/UpdateController.swift`, `ReferenceUpdateDriver.swift`, Driver setup | **Partial.** `scripts/release-app.py`, `build-app.sh`, diagnostics; current development app ad hoc signed. | Developer ID/notarization, fresh Mac launch, durable TCC identity across update, signed helper ABI, rollback/update integrity, runtime license packaging. No claim shipped without signed artifact. | P0 |
 | Cloud knowledge sharing / phone MCP | `Vault/VaultCloud.swift`, `Cloud/LocalMCPServer.swift`, cloud infrastructure | **Missing; excluded from offline default.** No equivalent Relay cloud upload/link. | If requested later, prefer local authenticated MCP/LAN export or explicit encrypted sharing; device revocation, scoped read-only access, key rotation and deletion. Hosted inference stays excluded. | P3 |
 | iOS companion | README phone knowledge sharing is not a full native iOS assistant | **Missing future platform.** Relay package targets macOS. | Separate product scope; iOS sandbox cannot claim Mac-style arbitrary app control. Pairing, scoped sync and local-model feasibility need independent design. | P3 |
 
@@ -68,10 +68,10 @@ Local-only requirement: all model inference stays on the Mac. Downloads and expl
 
 1. **P0 reliability first:** finish the browser regression, deterministic state/permissions recovery, evidence-first completion and signing path. Re-run the exact Calculator/Finder/public-page tasks on controlled fresh state; retain evidence and honest partial results.
 2. **P1 assistant completeness:** local evidence ledger, typed recovery, source adapters, local knowledge consolidation, direct unsent drafting and qualified voice. Ship each behind an explicit capability state with fixture coverage, then one real-app acceptance case.
-3. **P2 broader autonomy:** opt-in overnight helper, more app/workflow adapters, local vision/backends and optional online service integrations. Match user outcomes rather than blindly reproducing Sentient implementation choices.
+3. **P2 broader autonomy:** opt-in overnight helper, more app/workflow adapters, local vision/backends and optional online service integrations. Match user outcomes rather than blindly reproducing Reference implementation choices.
 4. **P3 optional surfaces:** sharing and iOS. These cannot be silently bundled into a “fully offline parity” claim.
 
-A row moves to qualified only after unit/protocol tests plus runtime acceptance on the named app/source configuration. Test negative paths, stale state, cancellation, scope revocation and uncertain post-action outcomes. Report repeated task success rate separately from whether final claims are supported. The present matrix does not claim Relay matches all Sentient features or that Sentient's marketed workflows are all verified.
+A row moves to qualified only after unit/protocol tests plus runtime acceptance on the named app/source configuration. Test negative paths, stale state, cancellation, scope revocation and uncertain post-action outcomes. Report repeated task success rate separately from whether final claims are supported. The present matrix does not claim Relay matches all Reference features or that Reference's marketed workflows are all verified.
 
 ## First implementation batch
 
@@ -79,11 +79,11 @@ A row moves to qualified only after unit/protocol tests plus runtime acceptance 
 - Approval-aware monotonic execution budget: active work excludes review pauses, with separate total lifetime and late-dispatch/Stop checks. Deterministic store integration tests cover long review, expiry and cancellation.
 - Full-suite first run caught missing arithmetic native registration; do not report that run as passing.
 
-Installed Sentient2.7.5 answered the implicit arithmetic test directly and correctly without exposed Calculator activity. Parity for this request means accurate arithmetic understanding, not an invented app-use claim. Explicit Calculator interaction remains a separate acceptance workflow.
+Installed Reference2.7.5 answered the implicit arithmetic test directly and correctly without exposed Calculator activity. Parity for this request means accurate arithmetic understanding, not an invented app-use claim. Explicit Calculator interaction remains a separate acceptance workflow.
 
 ### Batch1 verified
 
-Full suite438 tests/72 suites passed (`/tmp/relay-parity-native-fixed-tests.log`). Release app built. Live exact prompt `what is428x23445555` (with ordinary spacing in actual submitted prompt) selected calculate, Activity reported Result checked, and Relay answered10,034,697,540. This closes the observed arithmetic-understanding failure against Sentient's direct answer; it does not qualify Calculator.app keystrokes. Screenshot parity-relay-arithmetic-pass.png. No hosted inference introduced.
+Full suite438 tests/72 suites passed (`/tmp/relay-parity-native-fixed-tests.log`). Release app built. Live exact prompt `what is428x23445555` (with ordinary spacing in actual submitted prompt) selected calculate, Activity reported Result checked, and Relay answered10,034,697,540. This closes the observed arithmetic-understanding failure against Reference's direct answer; it does not qualify Calculator.app keystrokes. Screenshot parity-relay-arithmetic-pass.png. No hosted inference introduced.
 
 The development build's Accessibility permission can become stale after ad hoc re-signing. Arithmetic does not require computer-control access; a model-ready indicator is not proof of app-control readiness. Signed distribution remains open.
 

@@ -1,22 +1,22 @@
-# Relay and Sentient OS: current design and task audit
+# Relay and upstream project: current design and task audit
 
 Date: 1 November 2026. Baseline observations; no source changes or fresh automated test run in this audit.
 
 ## Conclusion
 
-Relay does **not yet match Sentient on this small task set**. After permission repair, both verified Calculator running. Relay verified the Finder query, while Sentient additionally reported the visible matching file. Sentient read the public browser page accurately; Relay navigated successfully but its reader stopped because browser state was ambiguous. These three trials do not establish overall feature parity or reliability.
+Relay does **not yet match Reference on this small task set**. After permission repair, both verified Calculator running. Relay verified the Finder query, while Reference additionally reported the visible matching file. Reference read the public browser page accurately; Relay navigated successfully but its reader stopped because browser state was ambiguous. These three trials do not establish overall feature parity or reliability.
 
-Relay 0.1.0 uses local Gemma 4 E2B through LiteRT-LM. Installed Sentient OS 2.7.4 (20) was configured to use connected ChatGPT for actions, with on-device Gemma 4 E4B also listed. These are materially different inference configurations; no latency comparison is justified by this trial.
+Relay 0.1.0 uses local Gemma 4 E2B through LiteRT-LM. Installed upstream project 2.7.4 (20) was configured to use connected ChatGPT for actions, with on-device Gemma 4 E4B also listed. These are materially different inference configurations; no latency comparison is justified by this trial.
 
 ## Live task results
 
-| Task | Relay | Sentient OS |
+| Task | Relay | upstream project |
 |---|---|---|
 | Open Calculator; verify running; do not type | PASS. Launch evidence returned a running Calculator process; independent app inventory confirmed it. This verifies launch, not clicking or typing. | PASS after setup. Reported Calculator running; independent app inventory confirmed it. Activity showed looking at Calculator. |
 | Search sf.webm in Finder's visible search field; do not open or modify files | Query verification PASS after refreshing current-build access. AX evidence matched query and results mode; explicitly did not prove a matching file exists. Final chat omitted this distinction, leaving it in expanded evidence. | PASS. Reported query and matching file separately. Independent Finder AX inspection confirmed both. |
 | Open example.com in Safari; read its heading; no other tabs or forms | PARTIAL. Navigation verified. After permission repair, reading failed with “browser state was ambiguous”; no heading fabricated. | PASS. Reported no visible main heading and page title “Example Domain”. Independent public-page screenshot and AX state support that distinction. |
 
-Initial trials were permission-blocked. The table records the subsequent successful or failed outcomes, not just the first attempt. Finder already contained Sentient's query when Relay retried, so Relay's retry establishes correct final-state verification but is not an isolated fresh-search test. Safari was already on the requested public page for these navigation trials. No speed ranking is made. Sentient displayed 18 seconds for Calculator, 27 for Finder and 25 for the browser task; these UI values are not matched performance measurements.
+Initial trials were permission-blocked. The table records the subsequent successful or failed outcomes, not just the first attempt. Finder already contained Reference's query when Relay retried, so Relay's retry establishes correct final-state verification but is not an isolated fresh-search test. Safari was already on the requested public page for these navigation trials. No speed ranking is made. Reference displayed 18 seconds for Calculator, 27 for Finder and 25 for the browser task; these UI values are not matched performance measurements.
 
 Exact prompts:
 
@@ -26,14 +26,14 @@ Exact prompts:
 
 Evidence screenshots in this directory:
 
-- sentient-comparison-permission-block.png
+- reference-comparison-permission-block.png
 - comparison-relay-calculator.png
 - comparison-relay-finder-block.png
 - comparison-safari-public-page.png
 - comparison-relay-browser-partial.png
 - comparison-relay-model-settings.png
 - comparison-relay-browser-ambiguous.png
-- comparison-sentient-completed.png
+- comparison-reference-completed.png
 
 ## Design findings
 
@@ -61,16 +61,16 @@ Source findings were independently reviewed by a read-only design-review agent. 
 
 ## Permission setup and remaining comparison
 
-The user explicitly approved Sentient Accessibility and Screen Recording setup and refreshing Relay Accessibility access. After the user paused interaction and authenticated directly, macOS showed Sentient control and Screen Recording access enabled. Relay's existing control switch was enabled, but its in-process trust check still failed after an off/on refresh. Removing only Relay's stale entry and re-adding Relay.app from the current build directory made its own “Check again” report “Accessibility allowed”. No other app permission was changed. No personal analysis, source connection, microphone capture or background access was started.
+The user explicitly approved Reference Accessibility and Screen Recording setup and refreshing Relay Accessibility access. After the user paused interaction and authenticated directly, macOS showed Reference control and Screen Recording access enabled. Relay's existing control switch was enabled, but its in-process trust check still failed after an off/on refresh. Removing only Relay's stale entry and re-adding Relay.app from the current build directory made its own “Check again” report “Accessibility allowed”. No other app permission was changed. No personal analysis, source connection, microphone capture or background access was started.
 
 Relay's build is ad hoc signed with no TeamIdentifier. A stale entry after rebuilding is a plausible explanation for the mismatch, not a proven diagnosis. Stable signing and explicit current-build permission recovery remain release concerns.
 
 ### Product implications
 
-- Browser observation must resolve the intended browser/window/tab deterministically or ask a precise recovery question. The current generic ambiguous-state failure prevents a basic page-reading task that Sentient completed.
+- Browser observation must resolve the intended browser/window/tab deterministically or ask a precise recovery question. The current generic ambiguous-state failure prevents a basic page-reading task that Reference completed.
 - Relay should surface the distinction between query entered and file found in its normal reply, not only expanded evidence.
 - Readiness should cover current process permissions, not merely local-model readiness or the macOS switch.
-- Sentient's inline, collapsible activity keeps progress near the answer. Relay's permanently occupied activity column and raw role language create more visual competition; use concise task progress with optional detail.
+- Reference's inline, collapsible activity keeps progress near the answer. Relay's permanently occupied activity column and raw role language create more visual competition; use concise task progress with optional detail.
 
 Remaining qualification work:
 
@@ -81,7 +81,7 @@ Remaining qualification work:
 5. Record outcome accuracy separately from task completion. Never count a claimed action without independent visible evidence.
 6. Compare latency only with explicit start/end boundaries and matched task state; disclose local versus hosted inference.
 
-Do not claim Gmail, arbitrary-app compatibility, voice readiness or complete Sentient feature parity from these three tasks.
+Do not claim Gmail, arbitrary-app compatibility, voice readiness or complete Reference feature parity from these three tasks.
 
 ## Implementation follow-up
 
@@ -96,7 +96,7 @@ Implemented after the baseline comparison:
 
 Automated verification reached 426 tests across70 suites passing before the final Finder container extension; additional targeted regression and live tests must be recorded separately. The last earlier live attempts still failed Safari title qualification and did not positively identify Finder results; do not mistake the source fixes for completed live qualification.
 
-Source studies: [Sentient](sentient-source-gap-study.md) and [agent-desktop](agent-desktop-integration-study.md). These include pinned reference commits, concrete code paths and prioritized further work. Broad superiority over Sentient is not established.
+Source studies: [Reference](reference-source-gap-study.md) and [agent-desktop](agent-desktop-integration-study.md). These include pinned reference commits, concrete code paths and prioritized further work. Broad superiority over Reference is not established.
 
 ### Latest verification status
 
@@ -118,7 +118,7 @@ Native minimum-size visual qualification remains open; source review is not a su
 
 ### Live continuation: heading correction qualified
 
-After relaunching the final build and refreshing the already-approved current-build access, Relay answered the exact browser prompt: “I was unable to find a distinct main heading in the accessible content of the page. The page title is ‘Example Domain’.” Read webpage reported checked. Independent Safari AX inspection confirmed the requested URL, page title and accessible content without a heading node. Screenshot: comparison-relay-browser-grounded.png. This matches Sentient's observed answer on this task.
+After relaunching the final build and refreshing the already-approved current-build access, Relay answered the exact browser prompt: “I was unable to find a distinct main heading in the accessible content of the page. The page title is ‘Example Domain’.” Read webpage reported checked. Independent Safari AX inspection confirmed the requested URL, page title and accessible content without a heading node. Screenshot: comparison-relay-browser-grounded.png. This matches Reference's observed answer on this task.
 
 The exact Finder task was rerun: query entered/verified, matching file explicitly unverified. Independent Finder access was denied again by the computer-use tool. Do not call this full Finder result parity. No private file was opened.
 
@@ -132,8 +132,8 @@ Screenshot critique found faint onboarding captions/footer and developer-facing 
 
 Prompt submitted verbatim to Relay: `what is 428x23445555`. Expected product workflow: infer multiplication, open Calculator, enter operands/operator, verify the displayed result, then answer. Correct product: 10,034,697,540.
 
-Relay FAIL: answered that the numbers lacked context and requested clarification; no Calculator action requested. Prior app-launch PASS does not cover implicit tool selection or calculation entry. Sentient NOT RUN: computer-use tool denied selecting Sentient OS. Cannot infer its behavior from prior Calculator launch test.
+Relay FAIL: answered that the numbers lacked context and requested clarification; no Calculator action requested. Prior app-launch PASS does not cover implicit tool selection or calculation entry. Reference NOT RUN: computer-use tool denied selecting upstream project. Cannot infer its behavior from prior Calculator launch test.
 
-### Sentient arithmetic access restored
+### Reference arithmetic access restored
 
-Sentient OS 2.7.5(21) accepted the exact prompt `what is 428x23445555`. UI changed from Starting Sidekick to “Responded in18s” and answered `428 ×23,445,555 =10,034,697,540`. No Calculator/computer-action activity was exposed for this turn; unlike earlier desktop tasks there was no “Worked for…” activity disclosure. This is evidence of correct direct answering, not proof of a Calculator workflow or its internal computation method. Screenshot: comparison-sentient-implicit-arithmetic.png. Relay's same-prompt trial previously failed to understand the request.
+upstream project 2.7.5(21) accepted the exact prompt `what is 428x23445555`. UI changed from Starting Sidekick to “Responded in18s” and answered `428 ×23,445,555 =10,034,697,540`. No Calculator/computer-action activity was exposed for this turn; unlike earlier desktop tasks there was no “Worked for…” activity disclosure. This is evidence of correct direct answering, not proof of a Calculator workflow or its internal computation method. Screenshot: comparison-reference-implicit-arithmetic.png. Relay's same-prompt trial previously failed to understand the request.

@@ -300,7 +300,7 @@
       }
 
       // Briefing cards click handler
-      const briefingCards = document.querySelectorAll('.sentient-briefing-card[data-scenario]');
+      const briefingCards = document.querySelectorAll('.relay-briefing-card[data-scenario]');
       briefingCards.forEach(card => {
         card.addEventListener('click', () => {
           briefingCards.forEach(c => c.classList.remove('active'));
@@ -730,7 +730,7 @@
   // 8. 60fps Constellation Knowledge Graph & 2-Pane Obsidian Reader
   // ==========================================================================
   function initConstellationVault() {
-    const canvas = document.getElementById('sentient-constellation-canvas');
+    const canvas = document.getElementById('relay-constellation-canvas');
     const titleEl = document.getElementById('vault-note-title');
     const domainEl = document.getElementById('vault-note-domain');
     const bodyEl = document.getElementById('vault-note-body');
@@ -885,7 +885,7 @@
   // 9. Dog-Eared LetterPaper <dialog> Modal & PlanEditor
   // ==========================================================================
   function initLetterDialogModal() {
-    const dialog = document.getElementById('sentient-letter-dialog');
+    const dialog = document.getElementById('relay-letter-dialog');
     const kickerEl = document.getElementById('letter-dialog-kicker');
     const titleEl = document.getElementById('letter-dialog-title');
     const summaryEl = document.getElementById('letter-dialog-summary');
@@ -932,7 +932,7 @@
       }
     };
 
-    document.querySelectorAll('.sentient-briefing-card[data-letter-id]').forEach(card => {
+    document.querySelectorAll('.relay-briefing-card[data-letter-id]').forEach(card => {
       card.addEventListener('click', () => {
         const key = card.getAttribute('data-letter-id');
         const data = LETTERS[key];
